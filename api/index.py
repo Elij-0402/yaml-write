@@ -5,6 +5,7 @@ from typing import List, Optional
 import instructor
 from openai import OpenAI
 import asyncio
+import time
 
 # Import schemas from schemas.py
 from api.schemas import Character, Relationship, ChapterAnalysis, OutlineInput, GenerationInput
@@ -31,20 +32,54 @@ def hello_fast_api():
 
 @app.post("/api/py/test-connection")
 def test_connection(data: TestConnectionInput):
+    start_time = time.time()
     try:
+        api_key = data.apiKey.strip()
+        base_url = data.baseUrl.strip()
+        model_name = data.model.strip()
+        
+        # 创建限时的客户端
         client = OpenAI(
-            api_key=data.apiKey,
-            base_url=data.baseUrl
+            api_key=api_key,
+            base_url=base_url,
+            timeout=8.0
         )
-        # Send a tiny query to test connectivity
+        
+        # 发送极小请求测试连通性
         response = client.chat.completions.create(
-            model=data.model,
-            messages=[{"role": "user", "content": "Hello. Response with 'ok'."}],
-            max_tokens=10
+            model=model_name,
+            messages=[{"role": "user", "content": "Ok"}],
+            max_tokens=5
         )
-        return {"success": True, "message": "Connection successful!"}
+        
+        latency = int((time.time() - start_time) * 1000)
+        return {
+            "success": True, 
+            "message": "连接成功！配置通道与流式响应握手正常。", 
+            "latency": latency
+        }
     except Exception as e:
-        return {"success": False, "message": str(e)}
+        latency = int((time.time() - start_time) * 1000)
+        err_str = str(e)
+        friendly_msg = "连接失败，发生未知错误。"
+        
+        # 智能诊断翻译引擎
+        if "401" in err_str or "AuthenticationError" in err_str or "invalid_api_key" in err_str:
+            friendly_msg = "【API 密钥失效】请核对您的 API Key 是否正确填写，是否混入空格或多余字符。"
+        elif "404" in err_str or "NotFoundError" in err_str or "model_not_found" in err_str:
+            friendly_msg = "【接口路径或模型不匹配】当前 API 地址无法找到该模型，或接口根路径不正确。如 Ollama 本地未启动或未安装该模型。"
+        elif "ConnectionRefused" in err_str or "ConnectionError" in err_str or "ConnectTimeout" in err_str or "Timeout" in err_str or "Failed to establish" in err_str:
+            friendly_msg = "【网络超时/拒绝连接】无法建立与大模型服务端的连接。中国大陆官方直连可能受阻，请尝试使用国内代理中转地址，或检查科学上网代理软件设置。"
+        elif "429" in err_str or "RateLimitError" in err_str or "insufficient_quota" in err_str:
+            friendly_msg = "【限流或欠费】您的 API 账号额度已耗尽、已欠费，或请求并发超出了服务商限制，请登录服务商后台检查。"
+        else:
+            friendly_msg = f"【连接失败】{err_str}"
+            
+        return {
+            "success": False,
+            "message": friendly_msg,
+            "latency": latency
+        }
 
 @app.post("/api/py/parse-chapter")
 def parse_chapter(data: ParseChapterInput):
