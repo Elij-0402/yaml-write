@@ -6,22 +6,33 @@ import { Upload, BookOpen, AlertTriangle, FileText, Play, CheckCircle2, AlertCir
 import jschardet from 'jschardet';
 
 // Split novel text into chapters
-export function splitNovel(text: string): { title: string; content: string; wordCount: number; chapterIndex: number }[] {
+export function splitNovel(text: string, customRegexStr?: string): { title: string; content: string; wordCount: number; chapterIndex: number }[] {
   // Normalize line endings
   const normalizedText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   
-  // Match 第 X 章, 第 X 节, 第 X 回 etc at the start of a line
-  const regex = /^\s*(第\s*[一二三四五六七八九十百千万零\d]+\s*[章节回卷折篇幕].*?)$/gm;
+  // Set default pattern or use custom input
+  let regex = /^\s*(第\s*[一二三四五六七八九十百千万零\d]+\s*[章节回卷折篇幕].*?)$/gm;
+  if (customRegexStr) {
+    try {
+      regex = new RegExp(customRegexStr, 'gm');
+    } catch (err) {
+      console.warn('Invalid regex provided, using default pattern', err);
+    }
+  }
+  
   const chapters: { title: string; content: string; wordCount: number; chapterIndex: number }[] = [];
   
   let match;
   const positions: { title: string; index: number }[] = [];
   
   while ((match = regex.exec(normalizedText)) !== null) {
-    positions.push({
-      title: match[1].trim(),
-      index: match.index
-    });
+    const title = (match[1] || match[0] || '').trim();
+    if (title) {
+      positions.push({
+        title,
+        index: match.index
+      });
+    }
   }
   
   if (positions.length === 0) {
@@ -134,11 +145,26 @@ export function cleanText(text: string): { cleanedText: string; removedCount: nu
 }
 
 export default function NovelUploader() {
-  const { llmConfig, selectedNovelId, setSelectedNovelId, selectedChapterId, setSelectedChapterId } = useAppStore();
+  const { 
+    llmConfig, 
+    selectedNovelId, 
+    setSelectedNovelId, 
+    selectedChapterId, 
+    setSelectedChapterId,
+    splitRegexPreset,
+    customSplitRegex,
+    setSplitRegex
+  } = useAppStore();
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [parsingQueue, setParsingQueue] = useState<Record<string, boolean>>({}); // tracking parsing states
+  
+  // 检索、筛选、分页与分章规则配置状态
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'unparsed' | 'parsing' | 'done' | 'error'>('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [showRegexConfig, setShowRegexConfig] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -193,7 +219,7 @@ export default function NovelUploader() {
     try {
       const text = await readTextWithEncodingCheck(file);
       const { cleanedText, removedCount } = cleanText(text);
-      const splitted = splitNovel(cleanedText);
+      const splitted = splitNovel(cleanedText, customSplitRegex);
       
       const novelId = crypto.randomUUID();
       const novelName = file.name.replace(/\.[^/.]+$/, "");
@@ -393,6 +419,19 @@ export default function NovelUploader() {
     await Promise.all(workers);
   };
 
+  // 动态检索、筛选与分页计算
+  const filteredChapters = chapters.filter((c) => {
+    const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
+  const pageSize = 12;
+  const totalPages = Math.ceil(filteredChapters.length / pageSize) || 1;
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const paginatedChapters = filteredChapters.slice(startIndex, startIndex + pageSize);
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-auto lg:h-[calc(100vh-12rem)] min-h-0">
       
@@ -403,7 +442,7 @@ export default function NovelUploader() {
         {/* Upload Button Trigger */}
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="w-full py-3 mb-4 rounded-xl border border-dashed border-zinc-750 hover:border-zinc-550 bg-zinc-900/40 hover:bg-zinc-800/60 text-zinc-400 hover:text-zinc-200 font-semibold text-sm transition-all flex items-center justify-center gap-2"
+          className="w-full py-3 mb-2 rounded-xl border border-dashed border-zinc-750 hover:border-zinc-550 bg-zinc-900/40 hover:bg-zinc-800/60 text-zinc-400 hover:text-zinc-200 font-semibold text-sm transition-all flex items-center justify-center gap-2"
         >
           <Upload className="w-4 h-4" />
           导入新小说 (.txt)
@@ -416,6 +455,55 @@ export default function NovelUploader() {
           className="hidden"
         />
 
+        {/* 高级分章规则面板折叠开关 */}
+        <button
+          onClick={() => setShowRegexConfig(!showRegexConfig)}
+          className="w-full text-left px-2.5 py-2 mb-4 text-[10px] text-zinc-400 hover:text-zinc-200 transition-colors flex items-center justify-between border border-zinc-800/50 rounded-xl bg-zinc-950/20"
+        >
+          <span className="font-semibold">⚙️ 高级分章规则配置</span>
+          <span className="font-mono text-zinc-500">{showRegexConfig ? '收起 ▲' : '展开 ▼'}</span>
+        </button>
+
+        {/* 分章正则配置面板主体 */}
+        {showRegexConfig && (
+          <div className="p-3 mb-4 rounded-xl border border-zinc-850 bg-zinc-950/50 text-xs space-y-3 animate-fade-in">
+            <div>
+              <label className="text-[10px] text-zinc-500 font-bold block mb-1">规则预设类型</label>
+              <select
+                value={splitRegexPreset}
+                onChange={(e) => {
+                  const val = e.target.value as 'chinese' | 'english' | 'custom';
+                  let regex = '';
+                  if (val === 'chinese') {
+                    regex = '^\\s*(第\\s*[一二三四五六七八九十百千万零\\d]+\\s*[章节回卷折篇幕].*?)$';
+                  } else if (val === 'english') {
+                    regex = '^\\s*(Chapter\\s*\\d+.*?)$';
+                  } else {
+                    regex = customSplitRegex;
+                  }
+                  setSplitRegex(val, regex);
+                }}
+                className="w-full px-2 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 focus:outline-none text-[11px]"
+              >
+                <option value="chinese">标准中文 (第X章/第X回)</option>
+                <option value="english">标准英文 (Chapter \d+)</option>
+                <option value="custom">自定义正则表达式</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] text-zinc-500 font-bold block mb-1">分章匹配正则表达式</label>
+              <input
+                type="text"
+                value={customSplitRegex}
+                disabled={splitRegexPreset !== 'custom'}
+                onChange={(e) => setSplitRegex('custom', e.target.value)}
+                placeholder="例如: ^\\s*(第\\s*[\\d]+\\s*章.*?)$"
+                className="w-full px-2 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-200 font-mono text-[10px] focus:outline-none disabled:opacity-50"
+              />
+            </div>
+          </div>
+        )}
+
         {/* Novel List */}
         <div className="flex-1 overflow-y-auto space-y-2 pr-1">
           {novels.length === 0 ? (
@@ -426,7 +514,12 @@ export default function NovelUploader() {
             novels.map((n) => (
               <div
                 key={n.id}
-                onClick={() => setSelectedNovelId(n.id)}
+                onClick={() => {
+                  setSelectedNovelId(n.id);
+                  setCurrentPage(1);
+                  setSearchQuery('');
+                  setStatusFilter('all');
+                }}
                 className={`group p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
                   selectedNovelId === n.id
                     ? 'bg-zinc-800/80 border-zinc-700 text-zinc-100'
@@ -507,6 +600,59 @@ export default function NovelUploader() {
               </button>
             </div>
 
+            {/* Smart Search & Status Filters */}
+            <div className="mt-4 flex flex-col md:flex-row gap-3 items-center justify-between bg-zinc-950/20 border border-zinc-850 p-3 rounded-2xl">
+              {/* Search bar */}
+              <div className="relative w-full md:w-64">
+                <input
+                  type="text"
+                  placeholder="🔍 搜索章节名称..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="w-full pl-3 pr-8 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 placeholder-zinc-650 focus:outline-none focus:ring-1 focus:ring-zinc-700 font-medium"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => {
+                      setSearchQuery('');
+                      setCurrentPage(1);
+                    }}
+                    className="absolute right-2.5 top-1.5 text-zinc-500 hover:text-zinc-300 text-sm font-bold"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+
+              {/* Status Filters */}
+              <div className="flex items-center gap-1.5 overflow-x-auto w-full md:w-auto pb-1 md:pb-0 scrollbar-none">
+                {(['all', 'unparsed', 'done', 'error'] as const).map((status) => {
+                  const count = chapters.filter(c => status === 'all' || c.status === status).length;
+                  const label = status === 'all' ? '全部' : status === 'unparsed' ? '待解析' : status === 'done' ? '已解析' : '解析失败';
+                  const active = statusFilter === status;
+                  return (
+                    <button
+                      key={status}
+                      onClick={() => {
+                        setStatusFilter(status);
+                        setCurrentPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all whitespace-nowrap border ${
+                        active
+                          ? 'bg-zinc-800 text-zinc-200 border-zinc-650 shadow-sm'
+                          : 'bg-zinc-950/40 text-zinc-500 hover:text-zinc-300 border-zinc-900 hover:border-zinc-800'
+                      }`}
+                    >
+                      {label} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Smart purification notification bar */}
             {activeNovel && activeNovel.purifiedCount !== undefined && activeNovel.purifiedCount > 0 && (
               <div className="mt-3 px-4 py-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800 text-zinc-300 text-xs flex items-center gap-2 animate-fade-in">
@@ -525,86 +671,118 @@ export default function NovelUploader() {
 
             {/* Chapters list table */}
             <div className="flex-1 overflow-y-auto mt-4 pr-1">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {chapters.map((c) => {
-                  const isParsing = parsingQueue[c.id] || c.status === 'parsing';
-                  const isSelected = selectedChapterId === c.id;
-                  
-                  return (
-                    <div
-                      key={c.id}
-                      onClick={() => setSelectedChapterId(c.id)}
-                      className={`p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between h-32 ${
-                        isSelected
-                          ? 'bg-zinc-800/40 border-zinc-650 text-zinc-100 shadow-sm'
-                          : 'bg-zinc-950/20 border-zinc-800/60 hover:border-zinc-700/80 text-zinc-450'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-xs text-zinc-500 font-mono">Chapter {c.chapterIndex}</p>
-                          <h4 className="font-semibold text-sm text-zinc-200 truncate mt-1">{c.name}</h4>
-                          <p className="text-[10px] text-zinc-500 font-mono mt-0.5">{c.wordCount} 字</p>
+              {paginatedChapters.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-center py-20 text-zinc-500">
+                  <p className="text-sm font-semibold">没有找到匹配的章节</p>
+                  <p className="text-xs text-zinc-600 mt-1">请尝试修改搜索词或状态筛选条件</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {paginatedChapters.map((c) => {
+                    const isParsing = parsingQueue[c.id] || c.status === 'parsing';
+                    const isSelected = selectedChapterId === c.id;
+                    
+                    return (
+                      <div
+                        key={c.id}
+                        onClick={() => setSelectedChapterId(c.id)}
+                        className={`p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between h-32 ${
+                          isSelected
+                            ? 'bg-zinc-800/40 border-zinc-650 text-zinc-100 shadow-sm'
+                            : 'bg-zinc-950/20 border-zinc-800/60 hover:border-zinc-700/80 text-zinc-450'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-xs text-zinc-500 font-mono">Chapter {c.chapterIndex}</p>
+                            <h4 className="font-semibold text-sm text-zinc-200 truncate mt-1">{c.name}</h4>
+                            <p className="text-[10px] text-zinc-500 font-mono mt-0.5">{c.wordCount} 字</p>
+                          </div>
+
+                          {/* Status tag */}
+                          <div>
+                            {c.status === 'done' && (
+                              <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
+                                <CheckCircle2 className="w-3 h-3 text-zinc-400" />
+                                已解析
+                              </span>
+                            )}
+                            {c.status === 'unparsed' && (
+                              <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800/80 text-zinc-500">
+                                待解析
+                              </span>
+                            )}
+                            {isParsing && (
+                              <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-zinc-800/80 border border-zinc-700 text-zinc-300">
+                                <Loader2 className="w-3 h-3 animate-spin text-zinc-400" />
+                                解析中
+                              </span>
+                            )}
+                            {c.status === 'error' && (
+                              <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-red-950/20 border border-red-900/30 text-red-400">
+                                <AlertCircle className="w-3 h-3" />
+                                解析失败
+                              </span>
+                            )}
+                          </div>
                         </div>
 
-                        {/* Status tag */}
-                        <div>
-                          {c.status === 'done' && (
-                            <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
-                              <CheckCircle2 className="w-3 h-3 text-zinc-400" />
-                              已解析
-                            </span>
-                          )}
-                          {c.status === 'unparsed' && (
-                            <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800/80 text-zinc-500">
-                              待解析
-                            </span>
-                          )}
-                          {isParsing && (
-                            <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-zinc-800/80 border border-zinc-700 text-zinc-300">
-                              <Loader2 className="w-3 h-3 animate-spin text-zinc-400" />
-                              解析中
-                            </span>
-                          )}
-                          {c.status === 'error' && (
-                            <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-red-950/20 border border-red-900/30 text-red-400">
-                              <AlertCircle className="w-3 h-3" />
-                              解析失败
-                            </span>
-                          )}
+                        <div className="flex items-center justify-between border-t border-zinc-800/80 pt-2 mt-2">
+                          {/* Error info or status explanation */}
+                          <div className="min-w-0 flex-1">
+                            {c.status === 'error' ? (
+                              <p className="text-[10px] text-red-400 truncate pr-2">{c.errorMsg || '解析出错'}</p>
+                            ) : c.status === 'done' ? (
+                              <p className="text-[10px] text-zinc-400 truncate pr-2">角色: {c.analysis?.characters.length} | 关系: {c.analysis?.relationships.length}</p>
+                            ) : (
+                              <p className="text-[10px] text-zinc-650 truncate pr-2">暂无可用角色骨架分析</p>
+                            )}
+                          </div>
+
+                          {/* Control buttons */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              parseChapter(c);
+                            }}
+                            disabled={isParsing}
+                            className="py-1 px-2.5 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 text-[11px] font-medium flex items-center gap-1 transition-all disabled:opacity-50"
+                          >
+                            <Play className="w-3 h-3" />
+                            {c.status === 'done' ? '重新解析' : '开始解析'}
+                          </button>
                         </div>
                       </div>
-
-                      <div className="flex items-center justify-between border-t border-zinc-800/80 pt-2 mt-2">
-                        {/* Error info or status explanation */}
-                        <div className="min-w-0 flex-1">
-                          {c.status === 'error' ? (
-                            <p className="text-[10px] text-red-400 truncate pr-2">{c.errorMsg || '解析出错'}</p>
-                          ) : c.status === 'done' ? (
-                            <p className="text-[10px] text-zinc-400 truncate pr-2">角色: {c.analysis?.characters.length} | 关系: {c.analysis?.relationships.length}</p>
-                          ) : (
-                            <p className="text-[10px] text-zinc-650 truncate pr-2">暂无可用角色骨架分析</p>
-                          )}
-                        </div>
-
-                        {/* Control buttons */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            parseChapter(c);
-                          }}
-                          disabled={isParsing}
-                          className="py-1 px-2.5 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 text-[11px] font-medium flex items-center gap-1 transition-all disabled:opacity-50"
-                        >
-                          <Play className="w-3 h-3" />
-                          {c.status === 'done' ? '重新解析' : '开始解析'}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between border-t border-zinc-800/80 pt-4 mt-6">
+                <span className="text-[10px] text-zinc-500 font-mono">
+                  第 {safePage} 页 / 共 {totalPages} 页 (共 {filteredChapters.length} 章)
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={safePage === 1}
+                    className="py-1 px-3 rounded bg-zinc-950 border border-zinc-800 hover:bg-zinc-900 text-zinc-400 text-xs disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                  >
+                    ◀ 上一页
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={safePage === totalPages}
+                    className="py-1 px-3 rounded bg-zinc-950 border border-zinc-800 hover:bg-zinc-900 text-zinc-400 text-xs disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                  >
+                    下一页 ▶
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

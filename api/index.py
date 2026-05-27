@@ -83,6 +83,10 @@ def test_connection(data: TestConnectionInput):
 
 @app.post("/api/py/parse-chapter")
 def parse_chapter(data: ParseChapterInput):
+    import random
+    max_retries = 3
+    base_delay = 2.0
+    
     try:
         client = instructor.from_openai(
             OpenAI(
@@ -99,16 +103,27 @@ def parse_chapter(data: ParseChapterInput):
         
         user_prompt = f"章节标题: {data.title}\n\n章节内容:\n{data.content}"
         
-        response = client.chat.completions.create(
-            model=data.model,
-            response_model=ChapterAnalysis,
-            temperature=data.temperature,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ]
-        )
-        return response
+        for attempt in range(max_retries):
+            try:
+                response = client.chat.completions.create(
+                    model=data.model,
+                    response_model=ChapterAnalysis,
+                    temperature=data.temperature,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ]
+                )
+                return response
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "RateLimit" in err_str or "quota" in err_str or "too many requests" in err_str.lower():
+                    if attempt == max_retries - 1:
+                        raise e
+                    sleep_time = base_delay * (2 ** attempt) + random.uniform(0.1, 0.5)
+                    time.sleep(sleep_time)
+                else:
+                    raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -145,9 +160,26 @@ async def generate_outline(data: OutlineInput):
                 chapters_context += f"- {rel.get('roleA')} 与 {rel.get('roleB')}: {rel.get('description')}\n"
             chapters_context += "\n"
             
+        bindings_context = ""
+        if data.characterBindings:
+            bindings_context += "\n=== ⚠️ 强制出场人物互动与融合规则 ===\n"
+            bindings_context += "你必须严格在生成的大纲中实现以下指定角色之间的深度互动或融合配置：\n"
+            for b in data.characterBindings:
+                binding_desc = "灵魂融合 / 强力合体 (Merge settings)"
+                if b.bindingType == "clash":
+                    binding_desc = "宿命对决 / 终极宿敌 (Antagonists)"
+                elif b.bindingType == "mentor":
+                    binding_desc = "名师高徒 / 功法传承 (Mentor & Disciple)"
+                elif b.bindingType == "custom":
+                    binding_desc = f"自定义指定交互关系: {b.customDesc or '互动'}"
+                
+                bindings_context += f"- 把角色【{b.sourceChar}】与角色【{b.targetChar}】绑定为【{binding_desc}】。请在融合大纲的人物设定与故事走向中深度融合他们，并突出这种指定的纠葛摩擦。\n"
+            bindings_context += "===================================\n\n"
+            
         user_prompt = (
             f"下面是供你融合的现有小说章节结构化解析信息：\n\n"
             f"{chapters_context}\n"
+            f"{bindings_context}"
             f"作家的融合指令/要求如下：\n"
             f"【{data.fusionPrompt}】\n\n"
             f"请根据上述信息，为我生成精美的融合大纲。"

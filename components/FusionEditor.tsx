@@ -4,6 +4,13 @@ import { db, type Chapter, type Novel } from '../app/db';
 import { useAppStore } from '../app/store';
 import { Sparkles, PenTool, FileDown, Copy, Check, RotateCcw, HelpCircle, Loader2, ArrowRight, BookOpen } from 'lucide-react';
 
+interface CharacterBinding {
+  sourceChar: string;
+  targetChar: string;
+  bindingType: 'merge' | 'clash' | 'mentor' | 'custom';
+  customDesc?: string;
+}
+
 export default function FusionEditor() {
   const { llmConfig } = useAppStore();
   
@@ -20,10 +27,46 @@ export default function FusionEditor() {
   
   const [copiedOutline, setCopiedOutline] = useState<boolean>(false);
   const [copiedText, setCopiedText] = useState<boolean>(false);
+  
+  // 角色拉线深度绑定状态
+  const [characterBindings, setCharacterBindings] = useState<CharacterBinding[]>([]);
 
   // Live query novels and all done parsed chapters
   const novels = useLiveQuery(() => db.novels.toArray()) || [];
   const parsedChapters = useLiveQuery(() => db.chapters.where('status').equals('done').toArray()) || [];
+
+  // 从选中章节中提取全部已分析出的角色列表
+  const availableCharacters = React.useMemo(() => {
+    const chars: { name: string; chapterName: string; novelId: string; novelName: string }[] = [];
+    selectedChapterIds.forEach((id) => {
+      const chap = parsedChapters.find((c) => c.id === id);
+      if (chap && chap.analysis?.characters) {
+        const novel = novels.find((n) => n.id === chap.novelId);
+        chap.analysis.characters.forEach((char) => {
+          if (!chars.some((c) => c.name === char.name)) {
+            chars.push({
+              name: char.name,
+              chapterName: chap.name,
+              novelId: chap.novelId,
+              novelName: novel?.name || '未知小说',
+            });
+          }
+        });
+      }
+    });
+    return chars;
+  }, [selectedChapterIds, parsedChapters, novels]);
+
+  // 当选择章节变更、角色池变动时，静默清洗掉无效的拉线配对规则
+  React.useEffect(() => {
+    setCharacterBindings((prev) =>
+      prev.filter(
+        (b) =>
+          availableCharacters.some((c) => c.name === b.sourceChar) &&
+          availableCharacters.some((c) => c.name === b.targetChar)
+      )
+    );
+  }, [availableCharacters]);
 
   const handleToggleChapter = (id: string) => {
     setSelectedChapterIds((prev) =>
@@ -70,6 +113,7 @@ export default function FusionEditor() {
           baseUrl: llmConfig.baseUrl,
           model: llmConfig.model,
           temperature: llmConfig.temperature,
+          characterBindings: characterBindings,
         }),
       });
 
@@ -298,6 +342,129 @@ export default function FusionEditor() {
                 className="w-full px-4 py-3 rounded-xl bg-zinc-950 border border-zinc-800 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-700 transition-all leading-relaxed"
               />
             </div>
+
+            {/* 角色交互深度绑定面板 (可选) */}
+            {selectedChapterIds.length > 0 && availableCharacters.length >= 2 && (
+              <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-950/20 space-y-3">
+                <div className="flex items-center justify-between border-b border-zinc-850 pb-2">
+                  <label className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
+                    👥 出场角色深度配对绑定 (可选)
+                  </label>
+                  <button
+                    onClick={() => {
+                      if (availableCharacters.length < 2) return;
+                      setCharacterBindings((prev) => [
+                        ...prev,
+                        {
+                          sourceChar: availableCharacters[0].name,
+                          targetChar: availableCharacters[1].name,
+                          bindingType: 'merge',
+                          customDesc: '',
+                        },
+                      ]);
+                    }}
+                    className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-bold rounded-lg text-zinc-300 hover:text-zinc-100 transition-all"
+                  >
+                    + 新建角色互动绑定
+                  </button>
+                </div>
+
+                {characterBindings.length === 0 ? (
+                  <p className="text-[10px] text-zinc-500 italic">暂无强力配对规则。AI 将按默认规则自然融合人物关系。</p>
+                ) : (
+                  <div className="space-y-3 max-h-48 overflow-y-auto pr-1">
+                    {characterBindings.map((binding, idx) => (
+                      <div key={idx} className="flex flex-col sm:flex-row gap-2 items-center bg-zinc-950/40 p-2.5 rounded-lg border border-zinc-900 text-xs">
+                        {/* Source Character */}
+                        <select
+                          value={binding.sourceChar}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCharacterBindings((prev) =>
+                              prev.map((b, i) => (i === idx ? { ...b, sourceChar: val } : b))
+                            );
+                          }}
+                          className="w-full sm:w-1/3 px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-250 focus:outline-none"
+                        >
+                          {availableCharacters.map((c) => (
+                            <option key={c.name} value={c.name}>
+                              {c.name} ({c.novelName})
+                            </option>
+                          ))}
+                        </select>
+
+                        <span className="text-[10px] text-zinc-500 font-bold">⇄</span>
+
+                        {/* Target Character */}
+                        <select
+                          value={binding.targetChar}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCharacterBindings((prev) =>
+                              prev.map((b, i) => (i === idx ? { ...b, targetChar: val } : b))
+                            );
+                          }}
+                          className="w-full sm:w-1/3 px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-250 focus:outline-none"
+                        >
+                          {availableCharacters
+                            .filter((c) => c.name !== binding.sourceChar)
+                            .map((c) => (
+                              <option key={c.name} value={c.name}>
+                                {c.name} ({c.novelName})
+                              </option>
+                            ))}
+                        </select>
+
+                        {/* Relationship Binding Type */}
+                        <select
+                          value={binding.bindingType}
+                          onChange={(e) => {
+                            const val = e.target.value as any;
+                            setCharacterBindings((prev) =>
+                              prev.map((b, i) => (i === idx ? { ...b, bindingType: val } : b))
+                            );
+                          }}
+                          className="w-full sm:w-1/4 px-2 py-1 rounded bg-zinc-900 border border-zinc-850 text-[11px] text-zinc-250 focus:outline-none font-semibold text-zinc-300"
+                        >
+                          <option value="merge">🧬 灵魂融合 (Merge)</option>
+                          <option value="clash">⚔️ 宿命对决 (Clash)</option>
+                          <option value="mentor">🎓 名师高徒 (Mentor)</option>
+                          <option value="custom">⚙️ 自定义互动关系</option>
+                        </select>
+
+                        {/* Delete button */}
+                        <button
+                          onClick={() => {
+                            setCharacterBindings((prev) => prev.filter((_, i) => i !== idx));
+                          }}
+                          className="p-1 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded transition-all ml-auto self-end sm:self-center"
+                        >
+                          ×
+                        </button>
+
+                        {/* Custom description row */}
+                        {binding.bindingType === 'custom' && (
+                          <div className="w-full mt-1.5 sm:col-span-4">
+                            <input
+                              type="text"
+                              placeholder="输入指定关系（如：情定三生的仙凡眷侣、同父异母的宿敌等）..."
+                              value={binding.customDesc || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setCharacterBindings((prev) =>
+                                  prev.map((b, i) => (i === idx ? { ...b, customDesc: val } : b))
+                                );
+                              }}
+                              className="w-full px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-200 placeholder-zinc-650 focus:outline-none"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="p-4 rounded-xl bg-zinc-950/20 border border-zinc-800/80 flex items-start gap-3">
               <HelpCircle className="w-5 h-5 text-zinc-450 flex-shrink-0 mt-0.5" />

@@ -27,13 +27,16 @@ const DEFAULT_PROVIDERS: Record<string, ProviderConfig> = {
 
 interface AppState {
   llmConfig: LLMConfig;
-  activeTab: string;
+  activeTab: string; // 'upload' | 'contrast' | 'fusion'
   selectedNovelId: string | null;
   selectedChapterId: string | null;
+  splitRegexPreset: 'chinese' | 'english' | 'custom';
+  customSplitRegex: string;
   setLlmConfig: (config: Partial<LLMConfig>) => void;
   setActiveTab: (tab: string) => void;
   setSelectedNovelId: (id: string | null) => void;
   setSelectedChapterId: (id: string | null) => void;
+  setSplitRegex: (preset: 'chinese' | 'english' | 'custom', regex: string) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -50,6 +53,8 @@ export const useAppStore = create<AppState>()(
       activeTab: 'upload', // 'upload' | 'contrast' | 'fusion'
       selectedNovelId: null,
       selectedChapterId: null,
+      splitRegexPreset: 'chinese',
+      customSplitRegex: '^\\s*(第\\s*[一二三四五六七八九十百千万零\\d]+\\s*[章节回卷折篇幕].*?)$',
       setLlmConfig: (config) =>
         set((state) => {
           const updatedConfig = { ...state.llmConfig, ...config };
@@ -78,6 +83,7 @@ export const useAppStore = create<AppState>()(
       setActiveTab: (tab) => set({ activeTab: tab }),
       setSelectedNovelId: (id) => set({ selectedNovelId: id, selectedChapterId: null }),
       setSelectedChapterId: (id) => set({ selectedChapterId: id }),
+      setSplitRegex: (preset, regex) => set({ splitRegexPreset: preset, customSplitRegex: regex }),
     }),
     {
       name: 'novel-fusion-store', // name of the item in the storage (must be unique)
