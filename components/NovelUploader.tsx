@@ -1,29 +1,54 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Novel, type Chapter } from '../app/db';
+import { db, type Chapter, type Novel, type SplitMeta, type SplitStatus, type SplitStrategyId } from '../app/db';
 import { useAppStore } from '../app/store';
-import { Upload, BookOpen, AlertTriangle, Play, CheckCircle2, AlertCircle, Trash2, Cpu, Loader2 } from 'lucide-react';
+import { AlertCircle, AlertTriangle, BookOpen, CheckCircle2, Cpu, Loader2, Play, Trash2, Upload } from 'lucide-react';
 import jschardet from 'jschardet';
 
 const MAX_UPLOAD_SIZE_MB = 50;
 const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
 const LARGE_FILE_THRESHOLD_BYTES = 20 * 1024 * 1024;
 const READ_CHUNK_SIZE_BYTES = 512 * 1024;
-const CHAPTER_BULK_SAVE_SIZE = 80;
-const DEFAULT_CHAPTER_REGEX = '^\\s*(第\\s*[一二三四五六七八九十百千万零\\d]+\\s*[章节回卷折篇幕].*?)$';
+const SHORT_CHAPTER_CHAR_LIMIT = 120;
+const DEFAULT_CUSTOM_REGEX = '^\\s*(第\\s*[零〇一二三四五六七八九十百千万两\\d]+\\s*[章节回卷篇幕节].*?)$';
+
+const STRATEGY_ORDER: Array<Exclude<SplitStrategyId, 'custom'>> = ['zh_strict', 'zh_extended', 'mixed', 'en_basic'];
+
+const STRATEGY_LABELS: Record<SplitStrategyId, string> = {
+  zh_strict: '中文标准',
+  zh_extended: '中文扩展',
+  mixed: '中英混合',
+  en_basic: '英文标准',
+  custom: '自定义正则',
+};
+
+const STRATEGY_REGEX: Record<Exclude<SplitStrategyId, 'custom'>, string> = {
+  zh_strict: '^\\s*(第\\s*[零〇一二三四五六七八九十百千万两\\d]+\\s*[章节回卷篇幕节].*?)$',
+  zh_extended: '^\\s*((?:第\\s*[零〇一二三四五六七八九十百千万两\\d]+\\s*[章节回卷篇幕节]|序章|楔子|引子|前言|后记|尾声|终章|番外|完结感言)\\s*.*?)$',
+  mixed: '^\\s*((?:第\\s*[零〇一二三四五六七八九十百千万两\\d]+\\s*[章节回卷篇幕节].*|(?:序章|楔子|引子|前言|后记|尾声|终章|番外|完结感言).*|(?:Chapter|CHAPTER|chapter)\\s*\\d+.*))$',
+  en_basic: '^\\s*((?:Chapter|CHAPTER|chapter)\\s*\\d+.*?)$',
+};
 
 type UploadStage = 'idle' | 'detecting' | 'reading' | 'splitting' | 'saving';
+type Encoding = 'UTF-8' | 'GB18030' | 'UTF-16LE';
 
-interface StreamImportResult {
-  firstChapterId: string | null;
-  removedCount: number;
-  totalWords: number;
+interface ParsedChapter {
+  title: string;
+  content: string;
+  wordCount: number;
+  chapterIndex: number;
 }
 
-interface ChapterAccumulator {
-  lineCount: number;
-  lines: string[];
-  title: string;
+interface SplitCandidate {
+  strategyId: SplitStrategyId;
+  chapters: ParsedChapter[];
+  splitStatus: SplitStatus;
+  splitMeta: SplitMeta;
+}
+
+interface CleanedTextResult {
+  cleanedText: string;
+  removedCount: number;
 }
 
 const adPatterns: RegExp[] = [
@@ -50,11 +75,15 @@ const adPatterns: RegExp[] = [
 const adKeywords = [
   '下载app', '最新域名', '官方微信', '关注公众号', '加入书签',
   '手机阅读', '点击下载', '投月票', '收藏本书', '安卓版', '苹果版',
-  '点击下一页', '无广告', '免费阅读', '首发于', '笔趣阁'
+  '点击下一页', '无广告', '免费阅读', '首发于', '笔趣阁',
 ];
 
 function formatSizeInMb(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
+function normalizeText(text: string): string {
+  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
 function toLineRegex(pattern: string): RegExp {
@@ -113,153 +142,242 @@ async function pauseToKeepUiResponsive(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-// Split novel text into chapters
-export function splitNovel(text: string, customRegexStr?: string): { title: string; content: string; wordCount: number; chapterIndex: number }[] {
-  // Normalize line endings
-  const normalizedText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  
-  // Set default pattern or use custom input
-  let regex = /^\s*(第\s*[一二三四五六七八九十百千万零\d]+\s*[章节回卷折篇幕].*?)$/gm;
-  if (customRegexStr) {
-    try {
-      regex = new RegExp(customRegexStr, 'gm');
-    } catch (err) {
-      console.warn('Invalid regex provided, using default pattern', err);
-    }
-  }
-  
-  const chapters: { title: string; content: string; wordCount: number; chapterIndex: number }[] = [];
-  
-  let match;
+export function splitNovel(text: string, regexPattern: string): ParsedChapter[] {
+  const normalizedText = normalizeText(text);
+  const regex = new RegExp(regexPattern, 'gm');
   const positions: { title: string; index: number }[] = [];
-  
+
+  let match: RegExpExecArray | null;
   while ((match = regex.exec(normalizedText)) !== null) {
     const title = (match[1] || match[0] || '').trim();
     if (title) {
-      positions.push({
-        title,
-        index: match.index
-      });
+      positions.push({ title, index: match.index });
     }
   }
-  
+
   if (positions.length === 0) {
-    // Fallback: treat the whole file as a single chapter
     return [{
       title: '第一章 正文',
       content: normalizedText,
       wordCount: normalizedText.length,
-      chapterIndex: 1
+      chapterIndex: 1,
     }];
   }
-  
+
+  const chapters: ParsedChapter[] = [];
   for (let i = 0; i < positions.length; i++) {
     const current = positions[i];
     const next = positions[i + 1];
     const start = current.index;
     const end = next ? next.index : normalizedText.length;
-    
     const content = normalizedText.slice(start, end).trim();
     chapters.push({
       title: current.title,
-      content: content,
+      content,
       wordCount: content.length,
-      chapterIndex: i + 1
+      chapterIndex: i + 1,
     });
   }
-  
+
   return chapters;
 }
 
-// Clean text: removes ads, watermarks, duplicate empty lines, and short promotional paragraphs
-export function cleanText(text: string): { cleanedText: string; removedCount: number } {
+export function cleanText(text: string): CleanedTextResult {
   const originalLength = text.length;
+  const normalizedText = normalizeText(text);
+  const lines = normalizedText.split('\n');
 
-  // 1. Normalize line endings
-  let cleaned = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-
-  for (const pattern of adPatterns) {
-    cleaned = cleaned.replace(pattern, '');
-  }
-
-  // 3. Line-by-line smart filtering for short promotional paragraphs (under 35 chars)
-  const lines = cleaned.split('\n');
-  const cleanedLines = lines.map(line => {
-    const l = line.trim();
-    if (l.length === 0) return '';
-
-    // Suspicious promotional keywords
-    const lowerLine = l.toLowerCase();
-    if (l.length < 35 && adKeywords.some(kw => lowerLine.includes(kw))) {
-      return ''; // Strip this promotional line entirely
-    }
-
-    return line; // Keep original line with original indentation
-  });
-
-  // 4. Remove consecutive duplicate empty lines
   const finalLines: string[] = [];
   let prevEmpty = false;
+  let removedCount = 0;
 
-  for (const line of cleanedLines) {
-    if (line.trim() === '') {
+  for (const rawLine of lines) {
+    const { cleanedLine, removedCount: removed } = cleanLine(rawLine);
+    removedCount += removed;
+    const trimmed = cleanedLine.trim();
+    if (trimmed === '') {
       if (!prevEmpty) {
         finalLines.push('');
-        prevEmpty = true;
       }
+      prevEmpty = true;
     } else {
-      finalLines.push(line);
+      finalLines.push(cleanedLine);
       prevEmpty = false;
     }
   }
 
   const cleanedText = finalLines.join('\n').trim();
-  const removedCount = Math.max(0, originalLength - cleanedText.length);
+  return {
+    cleanedText,
+    removedCount: Math.max(removedCount, Math.max(0, originalLength - cleanedText.length)),
+  };
+}
 
-  return { cleanedText, removedCount };
+export function evaluateSplitQuality(chapters: ParsedChapter[], totalChars: number): {
+  splitStatus: SplitStatus;
+  chapterCount: number;
+  avgChapterChars: number;
+  maxChapterRatio: number;
+  shortChapterRatio: number;
+} {
+  const chapterCount = chapters.length;
+  const totalWords = chapters.reduce((sum, chapter) => sum + chapter.wordCount, 0);
+  const avgChapterChars = chapterCount > 0 ? totalWords / chapterCount : 0;
+  const maxChapterChars = chapters.reduce((max, chapter) => Math.max(max, chapter.wordCount), 0);
+  const maxChapterRatio = totalChars > 0 ? maxChapterChars / totalChars : 1;
+  const shortCount = chapters.filter((chapter) => chapter.wordCount < SHORT_CHAPTER_CHAR_LIMIT).length;
+  const shortChapterRatio = chapterCount > 0 ? shortCount / chapterCount : 1;
+
+  let splitStatus: SplitStatus;
+  if (totalChars >= 12000) {
+    splitStatus = chapterCount >= 3
+      && avgChapterChars >= 300
+      && avgChapterChars <= 12000
+      && maxChapterRatio <= 0.8
+      && shortChapterRatio <= 0.4
+      ? 'ok'
+      : 'needs_review';
+  } else {
+    splitStatus = chapterCount >= 1 && maxChapterRatio <= 0.95 ? 'ok' : 'needs_review';
+  }
+
+  return {
+    splitStatus,
+    chapterCount,
+    avgChapterChars,
+    maxChapterRatio,
+    shortChapterRatio,
+  };
+}
+
+function buildSplitMeta(strategyId: SplitStrategyId, quality: ReturnType<typeof evaluateSplitQuality>): SplitMeta {
+  return {
+    strategyId,
+    chapterCount: quality.chapterCount,
+    avgChapterChars: quality.avgChapterChars,
+    maxChapterRatio: quality.maxChapterRatio,
+    shortChapterRatio: quality.shortChapterRatio,
+    updatedAt: Date.now(),
+  };
+}
+
+export function runSplitWithStrategy(
+  text: string,
+  strategyId: SplitStrategyId,
+  customRegex?: string,
+): SplitCandidate {
+  const regexPattern = strategyId === 'custom'
+    ? (customRegex?.trim() ? customRegex : DEFAULT_CUSTOM_REGEX)
+    : STRATEGY_REGEX[strategyId];
+
+  const chapters = splitNovel(text, regexPattern);
+  const quality = evaluateSplitQuality(chapters, text.length);
+  return {
+    strategyId,
+    chapters,
+    splitStatus: quality.splitStatus,
+    splitMeta: buildSplitMeta(strategyId, quality),
+  };
+}
+
+function compareCandidates(a: SplitCandidate, b: SplitCandidate): SplitCandidate {
+  if (a.splitMeta.chapterCount !== b.splitMeta.chapterCount) {
+    return a.splitMeta.chapterCount > b.splitMeta.chapterCount ? a : b;
+  }
+  if (a.splitMeta.maxChapterRatio !== b.splitMeta.maxChapterRatio) {
+    return a.splitMeta.maxChapterRatio < b.splitMeta.maxChapterRatio ? a : b;
+  }
+  if (a.splitMeta.shortChapterRatio !== b.splitMeta.shortChapterRatio) {
+    return a.splitMeta.shortChapterRatio < b.splitMeta.shortChapterRatio ? a : b;
+  }
+  return a.splitMeta.avgChapterChars >= b.splitMeta.avgChapterChars ? a : b;
+}
+
+export function autoSplit(text: string): SplitCandidate {
+  let bestCandidate: SplitCandidate | null = null;
+
+  for (const strategy of STRATEGY_ORDER) {
+    const candidate = runSplitWithStrategy(text, strategy);
+    if (candidate.splitStatus === 'ok') {
+      return candidate;
+    }
+    bestCandidate = bestCandidate ? compareCandidates(bestCandidate, candidate) : candidate;
+  }
+
+  return bestCandidate || runSplitWithStrategy(text, 'zh_strict');
+}
+
+function chaptersToDbRows(novelId: string, parsedChapters: ParsedChapter[]): Chapter[] {
+  return parsedChapters.map((chapter) => ({
+    id: crypto.randomUUID(),
+    novelId,
+    chapterIndex: chapter.chapterIndex,
+    name: chapter.title,
+    wordCount: chapter.wordCount,
+    content: chapter.content,
+    status: 'unparsed',
+  }));
 }
 
 export default function NovelUploader() {
-  const { 
-    llmConfig, 
-    selectedNovelId, 
-    setSelectedNovelId, 
-    selectedChapterId, 
-    setSelectedChapterId,
-    splitRegexPreset,
-    customSplitRegex,
-    setSplitRegex
-  } = useAppStore();
+  const { llmConfig, selectedNovelId, setSelectedNovelId, selectedChapterId, setSelectedChapterId } = useAppStore();
+
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [uploadStage, setUploadStage] = useState<UploadStage>('idle');
   const [uploadStageText, setUploadStageText] = useState('');
-  const [parsingQueue, setParsingQueue] = useState<Record<string, boolean>>({}); // tracking parsing states
-  
-  // 检索、筛选、分页与分章规则配置状态
+  const [parsingQueue, setParsingQueue] = useState<Record<string, boolean>>({});
+
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'unparsed' | 'parsing' | 'done' | 'error'>('all');
   const [currentPage, setCurrentPage] = useState(1);
-  const [showRegexConfig, setShowRegexConfig] = useState(false);
+
+  const [showRepairPanel, setShowRepairPanel] = useState(false);
+  const [repairStrategy, setRepairStrategy] = useState<SplitStrategyId>('zh_extended');
+  const [repairRegex, setRepairRegex] = useState(DEFAULT_CUSTOM_REGEX);
+  const [repairing, setRepairing] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Live query novels and chapters
   const novels = useLiveQuery<Novel[]>(() => db.novels.reverse().toArray(), []) || [];
   const chapters = useLiveQuery<Chapter[]>(() => {
     if (!selectedNovelId) return [];
     return db.chapters.where('novelId').equals(selectedNovelId).sortBy('chapterIndex');
   }, [selectedNovelId]) || [];
 
-  const activeNovel = novels.find(n => n.id === selectedNovelId);
+  const activeNovel = novels.find((n) => n.id === selectedNovelId) || null;
+
+  useEffect(() => {
+    const recoverStaleParsing = async () => {
+      const staleChapters = await db.chapters.where('status').equals('parsing').toArray();
+      if (staleChapters.length === 0) return;
+      await Promise.all(staleChapters.map((chapter) => db.chapters.update(chapter.id, {
+        status: 'error',
+        errorMsg: chapter.errorMsg || '上次解析任务已中断，请重试。',
+      })));
+    };
+    void recoverStaleParsing();
+  }, []);
+
+  useEffect(() => {
+    setShowRepairPanel(activeNovel?.splitStatus === 'needs_review');
+  }, [activeNovel?.id, activeNovel?.splitStatus]);
+
+  const stageLabelMap: Record<UploadStage, string> = {
+    idle: '待开始',
+    detecting: '检测编码中',
+    reading: '读取文本中',
+    splitting: '切章处理中',
+    saving: '写入本地库中',
+  };
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
+    if (e.type === 'dragenter' || e.type === 'dragover') {
       setDragActive(true);
-    } else if (e.type === "dragleave") {
+    } else if (e.type === 'dragleave') {
       setDragActive(false);
     }
   };
@@ -268,7 +386,6 @@ export default function NovelUploader() {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       await processFile(e.dataTransfer.files[0]);
     }
@@ -281,19 +398,10 @@ export default function NovelUploader() {
     e.target.value = '';
   };
 
-  const stageLabelMap: Record<UploadStage, string> = {
-    idle: '待开始',
-    detecting: '检测编码中',
-    reading: '读取文本中',
-    splitting: '切章处理中',
-    saving: '写入本地库中',
-  };
-
-  const detectEncoding = async (file: File): Promise<'UTF-8' | 'GB18030' | 'UTF-16LE'> => {
+  const detectEncoding = async (file: File): Promise<Encoding> => {
     try {
       const detectLength = Math.min(file.size, 50000);
       const detectBuffer = new Uint8Array(await readBlobAsArrayBuffer(file.slice(0, detectLength)));
-
       let binaryStr = '';
       for (let i = 0; i < detectBuffer.length; i++) {
         binaryStr += String.fromCharCode(detectBuffer[i]);
@@ -311,10 +419,10 @@ export default function NovelUploader() {
 
       let normalizedEncoding = encoding.toUpperCase();
       if (
-        normalizedEncoding.includes('GB2312') ||
-        normalizedEncoding.includes('GBK') ||
-        normalizedEncoding.includes('GB18030') ||
-        normalizedEncoding.includes('WINDOWS-936')
+        normalizedEncoding.includes('GB2312')
+        || normalizedEncoding.includes('GBK')
+        || normalizedEncoding.includes('GB18030')
+        || normalizedEncoding.includes('WINDOWS-936')
       ) {
         normalizedEncoding = 'GB18030';
       } else if (normalizedEncoding.includes('UTF-8') || normalizedEncoding.includes('ASCII')) {
@@ -336,20 +444,13 @@ export default function NovelUploader() {
         }
       }
 
-      return normalizedEncoding as 'UTF-8' | 'GB18030' | 'UTF-16LE';
+      return normalizedEncoding as Encoding;
     } catch {
       throw new Error('编码失败：无法检测文本编码');
     }
   };
 
-  const flushChapterBatch = async (batch: Chapter[]): Promise<void> => {
-    if (batch.length === 0) return;
-    await db.chapters.bulkAdd(batch);
-    batch.length = 0;
-    await pauseToKeepUiResponsive();
-  };
-
-  const readTextWithEncoding = async (file: File, encoding: 'UTF-8' | 'GB18030' | 'UTF-16LE'): Promise<string> => {
+  const readTextWithEncoding = async (file: File, encoding: Encoding): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (ev) => {
@@ -365,160 +466,54 @@ export default function NovelUploader() {
     });
   };
 
-  const saveSmallFileByWholeParse = async (
-    file: File,
-    encoding: 'UTF-8' | 'GB18030' | 'UTF-16LE',
-    novelId: string,
-  ): Promise<StreamImportResult> => {
-    setUploadStage('reading');
-    setUploadStageText(`正在读取 ${formatSizeInMb(file.size)} 文本...`);
-    const text = await readTextWithEncoding(file, encoding);
-
-    setUploadStage('splitting');
-    setUploadStageText('正在清洗与切分章节...');
-    const { cleanedText, removedCount } = cleanText(text);
-    const customRegexForSmallFile = splitRegexPreset === 'custom' ? customSplitRegex : undefined;
-    const splitResult = splitNovel(cleanedText, customRegexForSmallFile);
-
-    setUploadStage('saving');
-    setUploadStageText(`正在入库 ${splitResult.length} 章...`);
-    const chaptersToSave: Chapter[] = splitResult.map((c) => ({
-      id: crypto.randomUUID(),
-      novelId,
-      chapterIndex: c.chapterIndex,
-      name: c.title,
-      wordCount: c.wordCount,
-      content: c.content,
-      status: 'unparsed'
-    }));
-    try {
-      await db.chapters.bulkAdd(chaptersToSave);
-    } catch (err: any) {
-      throw new Error(`入库失败：${err?.message || '章节批量写入失败'}`);
+  const ensureStorageCapacity = async (file: File): Promise<void> => {
+    const storageManager = (navigator as Navigator & { storage?: StorageManager }).storage;
+    if (!storageManager || typeof storageManager.estimate !== 'function') {
+      return;
     }
 
-    return {
-      firstChapterId: chaptersToSave[0]?.id || null,
-      removedCount,
-      totalWords: splitResult.reduce((sum, c) => sum + c.wordCount, 0),
-    };
+    try {
+      const estimate = await storageManager.estimate();
+      const quota = estimate.quota ?? 0;
+      const usage = estimate.usage ?? 0;
+      if (!quota) return;
+
+      const freeBytes = quota - usage;
+      const requiredBytes = Math.max(file.size * 2.2, 8 * 1024 * 1024);
+      if (freeBytes < requiredBytes) {
+        throw new Error(`本地存储空间可能不足：可用约 ${formatSizeInMb(Math.max(0, freeBytes))}，导入预计至少需要 ${formatSizeInMb(requiredBytes)}。请清理部分小说后重试。`);
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('本地存储空间')) {
+        throw err;
+      }
+    }
   };
 
-  const saveLargeFileByStreaming = async (
-    file: File,
-    encoding: 'UTF-8' | 'GB18030' | 'UTF-16LE',
-    novelId: string,
-    chapterTitleRegex: RegExp,
-  ): Promise<StreamImportResult> => {
+  const readAndCleanLargeFile = async (file: File, encoding: Encoding): Promise<CleanedTextResult> => {
     setUploadStage('reading');
     setUploadStageText(`大文件模式：分块读取 (${formatSizeInMb(file.size)})`);
 
     const decoder = new TextDecoder(encoding.toLowerCase());
-    const chapterBuffer: Chapter[] = [];
-    const pendingLines: string[] = [];
+    const cleanedLines: string[] = [];
     let pendingFragment = '';
     let previousLineWasEmpty = false;
-    let currentChapter: ChapterAccumulator | null = null;
     let removedCount = 0;
-    let totalWords = 0;
-    let chapterIndex = 0;
-    let firstChapterId: string | null = null;
     let totalRead = 0;
 
-    const pushLine = (line: string) => {
-      const normalizedLine = line.replace(/\r/g, '');
+    const pushLine = (rawLine: string) => {
+      const normalizedLine = rawLine.replace(/\r/g, '');
       const { cleanedLine, removedCount: removed } = cleanLine(normalizedLine);
       removedCount += removed;
-
-      const titleMatch = chapterTitleRegex.exec(cleanedLine);
-      chapterTitleRegex.lastIndex = 0;
-      if (titleMatch) {
-        if (currentChapter && currentChapter.lineCount > 0) {
-          const chapterContent = currentChapter.lines.join('\n').trim();
-          if (chapterContent.length > 0) {
-            chapterIndex += 1;
-            totalWords += chapterContent.length;
-            const chapterId = crypto.randomUUID();
-            chapterBuffer.push({
-              id: chapterId,
-              novelId,
-              chapterIndex,
-              name: currentChapter.title,
-              wordCount: chapterContent.length,
-              content: chapterContent,
-              status: 'unparsed',
-            });
-            if (!firstChapterId) {
-              firstChapterId = chapterId;
-            }
-          }
+      const trimmed = cleanedLine.trim();
+      if (trimmed === '') {
+        if (!previousLineWasEmpty) {
+          cleanedLines.push('');
         }
-
-        currentChapter = {
-          title: (titleMatch[1] || titleMatch[0] || '').trim() || `第${chapterIndex + 1}章`,
-          lines: [cleanedLine],
-          lineCount: 1,
-        };
-        previousLineWasEmpty = cleanedLine.trim() === '';
-        return;
-      }
-
-      const shouldAppendLine = cleanedLine.trim() !== '' || !previousLineWasEmpty;
-      if (!currentChapter) {
-        currentChapter = {
-          title: '第一章 正文',
-          lines: [],
-          lineCount: 0,
-        };
-      }
-      if (shouldAppendLine) {
-        currentChapter.lines.push(cleanedLine);
-        currentChapter.lineCount += 1;
-      }
-      previousLineWasEmpty = cleanedLine.trim() === '';
-    };
-
-    const flushLines = async (isFinal: boolean) => {
-      for (let i = 0; i < pendingLines.length; i++) {
-        pushLine(pendingLines[i]);
-      }
-      pendingLines.length = 0;
-
-      if (isFinal) {
-        if (pendingFragment.length > 0) {
-          pushLine(pendingFragment);
-          pendingFragment = '';
-        }
-        if (currentChapter && currentChapter.lineCount > 0) {
-          const chapterContent = currentChapter.lines.join('\n').trim();
-          if (chapterContent.length > 0) {
-            chapterIndex += 1;
-            totalWords += chapterContent.length;
-            const chapterId = crypto.randomUUID();
-            chapterBuffer.push({
-              id: chapterId,
-              novelId,
-              chapterIndex,
-              name: currentChapter.title,
-              wordCount: chapterContent.length,
-              content: chapterContent,
-              status: 'unparsed',
-            });
-            if (!firstChapterId) {
-              firstChapterId = chapterId;
-            }
-          }
-        }
-      }
-
-      if (chapterBuffer.length >= CHAPTER_BULK_SAVE_SIZE || (isFinal && chapterBuffer.length > 0)) {
-        setUploadStage('saving');
-        setUploadStageText(`大文件模式：已切分 ${chapterIndex} 章，分批入库中...`);
-        try {
-          await flushChapterBatch(chapterBuffer);
-        } catch (err: any) {
-          throw new Error(`入库失败：${err?.message || '章节分批写入失败'}`);
-        }
+        previousLineWasEmpty = true;
+      } else {
+        cleanedLines.push(cleanedLine);
+        previousLineWasEmpty = false;
       }
     };
 
@@ -526,124 +521,38 @@ export default function NovelUploader() {
       const chunk = file.slice(offset, offset + READ_CHUNK_SIZE_BYTES);
       const bytes = new Uint8Array(await readBlobAsArrayBuffer(chunk));
       totalRead += bytes.byteLength;
-      setUploadStage('reading');
-      setUploadStageText(`分块读取进度：${Math.min(100, Math.floor((totalRead / file.size) * 100))}%`);
 
       const decodedText = decoder.decode(bytes, { stream: true });
       pendingFragment += decodedText;
       const splitByLine = pendingFragment.split('\n');
       pendingFragment = splitByLine.pop() ?? '';
-      pendingLines.push(...splitByLine);
+      splitByLine.forEach(pushLine);
 
-      setUploadStage('splitting');
-      setUploadStageText(`正在切章：已处理 ${formatSizeInMb(totalRead)} / ${formatSizeInMb(file.size)}`);
-      await flushLines(false);
+      setUploadStage('reading');
+      setUploadStageText(`分块读取进度：${Math.min(100, Math.floor((totalRead / file.size) * 100))}%`);
+      await pauseToKeepUiResponsive();
     }
 
     pendingFragment += decoder.decode();
-    await flushLines(true);
-
-    if (chapterIndex === 0) {
-      throw new Error('分章失败：没有解析到有效章节内容');
+    if (pendingFragment.length > 0) {
+      pushLine(pendingFragment);
     }
 
-    return {
-      firstChapterId,
-      removedCount,
-      totalWords,
-    };
+    const cleanedText = cleanedLines.join('\n').trim();
+    return { cleanedText, removedCount };
   };
 
-  const processFile = async (file: File) => {
-    if (uploading) {
-      return;
-    }
-    if (!file.name.toLowerCase().endsWith('.txt')) {
-      setErrorMsg('只支持上传 .txt 格式的小说文本');
-      return;
-    }
-    if (file.size > MAX_UPLOAD_SIZE_BYTES) {
-      setErrorMsg(`文件过大，最大支持 ${MAX_UPLOAD_SIZE_MB}MB`);
-      return;
+  const loadAndCleanText = async (file: File, encoding: Encoding): Promise<CleanedTextResult> => {
+    if (file.size > LARGE_FILE_THRESHOLD_BYTES) {
+      return readAndCleanLargeFile(file, encoding);
     }
 
-    const isLargeFileMode = file.size > LARGE_FILE_THRESHOLD_BYTES;
-    if (isLargeFileMode && splitRegexPreset === 'custom') {
-      if (!customSplitRegex.trim()) {
-        setErrorMsg('请先填写有效的自定义分章正则表达式');
-        return;
-      }
-      const lineRegexValidationError = validateLineRegex(customSplitRegex);
-      if (lineRegexValidationError) {
-        setErrorMsg(lineRegexValidationError);
-        return;
-      }
-    }
-
-    setUploading(true);
-    setUploadStage('detecting');
-    setUploadStageText('正在检测编码...');
-    setErrorMsg(null);
-
-    const novelId = crypto.randomUUID();
-    const novelName = file.name.replace(/\.[^/.]+$/, "");
-
-    try {
-      const encoding = await detectEncoding(file);
-
-      let importResult: StreamImportResult;
-      if (isLargeFileMode) {
-        let chapterTitleRegex: RegExp;
-        try {
-          chapterTitleRegex = splitRegexPreset === 'custom'
-            ? toLineRegex(customSplitRegex)
-            : toLineRegex(DEFAULT_CHAPTER_REGEX);
-        } catch {
-          throw new Error('分章失败：自定义分章正则表达式无效');
-        }
-        importResult = await saveLargeFileByStreaming(file, encoding, novelId, chapterTitleRegex);
-      } else {
-        importResult = await saveSmallFileByWholeParse(file, encoding, novelId);
-      }
-
-      // Save novel to db
-      await db.novels.add({
-        id: novelId,
-        name: novelName,
-        wordCount: importResult.totalWords,
-        createdAt: Date.now(),
-        purifiedCount: importResult.removedCount
-      });
-      
-      setSelectedNovelId(novelId);
-      if (importResult.firstChapterId) {
-        setSelectedChapterId(importResult.firstChapterId);
-      }
-    } catch (err: any) {
-      await db.chapters.where('novelId').equals(novelId).delete();
-      await db.novels.delete(novelId);
-      setErrorMsg(err?.message || '文件解析入库失败');
-    } finally {
-      setUploading(false);
-      setUploadStage('idle');
-      setUploadStageText('');
-    }
+    setUploadStage('reading');
+    setUploadStageText(`正在读取 ${formatSizeInMb(file.size)} 文本...`);
+    const text = await readTextWithEncoding(file, encoding);
+    return cleanText(text);
   };
 
-  const deleteNovel = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm('确认删除这部小说及其所有章节解析吗？')) return;
-    
-    await db.novels.delete(id);
-    await db.chapters.where('novelId').equals(id).delete();
-    
-    if (selectedNovelId === id) {
-      setSelectedNovelId(null);
-      setSelectedChapterId(null);
-    }
-  };
-
-  // Parse a single chapter using LLM
   const parseChapter = async (chapter: Chapter) => {
     if (!llmConfig.apiKey) {
       alert('请先配置大模型 API Key！(在右上角设置面板)');
@@ -651,7 +560,10 @@ export default function NovelUploader() {
     }
 
     setParsingQueue((prev) => ({ ...prev, [chapter.id]: true }));
-    await db.chapters.update(chapter.id, { status: 'parsing', errorMsg: undefined });
+    await db.chapters.update(chapter.id, {
+      status: 'parsing',
+      errorMsg: undefined,
+    });
 
     try {
       const response = await fetch('/api/py/parse-chapter', {
@@ -661,7 +573,7 @@ export default function NovelUploader() {
         },
         body: JSON.stringify({
           title: chapter.name,
-          content: chapter.content.slice(0, 15000), // Limit tokens for parsing
+          content: chapter.content.slice(0, 15000),
           apiKey: llmConfig.apiKey,
           baseUrl: llmConfig.baseUrl,
           model: llmConfig.model,
@@ -677,58 +589,218 @@ export default function NovelUploader() {
       const analysis = await response.json();
       await db.chapters.update(chapter.id, {
         status: 'done',
-        analysis: analysis
+        analysis,
       });
     } catch (err: any) {
-      console.error(err);
       await db.chapters.update(chapter.id, {
         status: 'error',
-        errorMsg: err.message || '大模型解析出错'
+        errorMsg: err.message || '大模型解析出错',
       });
     } finally {
       setParsingQueue((prev) => ({ ...prev, [chapter.id]: false }));
     }
   };
 
-  // Parallel parsing queue scheduler (Max concurrency = 3)
-  const parseAllChapters = async () => {
-    if (!llmConfig.apiKey) {
-      alert('请先配置大模型 API Key！');
-      return;
-    }
-
-    const unparsedChapters = chapters.filter(c => c.status !== 'done');
-    if (unparsedChapters.length === 0) {
-      alert('所有章节都已解析完毕！');
-      return;
-    }
-
-    if (!confirm(`准备解析 ${unparsedChapters.length} 个章节，由于调用大模型可能产生流量和延迟，确定一键解析吗？`)) return;
-
+  const parseChaptersInParallel = async (targets: Chapter[]) => {
     const concurrencyLimit = 3;
     let index = 0;
 
     const worker = async () => {
-      while (index < unparsedChapters.length) {
+      while (index < targets.length) {
         const currentIdx = index++;
-        const chapter = unparsedChapters[currentIdx];
+        const chapter = targets[currentIdx];
         await parseChapter(chapter);
       }
     };
 
-    // Spawn 3 concurrent workers
     const workers = [];
-    for (let i = 0; i < Math.min(concurrencyLimit, unparsedChapters.length); i++) {
+    for (let i = 0; i < Math.min(concurrencyLimit, targets.length); i++) {
       workers.push(worker());
     }
 
     await Promise.all(workers);
   };
 
-  // 动态检索、筛选与分页计算
-  const filteredChapters = chapters.filter((c) => {
-    const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
+  const parseAllChapters = async () => {
+    if (!llmConfig.apiKey) {
+      alert('请先配置大模型 API Key！');
+      return;
+    }
+
+    const targets = chapters.filter((chapter) => chapter.status === 'unparsed' || chapter.status === 'error');
+    if (targets.length === 0) {
+      alert('没有可解析章节（待解析/失败章节为空）。');
+      return;
+    }
+
+    if (!confirm(`准备解析 ${targets.length} 个章节，由于调用大模型可能产生流量和延迟，确定继续吗？`)) {
+      return;
+    }
+
+    await parseChaptersInParallel(targets);
+  };
+
+  const retryFailedChapters = async () => {
+    if (!llmConfig.apiKey) {
+      alert('请先配置大模型 API Key！');
+      return;
+    }
+
+    const failedChapters = chapters.filter((chapter) => chapter.status === 'error');
+    if (failedChapters.length === 0) {
+      alert('当前没有解析失败章节。');
+      return;
+    }
+
+    if (!confirm(`准备重试 ${failedChapters.length} 个失败章节，确定继续吗？`)) {
+      return;
+    }
+
+    await parseChaptersInParallel(failedChapters);
+  };
+
+  const processFile = async (file: File) => {
+    if (uploading || repairing) return;
+
+    if (!file.name.toLowerCase().endsWith('.txt')) {
+      setErrorMsg('只支持上传 .txt 格式的小说文本');
+      return;
+    }
+
+    if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+      setErrorMsg(`文件过大，最大支持 ${MAX_UPLOAD_SIZE_MB}MB`);
+      return;
+    }
+
+    setUploading(true);
+    setUploadStage('detecting');
+    setUploadStageText('正在检测编码...');
+    setErrorMsg(null);
+
+    const novelId = crypto.randomUUID();
+    const novelName = file.name.replace(/\.[^/.]+$/, '');
+
+    try {
+      await ensureStorageCapacity(file);
+      const encoding = await detectEncoding(file);
+      const { cleanedText, removedCount } = await loadAndCleanText(file, encoding);
+
+      setUploadStage('splitting');
+      setUploadStageText('正在自动识别分章规则...');
+      const splitResult = autoSplit(cleanedText);
+      const chaptersToSave = chaptersToDbRows(novelId, splitResult.chapters);
+      const totalWords = splitResult.chapters.reduce((sum, chapter) => sum + chapter.wordCount, 0);
+
+      setUploadStage('saving');
+      setUploadStageText(`正在入库 ${chaptersToSave.length} 章...`);
+
+      await db.transaction('rw', db.novels, db.chapters, async () => {
+        await db.novels.add({
+          id: novelId,
+          name: novelName,
+          wordCount: totalWords,
+          createdAt: Date.now(),
+          purifiedCount: removedCount,
+          sourceTextCleaned: cleanedText,
+          splitStatus: splitResult.splitStatus,
+          splitMeta: splitResult.splitMeta,
+        });
+        await db.chapters.bulkAdd(chaptersToSave);
+      });
+
+      setSelectedNovelId(novelId);
+      if (chaptersToSave[0]) {
+        setSelectedChapterId(chaptersToSave[0].id);
+      }
+    } catch (err: any) {
+      setErrorMsg(err?.message || '文件解析入库失败');
+    } finally {
+      setUploading(false);
+      setUploadStage('idle');
+      setUploadStageText('');
+    }
+  };
+
+  const applyResplit = async () => {
+    if (!activeNovel || repairing || uploading) return;
+
+    if (!activeNovel.sourceTextCleaned.trim()) {
+      setErrorMsg('当前小说缺少原始文本缓存，请重新上传该小说以启用重切功能。');
+      return;
+    }
+
+    if (!confirm('重切将覆盖当前小说的章节列表，并清空已有章节解析结果。确定继续吗？')) {
+      return;
+    }
+
+    if (repairStrategy === 'custom') {
+      if (!repairRegex.trim()) {
+        setErrorMsg('请先填写有效的自定义正则表达式。');
+        return;
+      }
+      const regexValidationError = validateLineRegex(repairRegex);
+      if (regexValidationError) {
+        setErrorMsg(regexValidationError);
+        return;
+      }
+      try {
+        toLineRegex(repairRegex);
+      } catch {
+        setErrorMsg('分章失败：自定义分章正则表达式无效');
+        return;
+      }
+    }
+
+    setRepairing(true);
+    setErrorMsg(null);
+
+    try {
+      const splitResult = runSplitWithStrategy(
+        activeNovel.sourceTextCleaned,
+        repairStrategy,
+        repairStrategy === 'custom' ? repairRegex : undefined,
+      );
+      const chaptersToSave = chaptersToDbRows(activeNovel.id, splitResult.chapters);
+      const totalWords = splitResult.chapters.reduce((sum, chapter) => sum + chapter.wordCount, 0);
+
+      await db.transaction('rw', db.novels, db.chapters, async () => {
+        await db.chapters.where('novelId').equals(activeNovel.id).delete();
+        await db.chapters.bulkAdd(chaptersToSave);
+        await db.novels.update(activeNovel.id, {
+          wordCount: totalWords,
+          splitStatus: splitResult.splitStatus,
+          splitMeta: splitResult.splitMeta,
+        });
+      });
+
+      if (chaptersToSave[0]) {
+        setSelectedChapterId(chaptersToSave[0].id);
+      }
+    } catch (err: any) {
+      setErrorMsg(err?.message || '重切失败，请检查规则后重试。');
+    } finally {
+      setRepairing(false);
+    }
+  };
+
+  const deleteNovel = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('确认删除这部小说及其所有章节解析吗？')) return;
+
+    await db.transaction('rw', db.novels, db.chapters, async () => {
+      await db.chapters.where('novelId').equals(id).delete();
+      await db.novels.delete(id);
+    });
+
+    if (selectedNovelId === id) {
+      setSelectedNovelId(null);
+      setSelectedChapterId(null);
+    }
+  };
+
+  const filteredChapters = chapters.filter((chapter) => {
+    const matchesSearch = chapter.name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || chapter.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
@@ -740,15 +812,12 @@ export default function NovelUploader() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-auto lg:h-[calc(100vh-12rem)] min-h-0">
-      
-      {/* Left Column: Novel Library */}
       <div className="lg:col-span-1 bg-zinc-900/20 border border-zinc-800/80 rounded-2xl p-4 flex flex-col shadow-xl min-h-0">
         <h3 className="text-sm font-bold text-zinc-400 mb-3 px-1 uppercase tracking-wider">小说创意库</h3>
-        
-        {/* Upload Button Trigger */}
+
         <button
           onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
+          disabled={uploading || repairing}
           className="w-full py-3 mb-2 rounded-xl border border-dashed border-zinc-750 hover:border-zinc-550 bg-zinc-900/40 hover:bg-zinc-800/60 text-zinc-400 hover:text-zinc-200 font-semibold text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Upload className="w-4 h-4" />
@@ -761,12 +830,14 @@ export default function NovelUploader() {
           accept=".txt"
           className="hidden"
         />
+
         {uploading && (
           <div className="mb-3 px-3 py-2 rounded-lg bg-zinc-900/70 border border-zinc-800 text-zinc-300 text-[11px] flex items-center gap-2">
             <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-400" />
             <span>{stageLabelMap[uploadStage]}{uploadStageText ? `：${uploadStageText}` : ''}</span>
           </div>
         )}
+
         {!uploading && errorMsg && (
           <div className="mb-3 px-3 py-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[11px] flex items-center gap-2">
             <AlertTriangle className="w-3.5 h-3.5" />
@@ -774,88 +845,99 @@ export default function NovelUploader() {
           </div>
         )}
 
-        {/* 高级分章规则面板折叠开关 */}
-        <button
-          onClick={() => setShowRegexConfig(!showRegexConfig)}
-          className="w-full text-left px-2.5 py-2 mb-4 text-[10px] text-zinc-400 hover:text-zinc-200 transition-colors flex items-center justify-between border border-zinc-800/50 rounded-xl bg-zinc-950/20"
-        >
-          <span className="font-semibold">⚙️ 高级分章规则配置</span>
-          <span className="font-mono text-zinc-500">{showRegexConfig ? '收起 ▲' : '展开 ▼'}</span>
-        </button>
-
-        {/* 分章正则配置面板主体 */}
-        {showRegexConfig && (
-          <div className="p-3 mb-4 rounded-xl border border-zinc-850 bg-zinc-950/50 text-xs space-y-3 animate-fade-in">
-            <div>
-              <label className="text-[10px] text-zinc-500 font-bold block mb-1">规则预设类型</label>
-              <select
-                value={splitRegexPreset}
-                onChange={(e) => {
-                  const val = e.target.value as 'chinese' | 'english' | 'custom';
-                  let regex = '';
-                  if (val === 'chinese') {
-                    regex = '^\\s*(第\\s*[一二三四五六七八九十百千万零\\d]+\\s*[章节回卷折篇幕].*?)$';
-                  } else if (val === 'english') {
-                    regex = '^\\s*(Chapter\\s*\\d+.*?)$';
-                  } else {
-                    regex = customSplitRegex;
-                  }
-                  setSplitRegex(val, regex);
-                }}
-                className="w-full px-2 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 focus:outline-none text-[11px]"
+        {activeNovel?.splitStatus === 'needs_review' && (
+          <div className="mb-3 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px]">
+            <div className="flex items-center justify-between gap-2">
+              <span>切章质量可能异常，建议修复分章规则。</span>
+              <button
+                onClick={() => setShowRepairPanel((prev) => !prev)}
+                className="px-2 py-0.5 rounded border border-amber-400/40 hover:border-amber-300 text-[10px]"
               >
-                <option value="chinese">标准中文 (第X章/第X回)</option>
-                <option value="english">标准英文 (Chapter \d+)</option>
-                <option value="custom">自定义正则表达式</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] text-zinc-500 font-bold block mb-1">分章匹配正则表达式</label>
-              <input
-                type="text"
-                value={customSplitRegex}
-                disabled={splitRegexPreset !== 'custom'}
-                onChange={(e) => setSplitRegex('custom', e.target.value)}
-                placeholder="例如: ^\\s*(第\\s*[\\d]+\\s*章.*?)$"
-                className="w-full px-2 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-200 font-mono text-[10px] focus:outline-none disabled:opacity-50"
-              />
+                {showRepairPanel ? '收起' : '修复'}
+              </button>
             </div>
           </div>
         )}
 
-        {/* Novel List */}
+        {showRepairPanel && activeNovel?.splitStatus === 'needs_review' && (
+          <div className="p-3 mb-4 rounded-xl border border-zinc-850 bg-zinc-950/50 text-xs space-y-3">
+            <div className="text-[10px] text-zinc-500">
+              当前策略：{activeNovel.splitMeta ? STRATEGY_LABELS[activeNovel.splitMeta.strategyId] : '未知'}
+              {activeNovel.splitMeta && (
+                <span className="ml-2">章数 {activeNovel.splitMeta.chapterCount} / 平均 {Math.round(activeNovel.splitMeta.avgChapterChars)} 字</span>
+              )}
+            </div>
+
+            <div>
+              <label className="text-[10px] text-zinc-500 font-bold block mb-1">修复策略</label>
+              <select
+                value={repairStrategy}
+                onChange={(e) => setRepairStrategy(e.target.value as SplitStrategyId)}
+                className="w-full px-2 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 focus:outline-none text-[11px]"
+              >
+                <option value="zh_strict">中文标准</option>
+                <option value="zh_extended">中文扩展</option>
+                <option value="mixed">中英混合</option>
+                <option value="en_basic">英文标准</option>
+                <option value="custom">自定义正则</option>
+              </select>
+            </div>
+
+            {repairStrategy === 'custom' && (
+              <div>
+                <label className="text-[10px] text-zinc-500 font-bold block mb-1">自定义分章正则</label>
+                <input
+                  type="text"
+                  value={repairRegex}
+                  onChange={(e) => setRepairRegex(e.target.value)}
+                  placeholder="例如: ^\\s*(第\\s*[\\d]+\\s*章.*?)$"
+                  className="w-full px-2 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-200 font-mono text-[10px] focus:outline-none"
+                />
+              </div>
+            )}
+
+            {!activeNovel.sourceTextCleaned && (
+              <div className="text-[10px] text-rose-400">当前记录缺少原文缓存，无法重切。请重新上传该小说。</div>
+            )}
+
+            <button
+              onClick={applyResplit}
+              disabled={repairing || !activeNovel.sourceTextCleaned}
+              className="w-full py-2 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-900 text-[11px] font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {repairing ? '重切处理中...' : '应用修复并重切章节'}
+            </button>
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto space-y-2 pr-1">
           {novels.length === 0 ? (
-            <div className="text-center py-8 text-zinc-600 text-xs">
-              暂无小说，请先导入
-            </div>
+            <div className="text-center py-8 text-zinc-600 text-xs">暂无小说，请先导入</div>
           ) : (
-            novels.map((n) => (
+            novels.map((novel) => (
               <div
-                key={n.id}
+                key={novel.id}
                 onClick={() => {
-                  setSelectedNovelId(n.id);
+                  setSelectedNovelId(novel.id);
                   setCurrentPage(1);
                   setSearchQuery('');
                   setStatusFilter('all');
                 }}
                 className={`group p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
-                  selectedNovelId === n.id
+                  selectedNovelId === novel.id
                     ? 'bg-zinc-800/80 border-zinc-700 text-zinc-100'
                     : 'bg-zinc-950/20 border-zinc-900/80 hover:border-zinc-800 text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <BookOpen className={`w-4 h-4 flex-shrink-0 ${selectedNovelId === n.id ? 'text-zinc-300' : 'text-zinc-500'}`} />
+                  <BookOpen className={`w-4 h-4 flex-shrink-0 ${selectedNovelId === novel.id ? 'text-zinc-300' : 'text-zinc-500'}`} />
                   <div className="min-w-0">
-                    <p className="font-semibold text-sm truncate">{n.name}</p>
-                    <p className="text-[10px] text-zinc-500 mt-0.5 font-mono">
-                      {(n.wordCount / 10000).toFixed(1)}万字
-                    </p>
+                    <p className="font-semibold text-sm truncate">{novel.name}</p>
+                    <p className="text-[10px] text-zinc-500 mt-0.5 font-mono">{(novel.wordCount / 10000).toFixed(1)}万字</p>
                   </div>
                 </div>
                 <button
-                  onClick={(e) => deleteNovel(n.id, e)}
+                  onClick={(e) => deleteNovel(novel.id, e)}
                   className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/10 text-zinc-500 hover:text-red-400 rounded transition-all"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -866,19 +948,16 @@ export default function NovelUploader() {
         </div>
       </div>
 
-      {/* Middle & Right Column: Chapters & Parsing Interface */}
       <div className="lg:col-span-3 bg-zinc-900/20 border border-zinc-800/80 rounded-2xl p-6 flex flex-col shadow-xl min-h-0">
-        
-        {/* If no novel is selected */}
         {!selectedNovelId ? (
-          <div 
+          <div
             onDragEnter={handleDrag}
             onDragOver={handleDrag}
             onDragLeave={handleDrag}
             onDrop={handleDrop}
             className={`flex-1 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center p-8 transition-all ${
-              dragActive 
-                ? 'border-zinc-500 bg-zinc-900/30' 
+              dragActive
+                ? 'border-zinc-500 bg-zinc-900/30'
                 : 'border-zinc-800 hover:border-zinc-700 bg-zinc-950/20'
             }`}
           >
@@ -887,7 +966,7 @@ export default function NovelUploader() {
             </div>
             <h4 className="text-base font-bold text-zinc-200">拖拽上传小说文本</h4>
             <p className="text-xs text-zinc-500 mt-2 text-center max-w-sm leading-relaxed">
-              支持上传标准的 `.txt` 格式网文小说（最大 {MAX_UPLOAD_SIZE_MB}MB），系统将通过字节流自动识别 UTF-8 / GBK 编码防止乱码，并按章节自动切分。
+              支持上传标准的 `.txt` 格式网文小说（最大 {MAX_UPLOAD_SIZE_MB}MB），系统将自动识别编码并自动分章。
             </p>
             {errorMsg && (
               <div className="mt-4 px-4 py-2 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs rounded-lg flex items-center gap-2">
@@ -897,31 +976,31 @@ export default function NovelUploader() {
             )}
           </div>
         ) : (
-          /* Chapters view */
           <div className="flex-1 flex flex-col min-h-0">
-            {/* Header info */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-zinc-800 gap-3">
               <div>
-                <h2 className="text-lg font-bold text-zinc-200">
-                  章节列表与结构化解析
-                </h2>
-                <p className="text-xs text-zinc-500 mt-0.5">
-                  已分割 {chapters.length} 个章节。章节在生成融合小说前，需先进行大模型特征解析。
-                </p>
+                <h2 className="text-lg font-bold text-zinc-200">章节列表与结构化解析</h2>
+                <p className="text-xs text-zinc-500 mt-0.5">已分割 {chapters.length} 个章节。章节在生成融合小说前，需先进行大模型特征解析。</p>
               </div>
-              
-              <button
-                onClick={parseAllChapters}
-                className="py-2.5 px-4 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded-xl text-xs font-semibold shadow-sm flex items-center justify-center gap-2 transition-all"
-              >
-                <Cpu className="w-3.5 h-3.5" />
-                一键解析全部章节
-              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={retryFailedChapters}
+                  className="py-2.5 px-3 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-200 rounded-xl text-xs font-semibold transition-all"
+                >
+                  仅重试失败章节
+                </button>
+                <button
+                  onClick={parseAllChapters}
+                  className="py-2.5 px-4 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded-xl text-xs font-semibold shadow-sm flex items-center justify-center gap-2 transition-all"
+                >
+                  <Cpu className="w-3.5 h-3.5" />
+                  一键解析全部章节
+                </button>
+              </div>
             </div>
 
-            {/* Smart Search & Status Filters */}
             <div className="mt-4 flex flex-col md:flex-row gap-3 items-center justify-between bg-zinc-950/20 border border-zinc-850 p-3 rounded-2xl">
-              {/* Search bar */}
               <div className="relative w-full md:w-64">
                 <input
                   type="text"
@@ -946,11 +1025,18 @@ export default function NovelUploader() {
                 )}
               </div>
 
-              {/* Status Filters */}
               <div className="flex items-center gap-1.5 overflow-x-auto w-full md:w-auto pb-1 md:pb-0 scrollbar-none">
-                {(['all', 'unparsed', 'done', 'error'] as const).map((status) => {
-                  const count = chapters.filter(c => status === 'all' || c.status === status).length;
-                  const label = status === 'all' ? '全部' : status === 'unparsed' ? '待解析' : status === 'done' ? '已解析' : '解析失败';
+                {(['all', 'unparsed', 'parsing', 'done', 'error'] as const).map((status) => {
+                  const count = chapters.filter((chapter) => status === 'all' || chapter.status === status).length;
+                  const label = status === 'all'
+                    ? '全部'
+                    : status === 'unparsed'
+                      ? '待解析'
+                      : status === 'parsing'
+                        ? '解析中'
+                        : status === 'done'
+                          ? '已解析'
+                          : '解析失败';
                   const active = statusFilter === status;
                   return (
                     <button
@@ -972,23 +1058,19 @@ export default function NovelUploader() {
               </div>
             </div>
 
-            {/* Smart purification notification bar */}
             {activeNovel && activeNovel.purifiedCount !== undefined && activeNovel.purifiedCount > 0 && (
-              <div className="mt-3 px-4 py-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800 text-zinc-300 text-xs flex items-center gap-2 animate-fade-in">
-                <span className="flex h-2 w-2 relative">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-zinc-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-zinc-400"></span>
-                </span>
-                <span className="flex items-center gap-1 flex-wrap">
-                  <BookOpen className="w-3.5 h-3.5 text-zinc-400" />
-                  <span>
-                    <strong>智能净化已生效</strong>：已为您过滤广告、推广链接、冗余空行及乱码字符共 <strong className="text-zinc-100 font-mono">{activeNovel.purifiedCount}</strong> 个字符。
-                  </span>
-                </span>
+              <div className="mt-3 px-4 py-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800 text-zinc-300 text-xs flex items-center gap-2">
+                <BookOpen className="w-3.5 h-3.5 text-zinc-400" />
+                <span>智能净化已生效：已过滤 {activeNovel.purifiedCount} 个广告/噪声字符。</span>
               </div>
             )}
 
-            {/* Chapters list table */}
+            {activeNovel?.splitStatus === 'needs_review' && activeNovel.splitMeta && (
+              <div className="mt-3 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
+                当前分章被标记为“需复核”：策略 {STRATEGY_LABELS[activeNovel.splitMeta.strategyId]}，章数 {activeNovel.splitMeta.chapterCount}，最大章占比 {(activeNovel.splitMeta.maxChapterRatio * 100).toFixed(1)}%。
+              </div>
+            )}
+
             <div className="flex-1 overflow-y-auto mt-4 pr-1">
               {paginatedChapters.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center py-20 text-zinc-500">
@@ -997,14 +1079,14 @@ export default function NovelUploader() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {paginatedChapters.map((c) => {
-                    const isParsing = parsingQueue[c.id] || c.status === 'parsing';
-                    const isSelected = selectedChapterId === c.id;
-                    
+                  {paginatedChapters.map((chapter) => {
+                    const isParsing = parsingQueue[chapter.id] || chapter.status === 'parsing';
+                    const isSelected = selectedChapterId === chapter.id;
+
                     return (
                       <div
-                        key={c.id}
-                        onClick={() => setSelectedChapterId(c.id)}
+                        key={chapter.id}
+                        onClick={() => setSelectedChapterId(chapter.id)}
                         className={`p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between h-32 ${
                           isSelected
                             ? 'bg-zinc-800/40 border-zinc-650 text-zinc-100 shadow-sm'
@@ -1013,20 +1095,19 @@ export default function NovelUploader() {
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <p className="text-xs text-zinc-500 font-mono">Chapter {c.chapterIndex}</p>
-                            <h4 className="font-semibold text-sm text-zinc-200 truncate mt-1">{c.name}</h4>
-                            <p className="text-[10px] text-zinc-500 font-mono mt-0.5">{c.wordCount} 字</p>
+                            <p className="text-xs text-zinc-500 font-mono">Chapter {chapter.chapterIndex}</p>
+                            <h4 className="font-semibold text-sm text-zinc-200 truncate mt-1">{chapter.name}</h4>
+                            <p className="text-[10px] text-zinc-500 font-mono mt-0.5">{chapter.wordCount} 字</p>
                           </div>
 
-                          {/* Status tag */}
                           <div>
-                            {c.status === 'done' && (
+                            {chapter.status === 'done' && (
                               <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
                                 <CheckCircle2 className="w-3 h-3 text-zinc-400" />
                                 已解析
                               </span>
                             )}
-                            {c.status === 'unparsed' && (
+                            {chapter.status === 'unparsed' && (
                               <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800/80 text-zinc-500">
                                 待解析
                               </span>
@@ -1037,7 +1118,7 @@ export default function NovelUploader() {
                                 解析中
                               </span>
                             )}
-                            {c.status === 'error' && (
+                            {chapter.status === 'error' && (
                               <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-red-950/20 border border-red-900/30 text-red-400">
                                 <AlertCircle className="w-3 h-3" />
                                 解析失败
@@ -1047,28 +1128,28 @@ export default function NovelUploader() {
                         </div>
 
                         <div className="flex items-center justify-between border-t border-zinc-800/80 pt-2 mt-2">
-                          {/* Error info or status explanation */}
                           <div className="min-w-0 flex-1">
-                            {c.status === 'error' ? (
-                              <p className="text-[10px] text-red-400 truncate pr-2">{c.errorMsg || '解析出错'}</p>
-                            ) : c.status === 'done' ? (
-                              <p className="text-[10px] text-zinc-400 truncate pr-2">角色: {c.analysis?.characters.length} | 关系: {c.analysis?.relationships.length}</p>
+                            {chapter.status === 'error' ? (
+                              <p className="text-[10px] text-red-400 truncate pr-2">{chapter.errorMsg || '解析出错'}</p>
+                            ) : chapter.status === 'done' ? (
+                              <p className="text-[10px] text-zinc-400 truncate pr-2">
+                                角色: {chapter.analysis?.characters?.length ?? 0} | 关系: {chapter.analysis?.relationships?.length ?? 0}
+                              </p>
                             ) : (
                               <p className="text-[10px] text-zinc-650 truncate pr-2">暂无可用角色骨架分析</p>
                             )}
                           </div>
 
-                          {/* Control buttons */}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              parseChapter(c);
+                              void parseChapter(chapter);
                             }}
                             disabled={isParsing}
                             className="py-1 px-2.5 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 text-[11px] font-medium flex items-center gap-1 transition-all disabled:opacity-50"
                           >
                             <Play className="w-3 h-3" />
-                            {c.status === 'done' ? '重新解析' : '开始解析'}
+                            {chapter.status === 'done' ? '重新解析' : '开始解析'}
                           </button>
                         </div>
                       </div>
@@ -1078,22 +1159,19 @@ export default function NovelUploader() {
               )}
             </div>
 
-            {/* Pagination Controls */}
             {totalPages > 1 && (
               <div className="flex items-center justify-between border-t border-zinc-800/80 pt-4 mt-6">
-                <span className="text-[10px] text-zinc-500 font-mono">
-                  第 {safePage} 页 / 共 {totalPages} 页 (共 {filteredChapters.length} 章)
-                </span>
+                <span className="text-[10px] text-zinc-500 font-mono">第 {safePage} 页 / 共 {totalPages} 页 (共 {filteredChapters.length} 章)</span>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
                     disabled={safePage === 1}
                     className="py-1 px-3 rounded bg-zinc-950 border border-zinc-800 hover:bg-zinc-900 text-zinc-400 text-xs disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                   >
                     ◀ 上一页
                   </button>
                   <button
-                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
                     disabled={safePage === totalPages}
                     className="py-1 px-3 rounded bg-zinc-950 border border-zinc-800 hover:bg-zinc-900 text-zinc-400 text-xs disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                   >
