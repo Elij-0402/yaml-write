@@ -2,8 +2,116 @@ import React, { useState, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Novel, type Chapter } from '../app/db';
 import { useAppStore } from '../app/store';
-import { Upload, BookOpen, AlertTriangle, FileText, Play, CheckCircle2, AlertCircle, Trash2, Cpu, Loader2, Sparkles } from 'lucide-react';
+import { Upload, BookOpen, AlertTriangle, Play, CheckCircle2, AlertCircle, Trash2, Cpu, Loader2 } from 'lucide-react';
 import jschardet from 'jschardet';
+
+const MAX_UPLOAD_SIZE_MB = 50;
+const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
+const LARGE_FILE_THRESHOLD_BYTES = 20 * 1024 * 1024;
+const READ_CHUNK_SIZE_BYTES = 512 * 1024;
+const CHAPTER_BULK_SAVE_SIZE = 80;
+const DEFAULT_CHAPTER_REGEX = '^\\s*(第\\s*[一二三四五六七八九十百千万零\\d]+\\s*[章节回卷折篇幕].*?)$';
+
+type UploadStage = 'idle' | 'detecting' | 'reading' | 'splitting' | 'saving';
+
+interface StreamImportResult {
+  firstChapterId: string | null;
+  removedCount: number;
+  totalWords: number;
+}
+
+interface ChapterAccumulator {
+  lineCount: number;
+  lines: string[];
+  title: string;
+}
+
+const adPatterns: RegExp[] = [
+  /(https?:\/\/[^\s]+)/gi,
+  /[a-zA-Z0-9][-a-zA-Z0-9]{0,62}(\.[a-zA-Z0-9][-a-zA-Z0-9]{0,62})+\.?(:\d+)?(\/\S*)*/gi,
+  /【.*?整理.*?】/g,
+  /【.*?制作.*?】/g,
+  /（本章未完，请翻页）/g,
+  /点击下一页继续阅读/g,
+  /请记住本书首发域名：.*/g,
+  /记住本站网址：.*/g,
+  /最新章节.*?尽在.*?/g,
+  /手机用户请浏览.*?阅读.*/g,
+  /TXT下载.*?/gi,
+  /www\..*?\.(com|net|org|cn|cc|xyz|info)/gi,
+  /推荐下，.*?真心不错，值得装一个。/g,
+  /【\s*广告\s*】/g,
+  /&nbsp;/g,
+  /&lt;/g,
+  /&gt;/g,
+  /&amp;/g,
+];
+
+const adKeywords = [
+  '下载app', '最新域名', '官方微信', '关注公众号', '加入书签',
+  '手机阅读', '点击下载', '投月票', '收藏本书', '安卓版', '苹果版',
+  '点击下一页', '无广告', '免费阅读', '首发于', '笔趣阁'
+];
+
+function formatSizeInMb(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
+function toLineRegex(pattern: string): RegExp {
+  if (!pattern.trim()) {
+    throw new Error('empty regex pattern');
+  }
+  const inputRegex = new RegExp(pattern, 'm');
+  const safeFlags = inputRegex.flags.replace('g', '').replace('y', '');
+  return new RegExp(inputRegex.source, safeFlags);
+}
+
+function validateLineRegex(pattern: string): string | null {
+  const blockedPatterns = [
+    /\\n|\\r/,
+    /\r|\n/,
+    /\[\\s\\S\]/,
+    /\(\?:\.\|\\n\)/,
+    /\(\?s[:)]/,
+    /\\A|\\Z/,
+  ];
+
+  if (blockedPatterns.some((rule) => rule.test(pattern))) {
+    return '自定义分章正则需基于“单行章节标题”匹配，当前表达式包含跨行语义，请改为单行规则。';
+  }
+
+  return null;
+}
+
+function cleanLine(line: string): { cleanedLine: string; removedCount: number } {
+  const originalLength = line.length;
+  let cleaned = line;
+
+  for (const pattern of adPatterns) {
+    cleaned = cleaned.replace(pattern, '');
+  }
+
+  const trimmed = cleaned.trim();
+  if (trimmed.length > 0) {
+    const lower = trimmed.toLowerCase();
+    if (trimmed.length < 35 && adKeywords.some((kw) => lower.includes(kw))) {
+      cleaned = '';
+    }
+  }
+
+  return {
+    cleanedLine: cleaned,
+    removedCount: Math.max(0, originalLength - cleaned.length),
+  };
+}
+
+async function readBlobAsArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+  return blob.arrayBuffer();
+}
+
+async function pauseToKeepUiResponsive(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 // Split novel text into chapters
 export function splitNovel(text: string, customRegexStr?: string): { title: string; content: string; wordCount: number; chapterIndex: number }[] {
@@ -70,33 +178,6 @@ export function cleanText(text: string): { cleanedText: string; removedCount: nu
   // 1. Normalize line endings
   let cleaned = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-  // 2. High-frequency advertising watermarks, websites, and junk symbols
-  const adPatterns = [
-    // Web domains and URLs
-    /(https?:\/\/[^\s]+)/gi,
-    /[a-zA-Z0-9][-a-zA-Z0-9]{0,62}(\.[a-zA-Z0-9][-a-zA-Z0-9]{0,62})+\.?(:\d+)?(\/\S*)*/gi,
-
-    // Common pirate site watermarks
-    /【.*?整理.*?】/g,
-    /【.*?制作.*?】/g,
-    /（本章未完，请翻页）/g,
-    /点击下一页继续阅读/g,
-    /请记住本书首发域名：.*/g,
-    /记住本站网址：.*/g,
-    /最新章节.*?尽在.*?/g,
-    /手机用户请浏览.*?阅读.*/g,
-    /TXT下载.*?/gi,
-    /www\..*?\.(com|net|org|cn|cc|xyz|info)/gi,
-    /推荐下，.*?真心不错，值得装一个。/g,
-    /【\s*广告\s*】/g,
-
-    // Punctuation noise and OCR garbage
-    /&nbsp;/g,
-    /&lt;/g,
-    /&gt;/g,
-    /&amp;/g,
-  ];
-
   for (const pattern of adPatterns) {
     cleaned = cleaned.replace(pattern, '');
   }
@@ -109,12 +190,6 @@ export function cleanText(text: string): { cleanedText: string; removedCount: nu
 
     // Suspicious promotional keywords
     const lowerLine = l.toLowerCase();
-    const adKeywords = [
-      '下载app', '最新域名', '官方微信', '关注公众号', '加入书签',
-      '手机阅读', '点击下载', '投月票', '收藏本书', '安卓版', '苹果版',
-      '点击下一页', '无广告', '免费阅读', '首发于', '笔趣阁'
-    ];
-
     if (l.length < 35 && adKeywords.some(kw => lowerLine.includes(kw))) {
       return ''; // Strip this promotional line entirely
     }
@@ -158,6 +233,8 @@ export default function NovelUploader() {
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [uploadStage, setUploadStage] = useState<UploadStage>('idle');
+  const [uploadStageText, setUploadStageText] = useState('');
   const [parsingQueue, setParsingQueue] = useState<Record<string, boolean>>({}); // tracking parsing states
   
   // 检索、筛选、分页与分章规则配置状态
@@ -201,127 +278,356 @@ export default function NovelUploader() {
     if (e.target.files && e.target.files[0]) {
       await processFile(e.target.files[0]);
     }
+    e.target.value = '';
+  };
+
+  const stageLabelMap: Record<UploadStage, string> = {
+    idle: '待开始',
+    detecting: '检测编码中',
+    reading: '读取文本中',
+    splitting: '切章处理中',
+    saving: '写入本地库中',
+  };
+
+  const detectEncoding = async (file: File): Promise<'UTF-8' | 'GB18030' | 'UTF-16LE'> => {
+    try {
+      const detectLength = Math.min(file.size, 50000);
+      const detectBuffer = new Uint8Array(await readBlobAsArrayBuffer(file.slice(0, detectLength)));
+
+      let binaryStr = '';
+      for (let i = 0; i < detectBuffer.length; i++) {
+        binaryStr += String.fromCharCode(detectBuffer[i]);
+      }
+
+      let encoding = 'UTF-8';
+      try {
+        const result = jschardet.detect(binaryStr);
+        if (result?.encoding) {
+          encoding = result.encoding;
+        }
+      } catch (err) {
+        console.warn('Encoding detection failed:', err);
+      }
+
+      let normalizedEncoding = encoding.toUpperCase();
+      if (
+        normalizedEncoding.includes('GB2312') ||
+        normalizedEncoding.includes('GBK') ||
+        normalizedEncoding.includes('GB18030') ||
+        normalizedEncoding.includes('WINDOWS-936')
+      ) {
+        normalizedEncoding = 'GB18030';
+      } else if (normalizedEncoding.includes('UTF-8') || normalizedEncoding.includes('ASCII')) {
+        normalizedEncoding = 'UTF-8';
+      } else if (normalizedEncoding.includes('UTF-16')) {
+        normalizedEncoding = 'UTF-16LE';
+      } else {
+        normalizedEncoding = 'GB18030';
+      }
+
+      if (normalizedEncoding === 'UTF-8') {
+        const sampleLength = Math.min(file.size, 2 * 1024 * 1024);
+        const sample = new Uint8Array(await readBlobAsArrayBuffer(file.slice(0, sampleLength)));
+        const sampleText = new TextDecoder('utf-8').decode(sample);
+        const replacementCharCount = (sampleText.match(/\ufffd/g) || []).length;
+        const replacementRatio = replacementCharCount / (sampleText.length || 1);
+        if (replacementRatio > 0.01) {
+          return 'GB18030';
+        }
+      }
+
+      return normalizedEncoding as 'UTF-8' | 'GB18030' | 'UTF-16LE';
+    } catch {
+      throw new Error('编码失败：无法检测文本编码');
+    }
+  };
+
+  const flushChapterBatch = async (batch: Chapter[]): Promise<void> => {
+    if (batch.length === 0) return;
+    await db.chapters.bulkAdd(batch);
+    batch.length = 0;
+    await pauseToKeepUiResponsive();
+  };
+
+  const readTextWithEncoding = async (file: File, encoding: 'UTF-8' | 'GB18030' | 'UTF-16LE'): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const result = ev.target?.result;
+        if (typeof result !== 'string') {
+          reject(new Error('编码失败：文本解码结果为空'));
+          return;
+        }
+        resolve(result);
+      };
+      reader.onerror = () => reject(new Error('编码失败：文本解码失败'));
+      reader.readAsText(file, encoding);
+    });
+  };
+
+  const saveSmallFileByWholeParse = async (
+    file: File,
+    encoding: 'UTF-8' | 'GB18030' | 'UTF-16LE',
+    novelId: string,
+  ): Promise<StreamImportResult> => {
+    setUploadStage('reading');
+    setUploadStageText(`正在读取 ${formatSizeInMb(file.size)} 文本...`);
+    const text = await readTextWithEncoding(file, encoding);
+
+    setUploadStage('splitting');
+    setUploadStageText('正在清洗与切分章节...');
+    const { cleanedText, removedCount } = cleanText(text);
+    const customRegexForSmallFile = splitRegexPreset === 'custom' ? customSplitRegex : undefined;
+    const splitResult = splitNovel(cleanedText, customRegexForSmallFile);
+
+    setUploadStage('saving');
+    setUploadStageText(`正在入库 ${splitResult.length} 章...`);
+    const chaptersToSave: Chapter[] = splitResult.map((c) => ({
+      id: crypto.randomUUID(),
+      novelId,
+      chapterIndex: c.chapterIndex,
+      name: c.title,
+      wordCount: c.wordCount,
+      content: c.content,
+      status: 'unparsed'
+    }));
+    try {
+      await db.chapters.bulkAdd(chaptersToSave);
+    } catch (err: any) {
+      throw new Error(`入库失败：${err?.message || '章节批量写入失败'}`);
+    }
+
+    return {
+      firstChapterId: chaptersToSave[0]?.id || null,
+      removedCount,
+      totalWords: splitResult.reduce((sum, c) => sum + c.wordCount, 0),
+    };
+  };
+
+  const saveLargeFileByStreaming = async (
+    file: File,
+    encoding: 'UTF-8' | 'GB18030' | 'UTF-16LE',
+    novelId: string,
+    chapterTitleRegex: RegExp,
+  ): Promise<StreamImportResult> => {
+    setUploadStage('reading');
+    setUploadStageText(`大文件模式：分块读取 (${formatSizeInMb(file.size)})`);
+
+    const decoder = new TextDecoder(encoding.toLowerCase());
+    const chapterBuffer: Chapter[] = [];
+    const pendingLines: string[] = [];
+    let pendingFragment = '';
+    let previousLineWasEmpty = false;
+    let currentChapter: ChapterAccumulator | null = null;
+    let removedCount = 0;
+    let totalWords = 0;
+    let chapterIndex = 0;
+    let firstChapterId: string | null = null;
+    let totalRead = 0;
+
+    const pushLine = (line: string) => {
+      const normalizedLine = line.replace(/\r/g, '');
+      const { cleanedLine, removedCount: removed } = cleanLine(normalizedLine);
+      removedCount += removed;
+
+      const titleMatch = chapterTitleRegex.exec(cleanedLine);
+      chapterTitleRegex.lastIndex = 0;
+      if (titleMatch) {
+        if (currentChapter && currentChapter.lineCount > 0) {
+          const chapterContent = currentChapter.lines.join('\n').trim();
+          if (chapterContent.length > 0) {
+            chapterIndex += 1;
+            totalWords += chapterContent.length;
+            const chapterId = crypto.randomUUID();
+            chapterBuffer.push({
+              id: chapterId,
+              novelId,
+              chapterIndex,
+              name: currentChapter.title,
+              wordCount: chapterContent.length,
+              content: chapterContent,
+              status: 'unparsed',
+            });
+            if (!firstChapterId) {
+              firstChapterId = chapterId;
+            }
+          }
+        }
+
+        currentChapter = {
+          title: (titleMatch[1] || titleMatch[0] || '').trim() || `第${chapterIndex + 1}章`,
+          lines: [cleanedLine],
+          lineCount: 1,
+        };
+        previousLineWasEmpty = cleanedLine.trim() === '';
+        return;
+      }
+
+      const shouldAppendLine = cleanedLine.trim() !== '' || !previousLineWasEmpty;
+      if (!currentChapter) {
+        currentChapter = {
+          title: '第一章 正文',
+          lines: [],
+          lineCount: 0,
+        };
+      }
+      if (shouldAppendLine) {
+        currentChapter.lines.push(cleanedLine);
+        currentChapter.lineCount += 1;
+      }
+      previousLineWasEmpty = cleanedLine.trim() === '';
+    };
+
+    const flushLines = async (isFinal: boolean) => {
+      for (let i = 0; i < pendingLines.length; i++) {
+        pushLine(pendingLines[i]);
+      }
+      pendingLines.length = 0;
+
+      if (isFinal) {
+        if (pendingFragment.length > 0) {
+          pushLine(pendingFragment);
+          pendingFragment = '';
+        }
+        if (currentChapter && currentChapter.lineCount > 0) {
+          const chapterContent = currentChapter.lines.join('\n').trim();
+          if (chapterContent.length > 0) {
+            chapterIndex += 1;
+            totalWords += chapterContent.length;
+            const chapterId = crypto.randomUUID();
+            chapterBuffer.push({
+              id: chapterId,
+              novelId,
+              chapterIndex,
+              name: currentChapter.title,
+              wordCount: chapterContent.length,
+              content: chapterContent,
+              status: 'unparsed',
+            });
+            if (!firstChapterId) {
+              firstChapterId = chapterId;
+            }
+          }
+        }
+      }
+
+      if (chapterBuffer.length >= CHAPTER_BULK_SAVE_SIZE || (isFinal && chapterBuffer.length > 0)) {
+        setUploadStage('saving');
+        setUploadStageText(`大文件模式：已切分 ${chapterIndex} 章，分批入库中...`);
+        try {
+          await flushChapterBatch(chapterBuffer);
+        } catch (err: any) {
+          throw new Error(`入库失败：${err?.message || '章节分批写入失败'}`);
+        }
+      }
+    };
+
+    for (let offset = 0; offset < file.size; offset += READ_CHUNK_SIZE_BYTES) {
+      const chunk = file.slice(offset, offset + READ_CHUNK_SIZE_BYTES);
+      const bytes = new Uint8Array(await readBlobAsArrayBuffer(chunk));
+      totalRead += bytes.byteLength;
+      setUploadStage('reading');
+      setUploadStageText(`分块读取进度：${Math.min(100, Math.floor((totalRead / file.size) * 100))}%`);
+
+      const decodedText = decoder.decode(bytes, { stream: true });
+      pendingFragment += decodedText;
+      const splitByLine = pendingFragment.split('\n');
+      pendingFragment = splitByLine.pop() ?? '';
+      pendingLines.push(...splitByLine);
+
+      setUploadStage('splitting');
+      setUploadStageText(`正在切章：已处理 ${formatSizeInMb(totalRead)} / ${formatSizeInMb(file.size)}`);
+      await flushLines(false);
+    }
+
+    pendingFragment += decoder.decode();
+    await flushLines(true);
+
+    if (chapterIndex === 0) {
+      throw new Error('分章失败：没有解析到有效章节内容');
+    }
+
+    return {
+      firstChapterId,
+      removedCount,
+      totalWords,
+    };
   };
 
   const processFile = async (file: File) => {
-    if (!file.name.endsWith('.txt')) {
+    if (uploading) {
+      return;
+    }
+    if (!file.name.toLowerCase().endsWith('.txt')) {
       setErrorMsg('只支持上传 .txt 格式的小说文本');
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setErrorMsg('文件过大，最大支持 10MB');
+    if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+      setErrorMsg(`文件过大，最大支持 ${MAX_UPLOAD_SIZE_MB}MB`);
       return;
     }
 
+    const isLargeFileMode = file.size > LARGE_FILE_THRESHOLD_BYTES;
+    if (isLargeFileMode && splitRegexPreset === 'custom') {
+      if (!customSplitRegex.trim()) {
+        setErrorMsg('请先填写有效的自定义分章正则表达式');
+        return;
+      }
+      const lineRegexValidationError = validateLineRegex(customSplitRegex);
+      if (lineRegexValidationError) {
+        setErrorMsg(lineRegexValidationError);
+        return;
+      }
+    }
+
     setUploading(true);
+    setUploadStage('detecting');
+    setUploadStageText('正在检测编码...');
     setErrorMsg(null);
 
+    const novelId = crypto.randomUUID();
+    const novelName = file.name.replace(/\.[^/.]+$/, "");
+
     try {
-      const text = await readTextWithEncodingCheck(file);
-      const { cleanedText, removedCount } = cleanText(text);
-      const splitted = splitNovel(cleanedText, customSplitRegex);
-      
-      const novelId = crypto.randomUUID();
-      const novelName = file.name.replace(/\.[^/.]+$/, "");
-      const totalWords = splitted.reduce((sum, c) => sum + c.wordCount, 0);
+      const encoding = await detectEncoding(file);
+
+      let importResult: StreamImportResult;
+      if (isLargeFileMode) {
+        let chapterTitleRegex: RegExp;
+        try {
+          chapterTitleRegex = splitRegexPreset === 'custom'
+            ? toLineRegex(customSplitRegex)
+            : toLineRegex(DEFAULT_CHAPTER_REGEX);
+        } catch {
+          throw new Error('分章失败：自定义分章正则表达式无效');
+        }
+        importResult = await saveLargeFileByStreaming(file, encoding, novelId, chapterTitleRegex);
+      } else {
+        importResult = await saveSmallFileByWholeParse(file, encoding, novelId);
+      }
 
       // Save novel to db
       await db.novels.add({
         id: novelId,
         name: novelName,
-        wordCount: totalWords,
+        wordCount: importResult.totalWords,
         createdAt: Date.now(),
-        purifiedCount: removedCount
+        purifiedCount: importResult.removedCount
       });
-
-      // Save chapters to db
-      const chaptersToSave: Chapter[] = splitted.map((c) => ({
-        id: crypto.randomUUID(),
-        novelId,
-        chapterIndex: c.chapterIndex,
-        name: c.title,
-        wordCount: c.wordCount,
-        content: c.content,
-        status: 'unparsed'
-      }));
-
-      await db.chapters.bulkAdd(chaptersToSave);
       
       setSelectedNovelId(novelId);
-      if (chaptersToSave.length > 0) {
-        setSelectedChapterId(chaptersToSave[0].id);
+      if (importResult.firstChapterId) {
+        setSelectedChapterId(importResult.firstChapterId);
       }
     } catch (err: any) {
-      setErrorMsg(err.message || '文件解析入库失败');
+      await db.chapters.where('novelId').equals(novelId).delete();
+      await db.novels.delete(novelId);
+      setErrorMsg(err?.message || '文件解析入库失败');
     } finally {
       setUploading(false);
+      setUploadStage('idle');
+      setUploadStageText('');
     }
-  };
-
-  const readTextWithEncodingCheck = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        if (!e.target?.result) {
-          reject(new Error('无法读取文件'));
-          return;
-        }
-
-        const buffer = e.target.result as ArrayBuffer;
-        const arr = new Uint8Array(buffer);
-        const detectLength = Math.min(arr.length, 50000);
-        const slice = arr.slice(0, detectLength);
-
-        let binaryStr = '';
-        for (let i = 0; i < slice.length; i++) {
-          binaryStr += String.fromCharCode(slice[i]);
-        }
-
-        let encoding = 'UTF-8';
-        try {
-          const result = jschardet.detect(binaryStr);
-          if (result && result.encoding) {
-            encoding = result.encoding;
-          }
-        } catch (err) {
-          console.warn('Encoding detection failed:', err);
-        }
-
-        let normalizedEncoding = encoding.toUpperCase();
-        if (normalizedEncoding.includes('GB2312') || normalizedEncoding.includes('GBK') || normalizedEncoding.includes('GB18030') || normalizedEncoding.includes('WINDOWS-936')) {
-          normalizedEncoding = 'GB18030';
-        } else if (normalizedEncoding.includes('UTF-8') || normalizedEncoding.includes('ASCII')) {
-          normalizedEncoding = 'UTF-8';
-        } else if (normalizedEncoding.includes('UTF-16')) {
-          normalizedEncoding = 'UTF-16LE';
-        } else {
-          normalizedEncoding = 'GB18030'; // Default to GB18030 for Chinese
-        }
-
-        const textReader = new FileReader();
-        textReader.onload = (ev) => {
-          const text = ev.target?.result as string;
-          const replacementCharCount = (text.match(/\ufffd/g) || []).length;
-          const replacementRatio = replacementCharCount / (text.length || 1);
-
-          if (normalizedEncoding === 'UTF-8' && replacementRatio > 0.01) {
-            console.warn('UTF-8 has high replacement ratio, falling back to GB18030');
-            const fallbackReader = new FileReader();
-            fallbackReader.onload = (eve) => {
-              resolve(eve.target?.result as string);
-            };
-            fallbackReader.onerror = () => reject(new Error('文件解码失败'));
-            fallbackReader.readAsText(file, 'GB18030');
-          } else {
-            resolve(text);
-          }
-        };
-        textReader.onerror = () => reject(new Error('文本解析失败'));
-        textReader.readAsText(file, normalizedEncoding);
-      };
-      reader.onerror = () => reject(new Error('二进制流读取失败'));
-      reader.readAsArrayBuffer(file);
-    });
   };
 
   const deleteNovel = async (id: string, e: React.MouseEvent) => {
@@ -442,10 +748,11 @@ export default function NovelUploader() {
         {/* Upload Button Trigger */}
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="w-full py-3 mb-2 rounded-xl border border-dashed border-zinc-750 hover:border-zinc-550 bg-zinc-900/40 hover:bg-zinc-800/60 text-zinc-400 hover:text-zinc-200 font-semibold text-sm transition-all flex items-center justify-center gap-2"
+          disabled={uploading}
+          className="w-full py-3 mb-2 rounded-xl border border-dashed border-zinc-750 hover:border-zinc-550 bg-zinc-900/40 hover:bg-zinc-800/60 text-zinc-400 hover:text-zinc-200 font-semibold text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Upload className="w-4 h-4" />
-          导入新小说 (.txt)
+          导入新小说 (.txt, 最大 {MAX_UPLOAD_SIZE_MB}MB)
         </button>
         <input
           type="file"
@@ -454,6 +761,18 @@ export default function NovelUploader() {
           accept=".txt"
           className="hidden"
         />
+        {uploading && (
+          <div className="mb-3 px-3 py-2 rounded-lg bg-zinc-900/70 border border-zinc-800 text-zinc-300 text-[11px] flex items-center gap-2">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-400" />
+            <span>{stageLabelMap[uploadStage]}{uploadStageText ? `：${uploadStageText}` : ''}</span>
+          </div>
+        )}
+        {!uploading && errorMsg && (
+          <div className="mb-3 px-3 py-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[11px] flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
 
         {/* 高级分章规则面板折叠开关 */}
         <button
@@ -568,7 +887,7 @@ export default function NovelUploader() {
             </div>
             <h4 className="text-base font-bold text-zinc-200">拖拽上传小说文本</h4>
             <p className="text-xs text-zinc-500 mt-2 text-center max-w-sm leading-relaxed">
-              支持上传标准的 `.txt` 格式网文小说，系统将通过字节流自动识别 UTF-8 / GBK 编码防止乱码，并按章节自动切分。
+              支持上传标准的 `.txt` 格式网文小说（最大 {MAX_UPLOAD_SIZE_MB}MB），系统将通过字节流自动识别 UTF-8 / GBK 编码防止乱码，并按章节自动切分。
             </p>
             {errorMsg && (
               <div className="mt-4 px-4 py-2 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs rounded-lg flex items-center gap-2">
