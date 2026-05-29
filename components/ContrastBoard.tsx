@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Novel, type Chapter, type Character, type Relationship, type ChapterAnalysis } from '../app/db';
-import { BookOpen, HelpCircle, Edit3, Check, Globe, GitCommit, Users, Heart, MessageSquare, Trash } from 'lucide-react';
+import { BookOpen, HelpCircle, Edit3, Check, Globe, GitCommit, Users, Heart, MessageSquare, Trash, Plus, X } from 'lucide-react';
 
 export default function ContrastBoard() {
   const novels = useLiveQuery<Novel[]>(() => db.novels.reverse().toArray(), []) || [];
@@ -35,7 +35,7 @@ export default function ContrastBoard() {
   }, [rightChapterId]);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-auto lg:h-[calc(100vh-12rem)] overflow-y-auto lg:overflow-visible min-h-0 pr-1">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-auto min-h-0 flex-1">
       {/* Left Column Comparison Panel */}
       <ComparisonColumn
         side="A"
@@ -77,6 +77,7 @@ interface ColumnProps {
 function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapterId, setChapterId, chapter }: ColumnProps) {
   const [editingField, setEditingField] = useState<string | null>(null); // e.g. 'worldview', 'plotSkeleton', 'style', 'char-0-name', 'rel-0-description'
   const [editValue, setEditValue] = useState<string>('');
+  const blurTimeoutRef = useRef<number | null>(null);
 
   const handleNovelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setNovelId(e.target.value);
@@ -87,21 +88,23 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
   };
 
   const startEditing = (field: string, initialVal: string) => {
+    if (blurTimeoutRef.current) window.clearTimeout(blurTimeoutRef.current);
     setEditingField(field);
     setEditValue(initialVal);
   };
 
-  const saveEdit = async () => {
+  const saveEdit = async (forcedValue?: string) => {
     if (!chapter || !chapter.analysis) return;
+    const finalVal = typeof forcedValue === 'string' ? forcedValue : editValue;
 
     const analysis = { ...chapter.analysis };
 
     if (editingField === 'worldview') {
-      analysis.worldview = editValue;
+      analysis.worldview = finalVal;
     } else if (editingField === 'plotSkeleton') {
-      analysis.plotSkeleton = editValue;
+      analysis.plotSkeleton = finalVal;
     } else if (editingField === 'style') {
-      analysis.style = editValue;
+      analysis.style = finalVal;
     } else if (editingField?.startsWith('char-')) {
       const parts = editingField.split('-');
       const charIdx = parseInt(parts[1]);
@@ -109,7 +112,7 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
       
       const char = analysis.characters[charIdx];
       if (char) {
-        (char as any)[fieldName] = editValue;
+        (char as any)[fieldName] = finalVal;
       }
     } else if (editingField?.startsWith('rel-')) {
       const parts = editingField.split('-');
@@ -118,12 +121,28 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
       
       const rel = analysis.relationships[relIdx];
       if (rel) {
-        (rel as any)[fieldName] = editValue;
+        (rel as any)[fieldName] = finalVal;
       }
     }
 
     await db.chapters.update(chapter.id, { analysis });
     setEditingField(null);
+  };
+
+  const handleBlur = () => {
+    // Timeout gives buttons time to register click before blur triggers
+    blurTimeoutRef.current = window.setTimeout(() => {
+      void saveEdit();
+    }, 150);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey && !editingField?.includes('worldview') && !editingField?.includes('plotSkeleton')) {
+      e.preventDefault();
+      void saveEdit();
+    } else if (e.key === 'Escape') {
+      setEditingField(null);
+    }
   };
 
   // Add character
@@ -134,7 +153,7 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
       name: '新角色',
       personality: '待描述性格',
       appearance: '待描述外貌',
-      coreConflict: '内在冲突',
+      coreConflict: '内在冲突设定',
       chapters: String(chapter.chapterIndex)
     });
     await db.chapters.update(chapter.id, { analysis });
@@ -153,9 +172,9 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
     if (!chapter || !chapter.analysis) return;
     const analysis = { ...chapter.analysis };
     analysis.relationships.push({
-      roleA: '角色A',
-      roleB: '角色B',
-      description: '描述彼此关系'
+      roleA: '主角',
+      roleB: '配角',
+      description: '描述彼此的核心纽带'
     });
     await db.chapters.update(chapter.id, { analysis });
   };
@@ -169,34 +188,35 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
   };
 
   return (
-    <div className="bg-zinc-900/20 border border-zinc-800/80 rounded-2xl p-6 flex flex-col shadow-xl min-h-[500px] lg:min-h-0 lg:h-full">
+    <div className="linear-card p-6 rounded flex flex-col min-h-[500px] lg:min-h-0 lg:h-full bg-[#121214]/20 overflow-hidden">
+      
       {/* Selectors Header */}
-      <div className="flex flex-col sm:flex-row gap-3 pb-5 border-b border-zinc-800">
+      <div className="flex flex-col sm:flex-row gap-4 pb-5 border-b border-zinc-900 shrink-0">
         <div className="flex-1">
-          <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block mb-1">对比栏 {side} - 选择小说</label>
+          <label className="text-[10px] text-zinc-550 font-semibold uppercase tracking-widest font-mono block mb-1.5">对比栏 {side} · 选择小说</label>
           <select
             value={novelId}
             onChange={handleNovelChange}
-            className="w-full px-3 py-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-700"
+            className="w-full px-3 py-2 rounded bg-zinc-900 border border-zinc-800 text-xs text-zinc-200 focus:outline-none focus:border-zinc-700 transition-linear cursor-pointer"
           >
-            <option value="">-- 选择小说 --</option>
+            <option value="" className="bg-[#121214] text-zinc-500">-- 选择对比小说 --</option>
             {novels.map((n) => (
-              <option key={n.id} value={n.id}>{n.name}</option>
+              <option key={n.id} value={n.id} className="bg-[#121214] text-zinc-200">{n.name}</option>
             ))}
           </select>
         </div>
 
         <div className="flex-1">
-          <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block mb-1">选择已解析章节</label>
+          <label className="text-[10px] text-zinc-550 font-semibold uppercase tracking-widest font-mono block mb-1.5">选择已解析章节</label>
           <select
             value={chapterId}
             onChange={handleChapterChange}
             disabled={!novelId}
-            className="w-full px-3 py-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-700 disabled:opacity-40"
+            className="w-full px-3 py-2 rounded bg-zinc-900 border border-zinc-800 text-xs text-zinc-200 focus:outline-none focus:border-zinc-700 transition-linear cursor-pointer disabled:opacity-40"
           >
-            <option value="">-- 选择章节 --</option>
+            <option value="" className="bg-[#121214] text-zinc-500">-- 选择对比章节 --</option>
             {chapters.map((c) => (
-              <option key={c.id} value={c.id}>
+              <option key={c.id} value={c.id} className="bg-[#121214] text-zinc-200">
                 {c.name} {c.status === 'done' ? '(已解析)' : '(未解析)'}
               </option>
             ))}
@@ -207,178 +227,234 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
       {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto mt-5 space-y-6 pr-1">
         {!chapterId ? (
-          <div className="h-full flex flex-col items-center justify-center text-center py-20">
-            <HelpCircle className="w-10 h-10 text-zinc-650 mb-3 animate-pulse" />
-            <p className="text-sm font-semibold text-zinc-400">请先在上方选择小说与对应章节</p>
-            <p className="text-xs text-zinc-600 mt-1 max-w-xs">通过并排对比不同的故事架构与角色关系，能帮助你碰撞出全新的融合火花。</p>
+          <div className="h-full flex flex-col items-center justify-center text-center py-24">
+            <div className="p-3 rounded bg-zinc-900/60 border border-zinc-850 text-zinc-500 mb-4 animate-pulse">
+              <HelpCircle className="w-6 h-6 text-zinc-400" />
+            </div>
+            <p className="text-xs font-semibold text-zinc-450">对比栏 {side} 为空</p>
+            <p className="text-[11px] text-zinc-600 mt-2 max-w-[280px] leading-relaxed">
+              请在上方选择小说及其已成功解析的章节，您将可以并行审查两份大纲与角色体系。
+            </p>
           </div>
         ) : chapter?.status !== 'done' ? (
-          <div className="h-full flex flex-col items-center justify-center text-center py-20">
-            <HelpCircle className="w-10 h-10 text-zinc-500 mb-3" />
-            <p className="text-sm font-semibold text-zinc-400">该章节尚未成功解析</p>
-            <p className="text-xs text-zinc-500 mt-2 max-w-xs leading-relaxed">
-              请前往 <span className="text-zinc-300 underline font-semibold">导入与解析</span> 模块中，点击“开始解析”让大模型提取该章节的结构化特征。
+          <div className="h-full flex flex-col items-center justify-center text-center py-24">
+            <div className="p-3 rounded bg-zinc-900/60 border border-zinc-850 text-zinc-500 mb-4">
+              <HelpCircle className="w-6 h-6 text-zinc-400" />
+            </div>
+            <p className="text-xs font-semibold text-zinc-450">当前章节尚未结构化解析</p>
+            <p className="text-[11px] text-zinc-550 mt-2 max-w-[280px] leading-relaxed">
+              此章节正文已载入，但尚未完成结构分析。请前往 <span className="text-zinc-350 underline">导入与解析库</span> 并执行解析。
             </p>
           </div>
         ) : (
           /* Render parsed cards - Editable */
-          <div className="space-y-6">
+          <div className="space-y-6 pb-6 animate-fade-in font-sans">
             
             {/* 1. Worldview Setting */}
-            <div className="p-4 rounded-xl bg-zinc-950/30 border border-zinc-800 hover:border-zinc-700 transition-all shadow-md group relative">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-bold text-zinc-300 flex items-center gap-1.5 uppercase tracking-wider">
-                  <Globe className="w-3.5 h-3.5" />
+            <div className="p-4 rounded border border-zinc-850 bg-[#121214]/40 hover:border-zinc-800 transition-linear group relative">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-[10px] font-semibold text-zinc-400 flex items-center gap-2 uppercase tracking-widest font-mono">
+                  <Globe className="w-3.5 h-3.5 text-zinc-500" />
                   世界观与背景设定
                 </h4>
                 {editingField !== 'worldview' && (
                   <button
                     onClick={() => startEditing('worldview', chapter.analysis?.worldview || '')}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-zinc-800 text-zinc-550 hover:text-zinc-300 transition-all"
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-zinc-900 text-zinc-500 hover:text-zinc-300 transition-linear active-press"
                   >
-                    <Edit3 className="w-3.5 h-3.5" />
+                    <Edit3 className="w-3 h-3" />
                   </button>
                 )}
               </div>
               
               {editingField === 'worldview' ? (
-                <div className="space-y-2">
+                <div className="space-y-2 animate-fade-in">
                   <textarea
                     value={editValue}
                     onChange={(e) => setEditValue(e.target.value)}
-                    rows={4}
-                    className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-xs text-white focus:outline-none"
+                    onBlur={handleBlur}
+                    onKeyDown={handleKeyDown}
+                    autoFocus
+                    rows={5}
+                    className="w-full px-3 py-2 rounded bg-zinc-950 border border-zinc-800 focus:border-zinc-700 text-xs text-zinc-200 focus:outline-none transition-linear leading-relaxed"
                   />
-                  <div className="flex justify-end gap-2">
-                    <button onClick={() => setEditingField(null)} className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-lg text-xs">取消</button>
-                    <button onClick={saveEdit} className="px-2.5 py-1 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded-lg text-xs flex items-center gap-1"><Check className="w-3 h-3" />保存</button>
+                  <div className="flex justify-end gap-2 shrink-0">
+                    <button 
+                      onClick={() => setEditingField(null)} 
+                      className="px-2.5 py-1 bg-zinc-900 border border-zinc-800 text-zinc-400 rounded text-[10px] font-semibold active-press"
+                    >
+                      取消
+                    </button>
+                    <button 
+                      onClick={() => void saveEdit()} 
+                      className="px-2.5 py-1 bg-zinc-100 hover:bg-zinc-200 text-zinc-950 rounded text-[10px] font-bold flex items-center gap-1 active-press"
+                    >
+                      <Check className="w-3 h-3" />保存
+                    </button>
                   </div>
                 </div>
               ) : (
-                <p className="text-xs text-zinc-350 leading-relaxed whitespace-pre-wrap">
-                  {chapter.analysis?.worldview || '暂无世界观设定提取。'}
-                </p>
+                <div 
+                  onClick={() => startEditing('worldview', chapter.analysis?.worldview || '')}
+                  className="text-xs text-zinc-350 leading-relaxed whitespace-pre-wrap cursor-pointer hover:text-zinc-200 transition-linear p-2 rounded bg-zinc-950/10 border border-transparent hover:border-zinc-900"
+                >
+                  {chapter.analysis?.worldview || '暂无世界观设定。点击此处即可内联编辑...'}
+                </div>
               )}
             </div>
 
             {/* 2. Plot Skeleton */}
-            <div className="p-4 rounded-xl bg-zinc-950/30 border border-zinc-800 hover:border-zinc-700 transition-all shadow-md group relative">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-bold text-zinc-300 flex items-center gap-1.5 uppercase tracking-wider">
-                  <GitCommit className="w-3.5 h-3.5" />
+            <div className="p-4 rounded border border-zinc-850 bg-[#121214]/40 hover:border-zinc-800 transition-linear group relative">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-[10px] font-semibold text-zinc-400 flex items-center gap-2 uppercase tracking-widest font-mono">
+                  <GitCommit className="w-3.5 h-3.5 text-zinc-500" />
                   核心故事剧情骨架
                 </h4>
                 {editingField !== 'plotSkeleton' && (
                   <button
                     onClick={() => startEditing('plotSkeleton', chapter.analysis?.plotSkeleton || '')}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-zinc-800 text-zinc-550 hover:text-zinc-300 transition-all"
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-zinc-900 text-zinc-500 hover:text-zinc-300 transition-linear active-press"
                   >
-                    <Edit3 className="w-3.5 h-3.5" />
+                    <Edit3 className="w-3 h-3" />
                   </button>
                 )}
               </div>
               
               {editingField === 'plotSkeleton' ? (
-                <div className="space-y-2">
+                <div className="space-y-2 animate-fade-in">
                   <textarea
                     value={editValue}
                     onChange={(e) => setEditValue(e.target.value)}
-                    rows={4}
-                    className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-xs text-white focus:outline-none"
+                    onBlur={handleBlur}
+                    onKeyDown={handleKeyDown}
+                    autoFocus
+                    rows={5}
+                    className="w-full px-3 py-2 rounded bg-zinc-950 border border-zinc-800 focus:border-zinc-700 text-xs text-zinc-200 focus:outline-none transition-linear leading-relaxed"
                   />
-                  <div className="flex justify-end gap-2">
-                    <button onClick={() => setEditingField(null)} className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-lg text-xs">取消</button>
-                    <button onClick={saveEdit} className="px-2.5 py-1 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded-lg text-xs flex items-center gap-1"><Check className="w-3 h-3" />保存</button>
+                  <div className="flex justify-end gap-2 shrink-0">
+                    <button 
+                      onClick={() => setEditingField(null)} 
+                      className="px-2.5 py-1 bg-zinc-900 border border-zinc-800 text-zinc-400 rounded text-[10px] font-semibold active-press"
+                    >
+                      取消
+                    </button>
+                    <button 
+                      onClick={() => void saveEdit()} 
+                      className="px-2.5 py-1 bg-zinc-100 hover:bg-zinc-200 text-zinc-950 rounded text-[10px] font-bold flex items-center gap-1 active-press"
+                    >
+                      <Check className="w-3 h-3" />保存
+                    </button>
                   </div>
                 </div>
               ) : (
-                <p className="text-xs text-zinc-350 leading-relaxed whitespace-pre-wrap">
-                  {chapter.analysis?.plotSkeleton || '暂无剧情骨架提取。'}
-                </p>
+                <div 
+                  onClick={() => startEditing('plotSkeleton', chapter.analysis?.plotSkeleton || '')}
+                  className="text-xs text-zinc-350 leading-relaxed whitespace-pre-wrap cursor-pointer hover:text-zinc-200 transition-linear p-2 rounded bg-zinc-950/10 border border-transparent hover:border-zinc-900"
+                >
+                  {chapter.analysis?.plotSkeleton || '暂无剧情剧情架构。点击此处即可内联编辑...'}
+                </div>
               )}
             </div>
 
             {/* 3. Style & Tone */}
-            <div className="p-4 rounded-xl bg-zinc-950/30 border border-zinc-800 hover:border-zinc-700 transition-all shadow-md group relative">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-bold text-zinc-300 flex items-center gap-1.5 uppercase tracking-wider">
-                  <MessageSquare className="w-3.5 h-3.5" />
+            <div className="p-4 rounded border border-zinc-850 bg-[#121214]/40 hover:border-zinc-800 transition-linear group relative">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-[10px] font-semibold text-zinc-400 flex items-center gap-2 uppercase tracking-widest font-mono">
+                  <MessageSquare className="w-3.5 h-3.5 text-zinc-500" />
                   语言叙事风格与基调
                 </h4>
                 {editingField !== 'style' && (
                   <button
                     onClick={() => startEditing('style', chapter.analysis?.style || '')}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-zinc-800 text-zinc-550 hover:text-zinc-300 transition-all"
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-zinc-900 text-zinc-500 hover:text-zinc-300 transition-linear active-press"
                   >
-                    <Edit3 className="w-3.5 h-3.5" />
+                    <Edit3 className="w-3 h-3" />
                   </button>
                 )}
               </div>
               
               {editingField === 'style' ? (
-                <div className="space-y-2">
+                <div className="space-y-2 animate-fade-in">
                   <textarea
                     value={editValue}
                     onChange={(e) => setEditValue(e.target.value)}
-                    rows={2}
-                    className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-xs text-white focus:outline-none"
+                    onBlur={handleBlur}
+                    onKeyDown={handleKeyDown}
+                    autoFocus
+                    rows={3}
+                    className="w-full px-3 py-2 rounded bg-zinc-950 border border-zinc-800 focus:border-zinc-700 text-xs text-zinc-200 focus:outline-none transition-linear leading-relaxed"
                   />
-                  <div className="flex justify-end gap-2">
-                    <button onClick={() => setEditingField(null)} className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-lg text-xs">取消</button>
-                    <button onClick={saveEdit} className="px-2.5 py-1 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded-lg text-xs flex items-center gap-1"><Check className="w-3 h-3" />保存</button>
+                  <div className="flex justify-end gap-2 shrink-0">
+                    <button 
+                      onClick={() => setEditingField(null)} 
+                      className="px-2.5 py-1 bg-zinc-900 border border-zinc-800 text-zinc-400 rounded text-[10px] font-semibold active-press"
+                    >
+                      取消
+                    </button>
+                    <button 
+                      onClick={() => void saveEdit()} 
+                      className="px-2.5 py-1 bg-zinc-100 hover:bg-zinc-200 text-zinc-950 rounded text-[10px] font-bold flex items-center gap-1 active-press"
+                    >
+                      <Check className="w-3 h-3" />保存
+                    </button>
                   </div>
                 </div>
               ) : (
-                <p className="text-xs text-zinc-350 leading-relaxed">
-                  {chapter.analysis?.style || '暂无叙事风格提取。'}
-                </p>
+                <div 
+                  onClick={() => startEditing('style', chapter.analysis?.style || '')}
+                  className="text-xs text-zinc-350 leading-relaxed cursor-pointer hover:text-zinc-200 transition-linear p-2 rounded bg-zinc-950/10 border border-transparent hover:border-zinc-900"
+                >
+                  {chapter.analysis?.style || '暂无特征提取。点击此处即可内联编辑...'}
+                </div>
               )}
             </div>
 
             {/* 4. Characters Cards */}
             <div className="space-y-3">
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                <h4 className="text-xs font-bold text-zinc-300 flex items-center gap-1.5 uppercase tracking-wider">
-                  <Users className="w-3.5 h-3.5 text-zinc-450" />
+              <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
+                <h4 className="text-[10px] font-semibold text-zinc-400 flex items-center gap-2 uppercase tracking-widest font-mono">
+                  <Users className="w-3.5 h-3.5 text-zinc-550" />
                   出场角色设定列表
                 </h4>
                 <button
                   onClick={addCharacter}
-                  className="py-1 px-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-semibold border border-zinc-800 rounded transition-all"
+                  className="py-1 px-2.5 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-[10px] font-semibold rounded transition-linear active-press"
                 >
                   + 新增角色
                 </button>
               </div>
 
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {chapter.analysis?.characters.map((char, charIdx) => (
-                  <div key={charIdx} className="p-4 rounded-xl bg-zinc-900/40 border border-zinc-800 relative group/char hover:border-zinc-700 transition-all">
+                  <div key={charIdx} className="p-4 rounded border border-zinc-850 bg-[#121214]/20 relative group/char hover:border-zinc-800 transition-linear">
                     
                     <button
                       onClick={() => deleteCharacter(charIdx)}
-                      className="absolute top-3 right-3 opacity-0 group-hover/char:opacity-100 p-1 text-zinc-550 hover:text-red-400 hover:bg-red-500/10 rounded transition-all"
+                      className="absolute top-3 right-3 opacity-0 group-hover/char:opacity-100 p-1 text-zinc-500 hover:text-rose-400 hover:bg-rose-950/20 rounded transition-linear active-press"
+                      title="删除角色"
                     >
                       <Trash className="w-3.5 h-3.5" />
                     </button>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      
                       {/* Name */}
-                      <div className="sm:col-span-2">
-                        <label className="text-[10px] text-zinc-550 font-bold block mb-1">姓名</label>
+                      <div className="sm:col-span-2 flex flex-col">
+                        <label className="text-[9px] text-zinc-550 font-bold uppercase tracking-wider mb-1 font-mono">角色姓名</label>
                         {editingField === `char-${charIdx}-name` ? (
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              value={editValue}
-                              onChange={(e) => setEditValue(e.target.value)}
-                              className="flex-1 px-2.5 py-1 rounded bg-zinc-900 border border-zinc-700 text-xs text-white"
-                            />
-                            <button onClick={saveEdit} className="p-1.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded"><Check className="w-3.5 h-3.5" /></button>
-                          </div>
+                          <input
+                            type="text"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onBlur={handleBlur}
+                            onKeyDown={handleKeyDown}
+                            autoFocus
+                            className="px-2 py-1 rounded bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 focus:outline-none focus:border-zinc-750 transition-linear"
+                          />
                         ) : (
                           <span 
                             onClick={() => startEditing(`char-${charIdx}-name`, char.name)}
-                            className="text-sm font-bold text-zinc-100 border-b border-dashed border-zinc-800 hover:border-zinc-400 cursor-pointer"
+                            className="text-xs font-bold text-zinc-200 border-b border-dashed border-transparent hover:border-zinc-700 cursor-pointer self-start transition-linear"
                           >
                             {char.name}
                           </span>
@@ -386,22 +462,22 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
                       </div>
 
                       {/* Personality */}
-                      <div>
-                        <label className="text-[10px] text-zinc-550 font-bold block mb-1">性格脾气</label>
+                      <div className="flex flex-col">
+                        <label className="text-[9px] text-zinc-550 font-bold uppercase tracking-wider mb-1 font-mono">性格特征</label>
                         {editingField === `char-${charIdx}-personality` ? (
-                          <div className="flex gap-2">
-                            <textarea
-                              value={editValue}
-                              onChange={(e) => setEditValue(e.target.value)}
-                              rows={2}
-                              className="flex-1 px-2 py-1 rounded bg-zinc-900 border border-zinc-700 text-xs text-white"
-                            />
-                            <button onClick={saveEdit} className="p-1.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded self-end"><Check className="w-3.5 h-3.5" /></button>
-                          </div>
+                          <textarea
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onBlur={handleBlur}
+                            onKeyDown={handleKeyDown}
+                            autoFocus
+                            rows={2}
+                            className="px-2 py-1 rounded bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 focus:outline-none focus:border-zinc-750 transition-linear"
+                          />
                         ) : (
                           <p 
                             onClick={() => startEditing(`char-${charIdx}-personality`, char.personality)}
-                            className="text-xs text-zinc-350 border-b border-dashed border-zinc-900 hover:border-zinc-500 cursor-pointer min-h-[1.5rem] leading-relaxed"
+                            className="text-[11px] text-zinc-400 border-b border-dashed border-transparent hover:border-zinc-800 cursor-pointer min-h-[1.5rem] leading-relaxed transition-linear"
                           >
                             {char.personality}
                           </p>
@@ -409,22 +485,22 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
                       </div>
 
                       {/* Appearance */}
-                      <div>
-                        <label className="text-[10px] text-zinc-550 font-bold block mb-1">外貌打扮</label>
+                      <div className="flex flex-col">
+                        <label className="text-[9px] text-zinc-550 font-bold uppercase tracking-wider mb-1 font-mono">外貌描绘</label>
                         {editingField === `char-${charIdx}-appearance` ? (
-                          <div className="flex gap-2">
-                            <textarea
-                              value={editValue}
-                              onChange={(e) => setEditValue(e.target.value)}
-                              rows={2}
-                              className="flex-1 px-2 py-1 rounded bg-zinc-900 border border-zinc-700 text-xs text-white"
-                            />
-                            <button onClick={saveEdit} className="p-1.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded self-end"><Check className="w-3.5 h-3.5" /></button>
-                          </div>
+                          <textarea
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onBlur={handleBlur}
+                            onKeyDown={handleKeyDown}
+                            autoFocus
+                            rows={2}
+                            className="px-2 py-1 rounded bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 focus:outline-none focus:border-zinc-750 transition-linear"
+                          />
                         ) : (
                           <p 
                             onClick={() => startEditing(`char-${charIdx}-appearance`, char.appearance)}
-                            className="text-xs text-zinc-350 border-b border-dashed border-zinc-900 hover:border-zinc-500 cursor-pointer min-h-[1.5rem] leading-relaxed"
+                            className="text-[11px] text-zinc-400 border-b border-dashed border-transparent hover:border-zinc-800 cursor-pointer min-h-[1.5rem] leading-relaxed transition-linear"
                           >
                             {char.appearance}
                           </p>
@@ -432,22 +508,22 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
                       </div>
 
                       {/* Conflict */}
-                      <div>
-                        <label className="text-[10px] text-zinc-550 font-bold block mb-1">核心矛盾冲突</label>
+                      <div className="flex flex-col">
+                        <label className="text-[9px] text-zinc-550 font-bold uppercase tracking-wider mb-1 font-mono">核心矛盾与信念</label>
                         {editingField === `char-${charIdx}-coreConflict` ? (
-                          <div className="flex gap-2">
-                            <textarea
-                              value={editValue}
-                              onChange={(e) => setEditValue(e.target.value)}
-                              rows={2}
-                              className="flex-1 px-2 py-1 rounded bg-zinc-900 border border-zinc-700 text-xs text-white"
-                            />
-                            <button onClick={saveEdit} className="p-1.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded self-end"><Check className="w-3.5 h-3.5" /></button>
-                          </div>
+                          <textarea
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onBlur={handleBlur}
+                            onKeyDown={handleKeyDown}
+                            autoFocus
+                            rows={2}
+                            className="px-2 py-1 rounded bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 focus:outline-none focus:border-zinc-750 transition-linear"
+                          />
                         ) : (
                           <p 
                             onClick={() => startEditing(`char-${charIdx}-coreConflict`, char.coreConflict)}
-                            className="text-xs text-zinc-350 border-b border-dashed border-zinc-900 hover:border-zinc-500 cursor-pointer min-h-[1.5rem] leading-relaxed"
+                            className="text-[11px] text-zinc-400 border-b border-dashed border-transparent hover:border-zinc-800 cursor-pointer min-h-[1.5rem] leading-relaxed transition-linear"
                           >
                             {char.coreConflict}
                           </p>
@@ -455,22 +531,22 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
                       </div>
 
                       {/* Chapters */}
-                      <div>
-                        <label className="text-[10px] text-zinc-550 font-bold block mb-1">主要出场章节</label>
+                      <div className="flex flex-col">
+                        <label className="text-[9px] text-zinc-550 font-bold uppercase tracking-wider mb-1 font-mono">出场频次章节</label>
                         {editingField === `char-${charIdx}-chapters` ? (
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              value={editValue}
-                              onChange={(e) => setEditValue(e.target.value)}
-                              className="flex-1 px-2.5 py-1 rounded bg-zinc-900 border border-zinc-700 text-xs text-white"
-                            />
-                            <button onClick={saveEdit} className="p-1.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded"><Check className="w-3.5 h-3.5" /></button>
-                          </div>
+                          <input
+                            type="text"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onBlur={handleBlur}
+                            onKeyDown={handleKeyDown}
+                            autoFocus
+                            className="px-2 py-1 rounded bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 focus:outline-none focus:border-zinc-750 transition-linear"
+                          />
                         ) : (
                           <p 
                             onClick={() => startEditing(`char-${charIdx}-chapters`, char.chapters)}
-                            className="text-xs text-zinc-350 border-b border-dashed border-zinc-900 hover:border-zinc-500 cursor-pointer min-h-[1.5rem] font-mono"
+                            className="text-[11px] text-zinc-400 border-b border-dashed border-transparent hover:border-zinc-800 cursor-pointer min-h-[1.5rem] font-mono transition-linear"
                           >
                             {char.chapters}
                           </p>
@@ -485,14 +561,14 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
 
             {/* 5. Relationship Network */}
             <div className="space-y-3">
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                <h4 className="text-xs font-bold text-zinc-300 flex items-center gap-1.5 uppercase tracking-wider">
-                  <Heart className="w-3.5 h-3.5 text-zinc-450" />
+              <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
+                <h4 className="text-[10px] font-semibold text-zinc-400 flex items-center gap-2 uppercase tracking-widest font-mono">
+                  <Heart className="w-3.5 h-3.5 text-zinc-550" />
                   人物角色关系网络
                 </h4>
                 <button
                   onClick={addRelationship}
-                  className="py-1 px-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-semibold border border-zinc-800 rounded transition-all"
+                  className="py-1 px-2.5 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-[10px] font-semibold rounded transition-linear active-press"
                 >
                   + 新增关系
                 </button>
@@ -500,37 +576,39 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {chapter.analysis?.relationships.map((rel, relIdx) => (
-                  <div key={relIdx} className="p-3 rounded-xl bg-zinc-900/40 border border-zinc-800 relative group/rel hover:border-zinc-700 transition-all">
+                  <div key={relIdx} className="p-3.5 rounded border border-zinc-850 bg-[#121214]/20 relative group/rel hover:border-zinc-800 transition-linear">
                     
                     <button
                       onClick={() => deleteRelationship(relIdx)}
-                      className="absolute top-2 right-2 opacity-0 group-hover/rel:opacity-100 p-1 text-zinc-550 hover:text-red-400 hover:bg-red-500/10 rounded transition-all"
+                      className="absolute top-2 right-2 opacity-0 group-hover/rel:opacity-100 p-1 text-zinc-550 hover:text-rose-400 hover:bg-rose-950/20 rounded transition-linear active-press"
+                      title="删除关系"
                     >
                       <Trash className="w-3.5 h-3.5" />
                     </button>
 
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-1">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-1.5">
                         {/* Role A */}
                         {editingField === `rel-${relIdx}-roleA` ? (
                           <input
                             type="text"
                             value={editValue}
                             onChange={(e) => setEditValue(e.target.value)}
-                            onBlur={saveEdit}
+                            onBlur={handleBlur}
+                            onKeyDown={handleKeyDown}
                             autoFocus
-                            className="w-20 px-1 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-xs text-white"
+                            className="w-20 px-1.5 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 focus:outline-none"
                           />
                         ) : (
                           <span 
                             onClick={() => startEditing(`rel-${relIdx}-roleA`, rel.roleA)}
-                            className="text-xs font-bold text-zinc-300 cursor-pointer border-b border-dashed border-zinc-900 hover:border-zinc-500"
+                            className="text-xs font-bold text-zinc-350 cursor-pointer border-b border-dashed border-transparent hover:border-zinc-700 transition-linear"
                           >
                             {rel.roleA}
                           </span>
                         )}
                         
-                        <span className="text-[10px] text-zinc-650 font-mono font-bold">⇄</span>
+                        <span className="text-[10px] text-zinc-650 font-mono">⇄</span>
 
                         {/* Role B */}
                         {editingField === `rel-${relIdx}-roleB` ? (
@@ -538,14 +616,15 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
                             type="text"
                             value={editValue}
                             onChange={(e) => setEditValue(e.target.value)}
-                            onBlur={saveEdit}
+                            onBlur={handleBlur}
+                            onKeyDown={handleKeyDown}
                             autoFocus
-                            className="w-20 px-1 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-xs text-white"
+                            className="w-20 px-1.5 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 focus:outline-none"
                           />
                         ) : (
                           <span 
                             onClick={() => startEditing(`rel-${relIdx}-roleB`, rel.roleB)}
-                            className="text-xs font-bold text-zinc-300 cursor-pointer border-b border-dashed border-zinc-900 hover:border-zinc-500"
+                            className="text-xs font-bold text-zinc-350 cursor-pointer border-b border-dashed border-transparent hover:border-zinc-700 transition-linear"
                           >
                             {rel.roleB}
                           </span>
@@ -553,20 +632,21 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
                       </div>
 
                       {/* Description */}
-                      <div>
+                      <div className="flex flex-col">
                         {editingField === `rel-${relIdx}-description` ? (
                           <input
                             type="text"
                             value={editValue}
                             onChange={(e) => setEditValue(e.target.value)}
-                            onBlur={saveEdit}
+                            onBlur={handleBlur}
+                            onKeyDown={handleKeyDown}
                             autoFocus
-                            className="w-full px-2 py-1 rounded bg-zinc-900 border border-zinc-700 text-xs text-white"
+                            className="w-full px-2 py-1 rounded bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 focus:outline-none focus:border-zinc-700 transition-linear"
                           />
                         ) : (
                           <p 
                             onClick={() => startEditing(`rel-${relIdx}-description`, rel.description)}
-                            className="text-xs text-zinc-350 leading-relaxed cursor-pointer border-b border-dashed border-zinc-900 hover:border-zinc-500 min-h-[1.25rem]"
+                            className="text-xs text-zinc-400 leading-relaxed cursor-pointer border-b border-dashed border-transparent hover:border-zinc-800 min-h-[1.25rem] transition-linear"
                           >
                             {rel.description}
                           </p>

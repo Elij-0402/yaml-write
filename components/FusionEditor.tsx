@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Chapter, type Novel } from '../app/db';
-import { Sparkles, PenTool, FileDown, Copy, Check, RotateCcw, HelpCircle, Loader2, ArrowRight, BookOpen } from 'lucide-react';
+import { Sparkles, PenTool, FileDown, Copy, Check, RotateCcw, HelpCircle, Loader2, ArrowRight, BookOpen, X } from 'lucide-react';
 import { ensureLlmConfigReady, postWithLlmConfig, readApiErrorMessage } from '../app/llmClient';
 
 interface CharacterBinding {
@@ -283,65 +283,65 @@ export default function FusionEditor() {
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-auto lg:h-[calc(100vh-12rem)] min-h-0">
+    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-auto min-h-0 flex-1">
       
       {/* Left Sidebar: Select Novel Chapters & Steps Progress */}
-      <div className="lg:col-span-1 bg-zinc-900/20 border border-zinc-800/80 rounded-2xl p-4 flex flex-col shadow-xl min-h-0">
-        <h3 className="text-sm font-bold text-zinc-400 mb-3 px-1 uppercase tracking-wider">融合创意控制台</h3>
+      <div className="lg:col-span-1 linear-card p-4 rounded flex flex-col bg-[#08080a]/60">
+        <h3 className="text-[10px] font-semibold text-zinc-550 mb-4 px-1 uppercase tracking-widest font-mono">创意工坊导航</h3>
         
         {/* Step Indicator */}
-        <div className="space-y-2 mb-6">
+        <div className="flex flex-col gap-1 mb-5">
           <button
             onClick={() => setStep(1)}
-            className={`w-full p-3 rounded-xl border text-left transition-all flex items-center justify-between ${
+            className={`w-full py-2.5 px-3 rounded text-left transition-linear active-press text-xs flex items-center justify-between font-semibold ${
               step === 1
-                ? 'bg-zinc-800/60 border-zinc-700 text-zinc-100 shadow-sm'
-                : 'bg-zinc-950/20 border-zinc-900/80 text-zinc-500 hover:text-zinc-300'
+                ? 'bg-[#121214] border border-zinc-800 text-zinc-100'
+                : 'bg-transparent border border-transparent text-zinc-450 hover:text-zinc-200'
             }`}
           >
-            <span className="text-xs font-bold">1. 选择素材与大纲生成</span>
-            <ArrowRight className="w-3.5 h-3.5" />
+            <span>1. 设定指令与章节</span>
+            <ArrowRight className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
           </button>
 
           <button
             onClick={() => setStep(2)}
             disabled={!outline}
-            className={`w-full p-3 rounded-xl border text-left transition-all flex items-center justify-between disabled:opacity-40 disabled:cursor-not-allowed ${
+            className={`w-full py-2.5 px-3 rounded text-left transition-linear active-press text-xs flex items-center justify-between font-semibold disabled:opacity-30 disabled:cursor-not-allowed ${
               step === 2
-                ? 'bg-zinc-800/60 border-zinc-700 text-zinc-100 shadow-sm'
-                : 'bg-zinc-950/20 border-zinc-900/80 text-zinc-500 hover:text-zinc-300'
+                ? 'bg-[#121214] border border-zinc-800 text-zinc-100'
+                : 'bg-transparent border border-transparent text-zinc-450 hover:text-zinc-200'
             }`}
           >
-            <span className="text-xs font-bold">2. 大纲二次微调</span>
-            <ArrowRight className="w-3.5 h-3.5" />
+            <span>2. 调整融合大纲</span>
+            <ArrowRight className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
           </button>
 
           <button
             onClick={() => setStep(3)}
             disabled={!novelText && !outline}
-            className={`w-full p-3 rounded-xl border text-left transition-all flex items-center justify-between disabled:opacity-40 disabled:cursor-not-allowed ${
+            className={`w-full py-2.5 px-3 rounded text-left transition-linear active-press text-xs flex items-center justify-between font-semibold disabled:opacity-30 disabled:cursor-not-allowed ${
               step === 3
-                ? 'bg-zinc-800/60 border-zinc-700 text-zinc-100 shadow-sm'
-                : 'bg-zinc-950/20 border-zinc-900/80 text-zinc-500 hover:text-zinc-300'
+                ? 'bg-[#121214] border border-zinc-800 text-zinc-100'
+                : 'bg-transparent border border-transparent text-zinc-450 hover:text-zinc-200'
             }`}
           >
-            <span className="text-xs font-bold">3. 流式正文扩写</span>
-            <ArrowRight className="w-3.5 h-3.5" />
+            <span>3. 流式正文扩写</span>
+            <ArrowRight className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
           </button>
         </div>
 
         {/* Chapters selection grid */}
-        <div className="flex-1 overflow-y-auto min-h-0 flex flex-col border-t border-zinc-800 pt-4">
-          <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block mb-2 px-1">
-            已解析的小说章节 ({parsedChapters.length})
+        <div className="flex-1 overflow-y-auto min-h-0 flex flex-col border-t border-zinc-900 pt-4 font-sans">
+          <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest block mb-3 px-1 font-mono">
+            已解析章节选择 ({parsedChapters.length})
           </label>
           
           {parsedChapters.length === 0 ? (
-            <div className="text-center py-8 text-zinc-650 text-xs">
+            <div className="text-center py-12 text-zinc-650 text-xs font-medium">
               没有已解析的章节。请先在解析库中进行章节的特征解析。
             </div>
           ) : (
-            <div className="space-y-1.5 flex-1 overflow-y-auto pr-1">
+            <div className="space-y-1 flex-1 overflow-y-auto pr-1">
               {parsedChapters.map((c) => {
                 const isSelected = selectedChapterIds.includes(c.id);
                 const novel = novels.find((n) => n.id === c.novelId);
@@ -350,17 +350,17 @@ export default function FusionEditor() {
                   <div
                     key={c.id}
                     onClick={() => handleToggleChapter(c.id)}
-                    className={`p-2.5 rounded-lg border cursor-pointer transition-all flex items-center gap-2.5 min-w-0 ${
+                    className={`p-2 rounded cursor-pointer transition-linear flex items-center gap-2.5 min-w-0 active-press ${
                       isSelected
-                        ? 'bg-zinc-800/80 border-zinc-700 text-zinc-100'
-                        : 'bg-zinc-950/20 border-zinc-900/80 hover:border-zinc-800 text-zinc-455 hover:text-zinc-300'
+                        ? 'bg-zinc-900 border border-zinc-850 text-zinc-100'
+                        : 'bg-transparent border border-transparent hover:bg-zinc-900/40 text-zinc-400 hover:text-zinc-200'
                     }`}
                   >
                     <input
                       type="checkbox"
                       checked={isSelected}
                       onChange={() => {}} // toggled by parent div onClick
-                      className="accent-zinc-500 flex-shrink-0"
+                      className="accent-amber-500 flex-shrink-0 cursor-pointer h-3 w-3 rounded"
                     />
                     <div className="min-w-0">
                       <p className="text-xs font-semibold truncate leading-tight">{c.name}</p>
@@ -377,36 +377,36 @@ export default function FusionEditor() {
       </div>
 
       {/* Right Content View: Interactive step panels */}
-      <div className="lg:col-span-3 bg-zinc-900/20 border border-zinc-800/80 rounded-2xl p-6 flex flex-col shadow-xl overflow-y-auto min-h-0">
+      <div className="lg:col-span-3 linear-card p-6 rounded flex flex-col bg-[#121214]/10 overflow-hidden min-h-[500px] lg:min-h-0">
         
         {/* Step 1: Input Prompts and Generate */}
         {step === 1 && (
-          <div className="h-full flex flex-col gap-6">
+          <div className="h-full flex flex-col gap-6 animate-fade-in font-sans">
             <div>
-              <h2 className="text-lg font-bold text-zinc-200">第一步：输入融合指令并生成大纲</h2>
-              <p className="text-xs text-zinc-500 mt-0.5">请选中左侧已解析的章节，随后输入您的创意指令。大模型将流式渲染融合大纲。</p>
+              <h2 className="text-sm font-semibold text-zinc-200">第一步：输入融合指令并生成大纲</h2>
+              <p className="text-xs text-zinc-500 mt-0.5">从左侧勾选您想要融会贯通的小说章节，然后在下方给出扩写、冲突融合的指令方向。</p>
             </div>
 
             <div className="space-y-2">
-              <label className="text-xs font-bold text-zinc-400 flex items-center gap-1.5">
-                <BookOpen className="w-3.5 h-3.5 text-zinc-400" />
-                创意融合要求指令
+              <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-widest font-mono flex items-center gap-2">
+                <BookOpen className="w-3.5 h-3.5 text-zinc-500" />
+                创意要求指令
               </label>
               <textarea
                 value={fusionPrompt}
                 onChange={(e) => setFusionPrompt(e.target.value)}
                 placeholder="例如：将科幻世界观的‘纳米虫末日’设定，融入到修真世界的‘天道崩塌’大劫中。左侧主角A拥有的科学常识，与右侧主角B的纯阳道体产生剧烈碰撞，让他们在一场遗迹探险中不得不进行联手..."
                 rows={6}
-                className="w-full px-4 py-3 rounded-xl bg-zinc-950 border border-zinc-800 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-700 transition-all leading-relaxed"
+                className="w-full px-4 py-3 rounded bg-zinc-950 border border-zinc-850 text-xs text-zinc-205 placeholder-zinc-650 focus:outline-none focus:border-zinc-700 transition-linear leading-relaxed font-sans"
               />
             </div>
 
             {/* 角色交互深度绑定面板 (可选) */}
             {selectedChapterIds.length > 0 && availableCharacters.length >= 2 && (
-              <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-950/20 space-y-3">
-                <div className="flex items-center justify-between border-b border-zinc-850 pb-2">
-                  <label className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
-                    👥 出场角色深度配对绑定 (可选)
+              <div className="p-4 rounded border border-zinc-850 bg-zinc-950/20 space-y-3">
+                <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
+                  <label className="text-[10px] font-semibold text-zinc-300 uppercase tracking-widest font-mono flex items-center gap-2">
+                    👥 出场角色互动配对规则 (可选)
                   </label>
                   <button
                     onClick={() => {
@@ -421,18 +421,18 @@ export default function FusionEditor() {
                         },
                       ]);
                     }}
-                    className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-bold rounded-lg text-zinc-300 hover:text-zinc-100 transition-all"
+                    className="px-2 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-semibold rounded transition-linear active-press"
                   >
-                    + 新建角色互动绑定
+                    + 新建互动
                   </button>
                 </div>
 
                 {characterBindings.length === 0 ? (
-                  <p className="text-[10px] text-zinc-500 italic">暂无强力配对规则。AI 将按默认规则自然融合人物关系。</p>
+                  <p className="text-[10px] text-zinc-550 italic font-mono">暂无指定配对。大模型将按默认逻辑自然编排人物行为与冲突。</p>
                 ) : (
-                  <div className="space-y-3 max-h-48 overflow-y-auto pr-1">
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                     {characterBindings.map((binding, idx) => (
-                      <div key={idx} className="flex flex-col sm:flex-row gap-2 items-center bg-zinc-950/40 p-2.5 rounded-lg border border-zinc-900 text-xs">
+                      <div key={idx} className="flex flex-col sm:flex-row gap-2 items-center bg-zinc-950/40 p-2.5 rounded border border-zinc-900 text-xs animate-fade-in">
                         {/* Source Character */}
                         <select
                           value={binding.sourceChar}
@@ -442,16 +442,16 @@ export default function FusionEditor() {
                               prev.map((b, i) => (i === idx ? { ...b, sourceChar: val } : b))
                             );
                           }}
-                          className="w-full sm:w-1/3 px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-250 focus:outline-none"
+                          className="w-full sm:w-1/3 px-2 py-1.5 rounded bg-zinc-900 border border-zinc-850 text-xs text-zinc-300 focus:outline-none"
                         >
                           {availableCharacters.map((c) => (
-                            <option key={c.name} value={c.name}>
+                            <option key={c.name} value={c.name} className="bg-[#121214]">
                               {c.name} ({c.novelName})
                             </option>
                           ))}
                         </select>
 
-                        <span className="text-[10px] text-zinc-500 font-bold">⇄</span>
+                        <span className="text-[10px] text-zinc-600 font-bold font-mono">⇄</span>
 
                         {/* Target Character */}
                         <select
@@ -462,15 +462,15 @@ export default function FusionEditor() {
                               prev.map((b, i) => (i === idx ? { ...b, targetChar: val } : b))
                             );
                           }}
-                          className="w-full sm:w-1/3 px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-250 focus:outline-none"
+                          className="w-full sm:w-1/3 px-2 py-1.5 rounded bg-zinc-900 border border-zinc-850 text-xs text-zinc-300 focus:outline-none"
                         >
                           {availableCharacters
-                            .filter((c) => c.name !== binding.sourceChar)
-                            .map((c) => (
-                              <option key={c.name} value={c.name}>
-                                {c.name} ({c.novelName})
-                              </option>
-                            ))}
+                              .filter((c) => c.name !== binding.sourceChar)
+                              .map((c) => (
+                                <option key={c.name} value={c.name} className="bg-[#121214]">
+                                  {c.name} ({c.novelName})
+                                </option>
+                              ))}
                         </select>
 
                         {/* Relationship Binding Type */}
@@ -482,12 +482,12 @@ export default function FusionEditor() {
                               prev.map((b, i) => (i === idx ? { ...b, bindingType: val } : b))
                             );
                           }}
-                          className="w-full sm:w-1/4 px-2 py-1 rounded bg-zinc-900 border border-zinc-850 text-[11px] text-zinc-250 focus:outline-none font-semibold text-zinc-300"
+                          className="w-full sm:w-1/4 px-2 py-1.5 rounded bg-zinc-900 border border-zinc-850 text-xs text-zinc-300 focus:outline-none font-medium"
                         >
-                          <option value="merge">🧬 灵魂融合 (Merge)</option>
-                          <option value="clash">⚔️ 宿命对决 (Clash)</option>
-                          <option value="mentor">🎓 名师高徒 (Mentor)</option>
-                          <option value="custom">⚙️ 自定义互动关系</option>
+                          <option value="merge" className="bg-[#121214]">🧬 灵魂融合 (Merge)</option>
+                          <option value="clash" className="bg-[#121214]">⚔️ 宿命对决 (Clash)</option>
+                          <option value="mentor" className="bg-[#121214]">🎓 名师指点 (Mentor)</option>
+                          <option value="custom" className="bg-[#121214]">⚙️ 自定义关系规则</option>
                         </select>
 
                         {/* Delete button */}
@@ -495,17 +495,18 @@ export default function FusionEditor() {
                           onClick={() => {
                             setCharacterBindings((prev) => prev.filter((_, i) => i !== idx));
                           }}
-                          className="p-1 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded transition-all ml-auto self-end sm:self-center"
+                          className="p-1 text-zinc-500 hover:text-rose-400 hover:bg-rose-950/20 rounded transition-linear active-press ml-auto shrink-0"
+                          title="删除绑定"
                         >
-                          ×
+                          <X className="w-3.5 h-3.5" />
                         </button>
 
                         {/* Custom description row */}
                         {binding.bindingType === 'custom' && (
-                          <div className="w-full mt-1.5 sm:col-span-4">
+                          <div className="w-full mt-1.5 sm:col-span-4 animate-fade-in">
                             <input
                               type="text"
-                              placeholder="输入指定关系（如：情定三生的仙凡眷侣、同父异母的宿敌等）..."
+                              placeholder="输入指定关系（如：仙凡同修的眷侣、双重人格的主次关系等）..."
                               value={binding.customDesc || ''}
                               onChange={(e) => {
                                 const val = e.target.value;
@@ -513,7 +514,7 @@ export default function FusionEditor() {
                                   prev.map((b, i) => (i === idx ? { ...b, customDesc: val } : b))
                                 );
                               }}
-                              className="w-full px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-200 placeholder-zinc-650 focus:outline-none"
+                              className="w-full px-2.5 py-1.5 rounded bg-zinc-900 border border-zinc-850 text-xs text-zinc-200 placeholder-zinc-650 focus:outline-none focus:border-zinc-700 transition-linear"
                             />
                           </div>
                         )}
@@ -524,14 +525,12 @@ export default function FusionEditor() {
               </div>
             )}
 
-            <div className="p-4 rounded-xl bg-zinc-950/20 border border-zinc-800/80 flex items-start gap-3">
-              <HelpCircle className="w-5 h-5 text-zinc-450 flex-shrink-0 mt-0.5" />
-              <div className="text-xs text-zinc-500 leading-relaxed">
-                <p className="font-semibold text-zinc-350">大模型融合工作流</p>
+            <div className="p-4 rounded border border-zinc-850 bg-zinc-950/20 flex items-start gap-3">
+              <HelpCircle className="w-4 h-4 text-zinc-500 flex-shrink-0 mt-0.5" />
+              <div className="text-[11px] text-zinc-500 leading-relaxed">
+                <p className="font-semibold text-zinc-400">大模型融合生成机制</p>
                 <p className="mt-1">
-                  1. 系统将自动组合您所选的全部章节中的角色性格、世界观架构、人物纠葛。<br />
-                  2. 融合大纲生成后，您可以在第二步中随意修改或重写大纲内容。<br />
-                  3. 最终确认的大纲将指导第三步的高精正文流式输出。
+                  AI 写作助手将深度检索您选择的多个章节，融合不同的时空、逻辑和人物关系。在流式生成大纲后，您可以无缝对大纲进行编辑修正，随后触发完整的正文长篇润色扩写。
                 </p>
               </div>
             </div>
@@ -540,17 +539,17 @@ export default function FusionEditor() {
               <button
                 onClick={handleGenerateOutline}
                 disabled={generatingOutline || selectedChapterIds.length === 0 || !fusionPrompt.trim()}
-                className="py-3 px-6 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-900 font-semibold text-sm shadow-sm transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="py-2.5 px-5 rounded bg-zinc-100 hover:bg-zinc-200 text-zinc-950 font-semibold text-xs transition-linear active-press flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {generatingOutline ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     大纲流式生成中...
                   </>
                 ) : (
                   <>
-                    <BookOpen className="w-4 h-4" />
-                    流式生成融合新大纲
+                    <BookOpen className="w-3.5 h-3.5" />
+                    开始生成融合新大纲
                   </>
                 )}
               </button>
@@ -560,28 +559,28 @@ export default function FusionEditor() {
 
         {/* Step 2: Outline Edit View */}
         {step === 2 && (
-          <div className="h-full flex flex-col gap-4">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
+          <div className="h-full flex flex-col gap-4 animate-fade-in font-sans">
+            <div className="flex items-center justify-between border-b border-zinc-900 pb-4 shrink-0">
               <div>
-                <h2 className="text-lg font-bold text-zinc-200">第二步：融合大纲与架构微调</h2>
-                <p className="text-xs text-zinc-500 mt-0.5">您可以直接在此对 AI 生成的大纲进行微调，确保符合您的创作本心。</p>
+                <h2 className="text-sm font-semibold text-zinc-200">第二步：大纲及故事架构调整</h2>
+                <p className="text-xs text-zinc-500 mt-0.5">您可以直接在此处内联编辑、重写大纲内容，确保故事走向完全符合预期。</p>
               </div>
               
-              <div className="flex gap-2">
+              <div className="flex gap-2 shrink-0">
                 <button
                   onClick={() => handleCopy(outline, false)}
-                  className="p-2 bg-zinc-950 border border-zinc-800 hover:border-zinc-700 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all flex items-center gap-1.5 text-xs font-semibold"
+                  className="px-2.5 py-1.5 bg-zinc-950 border border-zinc-850 hover:border-zinc-700 rounded text-zinc-400 hover:text-zinc-200 transition-linear flex items-center gap-1.5 text-xs font-semibold active-press"
                 >
-                  {copiedOutline ? <Check className="w-3.5 h-3.5 text-emerald-450" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedOutline ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-zinc-500" />}
                   {copiedOutline ? '已复制' : '复制大纲'}
                 </button>
 
                 <button
                   onClick={() => setStep(1)}
-                  className="p-2 bg-zinc-950 border border-zinc-800 hover:border-zinc-700 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all flex items-center gap-1.5 text-xs font-semibold"
+                  className="px-2.5 py-1.5 bg-zinc-950 border border-zinc-850 hover:border-zinc-700 rounded text-zinc-400 hover:text-zinc-200 transition-linear flex items-center gap-1.5 text-xs font-semibold active-press"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  重新填写要求
+                  <RotateCcw className="w-3.5 h-3.5 text-zinc-500" />
+                  上一步
                 </button>
               </div>
             </div>
@@ -589,8 +588,8 @@ export default function FusionEditor() {
             <div className="flex-1 min-h-[300px] flex flex-col">
               {generatingOutline && !outline && (
                 <div className="flex-1 flex flex-col items-center justify-center text-center">
-                  <Loader2 className="w-8 h-8 text-zinc-400 animate-spin mb-3" />
-                  <p className="text-sm font-semibold text-zinc-400">大纲正在流式连接与响应中...</p>
+                  <Loader2 className="w-6 h-6 text-zinc-500 animate-spin mb-3" />
+                  <p className="text-xs font-semibold text-zinc-550">正在连接大模型流式渲染大纲...</p>
                 </div>
               )}
               
@@ -598,26 +597,25 @@ export default function FusionEditor() {
                 value={outline}
                 onChange={(e) => setOutline(e.target.value)}
                 placeholder="此处大纲正在流式生成或为空。请点击上一步生成大纲..."
-                rows={18}
-                className="w-full flex-1 p-4 rounded-xl bg-zinc-950/40 border border-zinc-800 text-zinc-200 font-mono text-sm leading-relaxed focus:outline-none focus:ring-1 focus:ring-zinc-700"
+                className="w-full flex-1 p-4 rounded bg-zinc-950/60 border border-zinc-850 text-zinc-200 font-mono text-xs leading-relaxed focus:outline-none focus:border-zinc-700 transition-linear resize-none"
               />
             </div>
 
-            <div className="flex justify-end pt-3">
+            <div className="flex justify-end pt-3 shrink-0">
               <button
                 onClick={handleGenerateText}
                 disabled={generatingText || !outline.trim() || generatingOutline}
-                className="py-3 px-6 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-100 font-semibold text-sm shadow-sm transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed border border-zinc-750"
+                className="py-2.5 px-5 rounded bg-zinc-100 hover:bg-zinc-200 text-zinc-950 font-semibold text-xs transition-linear active-press flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {generatingText ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    正文扩写中...
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    流式正文扩写中...
                   </>
                 ) : (
                   <>
-                    <PenTool className="w-4 h-4" />
-                    一键流式扩写小说正文
+                    <PenTool className="w-3.5 h-3.5 animate-pulse" />
+                    确认并一键扩写正文
                   </>
                 )}
               </button>
@@ -627,61 +625,61 @@ export default function FusionEditor() {
 
         {/* Step 3: Stream Novel Text view */}
         {step === 3 && (
-          <div className="h-full flex flex-col gap-4">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
+          <div className="h-full flex flex-col gap-4 animate-fade-in font-sans">
+            <div className="flex items-center justify-between border-b border-zinc-900 pb-4 shrink-0">
               <div>
-                <h2 className="text-lg font-bold text-zinc-200">第三步：流式正文呈现</h2>
-                <p className="text-xs text-zinc-500 mt-0.5">AI 白金作家正在根据微调大纲进行正文长篇扩写与润色。</p>
+                <h2 className="text-sm font-semibold text-zinc-200">第三步：大模型流式小说写作</h2>
+                <p className="text-xs text-zinc-500 mt-0.5">大语言模型白金主笔已启动，正在结合融合大纲为您渲染故事正文。</p>
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex gap-2 shrink-0">
                 <button
                   onClick={() => handleCopy(novelText, true)}
                   disabled={!novelText}
-                  className="p-2 bg-zinc-950 border border-zinc-800 hover:border-zinc-700 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all flex items-center gap-1.5 text-xs font-semibold disabled:opacity-50"
+                  className="px-2.5 py-1.5 bg-zinc-950 border border-zinc-850 hover:border-zinc-700 rounded text-zinc-400 hover:text-zinc-200 transition-linear flex items-center gap-1.5 text-xs font-semibold active-press disabled:opacity-40"
                 >
-                  {copiedText ? <Check className="w-3.5 h-3.5 text-emerald-450" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedText ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-zinc-500" />}
                   {copiedText ? '已复制' : '复制正文'}
                 </button>
 
                 <button
                   onClick={() => handleDownload(novelText, "融合章节正文.txt")}
                   disabled={!novelText}
-                  className="p-2 bg-zinc-950 border border-zinc-800 hover:border-zinc-700 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all flex items-center gap-1.5 text-xs font-semibold disabled:opacity-50"
+                  className="px-2.5 py-1.5 bg-zinc-950 border border-zinc-850 hover:border-zinc-700 rounded text-zinc-400 hover:text-zinc-200 transition-linear flex items-center gap-1.5 text-xs font-semibold active-press disabled:opacity-40"
                 >
-                  <FileDown className="w-3.5 h-3.5" />
-                  导出为 TXT
+                  <FileDown className="w-3.5 h-3.5 text-zinc-500" />
+                  导出 TXT
                 </button>
               </div>
             </div>
 
-            <div className="flex-1 min-h-[350px] flex flex-col bg-zinc-950/40 border border-zinc-800 rounded-xl p-6">
+            <div className="flex-1 min-h-[350px] flex flex-col bg-zinc-950/40 border border-zinc-850 rounded p-6 overflow-hidden">
               {generatingText && !novelText && (
                 <div className="flex-1 flex flex-col items-center justify-center text-center">
-                  <Loader2 className="w-8 h-8 text-zinc-450 animate-spin mb-3" />
-                  <p className="text-sm font-semibold text-zinc-400">大模型开始着手构思、铺陈情节...</p>
+                  <Loader2 className="w-6 h-6 text-zinc-500 animate-spin mb-3" />
+                  <p className="text-xs font-semibold text-zinc-550">AI 正在构思场景、刻画心理特征与铺设故事线，请稍等...</p>
                 </div>
               )}
 
-              <div className="flex-1 overflow-y-auto max-h-[500px] text-zinc-200 text-base leading-loose tracking-wide whitespace-pre-wrap font-serif px-2">
+              <div className="flex-1 overflow-y-auto max-h-[500px] text-zinc-200 text-xs leading-loose tracking-wide whitespace-pre-wrap font-sans px-2">
                 {novelText || (
-                  <div className="text-zinc-650 italic font-sans text-sm">尚未开始生成正文。请返回上一步确认大纲并点击扩写。</div>
+                  <div className="text-zinc-650 italic text-center py-20 font-sans text-xs">大纲正文尚为空。请返回上一步确认并生成。</div>
                 )}
               </div>
             </div>
 
-            <div className="flex justify-between items-center pt-3">
+            <div className="flex justify-between items-center pt-3 shrink-0">
               <button
                 onClick={() => setStep(2)}
-                className="py-2.5 px-4 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 rounded-lg text-xs font-semibold"
+                className="py-2 px-3 rounded bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-linear text-xs font-semibold active-press animate-fade-in"
               >
                 返回修改大纲
               </button>
 
               {generatingText && (
-                <div className="text-xs text-zinc-400 animate-pulse font-mono flex items-center gap-1.5">
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  小说正文正在流式逐字加载...
+                <div className="text-[10px] text-zinc-500 animate-pulse font-mono flex items-center gap-2">
+                  <Loader2 className="w-3 h-3 animate-spin text-zinc-550 shrink-0" />
+                  章节正文流式输出中...
                 </div>
               )}
             </div>

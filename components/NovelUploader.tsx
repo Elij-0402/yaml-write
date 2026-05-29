@@ -1653,238 +1653,258 @@ export default function NovelUploader() {
   const safePage = Math.min(currentPage, totalPages);
   const startIndex = (safePage - 1) * pageSize;
   const paginatedChapters = filteredChapters.slice(startIndex, startIndex + pageSize);
-
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 h-auto lg:h-[calc(100vh-12rem)] min-h-0">
-      <div className="lg:col-span-1 bg-zinc-900/20 border border-zinc-800/70 rounded-2xl p-4 flex flex-col min-h-0">
-        <h3 className="text-xs font-semibold text-zinc-400 mb-3 uppercase tracking-wider">导入</h3>
-
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading || repairing}
-          className="w-full py-2.5 mb-2 rounded-xl border border-dashed border-zinc-700 hover:border-zinc-500 bg-zinc-900/40 text-zinc-300 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-        >
-          <Upload className="w-4 h-4" />
-          导入小说 (.txt, 最大 {MAX_UPLOAD_SIZE_MB}MB)
-        </button>
-        <input
-          type="file"
-          ref={fileInputRef}
-          onChange={handleFileChange}
-          accept=".txt"
-          className="hidden"
-        />
-
-        {uploading && (
-          <div className="mb-2 px-3 py-2 rounded-lg bg-zinc-900/60 border border-zinc-800 text-zinc-300 text-[11px] flex items-center gap-2">
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-400" />
-            <span>{stageLabelMap[uploadStage]}{uploadStageText ? `：${uploadStageText}` : ''}</span>
+    <div className="flex flex-col lg:flex-row gap-6 h-full min-h-0 w-full">
+      {/* Left Panel: Novel library and Upload */}
+      <div className="w-full lg:w-64 flex flex-col shrink-0 gap-4">
+        {/* Upload Area */}
+        <div className="bg-[#121214] border border-[#1f1f23] rounded p-4 flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs uppercase font-mono tracking-wider text-zinc-500">文件导入</h4>
+            <span className="text-[10px] text-zinc-650 font-mono">TXT 最大 50MB</span>
           </div>
-        )}
+          
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading || repairing}
+            className="w-full py-2 border border-dashed border-zinc-800 hover:border-zinc-700 bg-zinc-950/40 text-zinc-300 text-xs font-semibold rounded active-press transition-linear flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Upload className="w-3.5 h-3.5 text-zinc-400" />
+            选择小说文件
+          </button>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            accept=".txt"
+            className="hidden"
+          />
 
-        {!uploading && errorMsg && (
-          <div className="mb-2 px-3 py-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[11px] flex items-center gap-2">
-            <AlertTriangle className="w-3.5 h-3.5" />
-            <span>{errorMsg}</span>
-          </div>
-        )}
+          {/* Uploading Status */}
+          {uploading && (
+            <div className="px-3 py-2 rounded bg-zinc-950/60 border border-zinc-900 text-zinc-400 text-[11px] flex items-center gap-2">
+              <Loader2 className="w-3 h-3 animate-spin text-amber-500" />
+              <span className="truncate">{stageLabelMap[uploadStage]}{uploadStageText ? `: ${uploadStageText}` : ''}</span>
+            </div>
+          )}
 
-        <div className="pt-2 border-t border-zinc-800/80 mt-2 mb-2">
-          <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-2">小说列表</p>
+          {/* Uploading Error */}
+          {!uploading && errorMsg && (
+            <div className="px-3 py-2 rounded bg-rose-950/20 border border-rose-900/30 text-rose-400 text-[11px] flex items-center gap-2">
+              <AlertTriangle className="w-3 h-3 shrink-0" />
+              <span className="leading-snug break-all">{errorMsg}</span>
+            </div>
+          )}
         </div>
 
-        <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-          {novels.length === 0 ? (
-            <div className="text-center py-8 text-zinc-600 text-xs">暂无小说，请先导入</div>
-          ) : (
-            novels.map((novel) => (
-              <div
-                key={novel.id}
-                onClick={() => {
-                  setSelectedNovelId(novel.id);
-                  resetChapterListView();
-                  setActiveDrawerChapterId(null);
-                }}
-                className={`group p-3 rounded-xl border transition-colors cursor-pointer flex items-center justify-between ${
-                  selectedNovelId === novel.id
-                    ? 'bg-zinc-800/60 border-zinc-700 text-zinc-100'
-                    : 'bg-zinc-950/20 border-zinc-900/80 hover:border-zinc-800 text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <BookOpen className={`w-4 h-4 flex-shrink-0 ${selectedNovelId === novel.id ? 'text-zinc-300' : 'text-zinc-500'}`} />
-                  <div className="min-w-0">
-                    <p className="font-medium text-sm truncate">{novel.name}</p>
-                    <p className="text-[10px] text-zinc-500 mt-0.5">{(novel.wordCount / 10000).toFixed(1)}万字</p>
-                  </div>
-                </div>
-                <button
-                  onClick={(e) => deleteNovel(novel.id, e)}
-                  className="opacity-0 group-hover:opacity-100 p-1 text-zinc-500 hover:text-rose-400 rounded transition-opacity"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+        {/* Novels List */}
+        <div className="bg-[#121214] border border-[#1f1f23] rounded p-4 flex flex-col flex-1 min-h-0">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-xs uppercase font-mono tracking-wider text-zinc-500">小说库 ({novels.length})</h4>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto space-y-1.5 custom-scrollbar pr-0.5">
+            {novels.length === 0 ? (
+              <div className="text-center py-8 text-zinc-600 text-xs font-sans">
+                无小说，请先导入文件
               </div>
-            ))
-          )}
+            ) : (
+              novels.map((novel) => {
+                const isSelected = selectedNovelId === novel.id;
+                return (
+                  <div
+                    key={novel.id}
+                    onClick={() => {
+                      setSelectedNovelId(novel.id);
+                      resetChapterListView();
+                      setActiveDrawerChapterId(null);
+                    }}
+                    className={`group p-2.5 rounded border transition-linear cursor-pointer flex items-center justify-between relative ${
+                      isSelected
+                        ? 'bg-zinc-900 border-zinc-800 text-zinc-105'
+                        : 'bg-transparent border-transparent text-zinc-450 hover:bg-zinc-900/40 hover:text-zinc-250'
+                    }`}
+                  >
+                    {/* Active Indicator Left Accent line */}
+                    {isSelected && (
+                      <div className="absolute left-0 top-1/4 bottom-1/4 w-0.5 bg-amber-500" />
+                    )}
+                    
+                    <div className="flex items-center gap-2 min-w-0">
+                      <BookOpen className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-amber-500' : 'text-zinc-500'}`} />
+                      <div className="min-w-0">
+                        <p className="font-medium text-xs truncate leading-normal">{novel.name}</p>
+                        <p className="text-[10px] text-zinc-500 font-mono mt-0.5">
+                          {novel.wordCount >= 10000 ? (novel.wordCount / 10000).toFixed(1) + '万字' : novel.wordCount + '字'}
+                        </p>
+                      </div>
+                    </div>
+                    
+                    <button
+                      onClick={(e) => deleteNovel(novel.id, e)}
+                      className="opacity-0 group-hover:opacity-100 p-1 text-zinc-500 hover:text-rose-450 hover:bg-rose-950/20 rounded transition-linear shrink-0"
+                      title="删除小说"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
       </div>
 
-      <div
-        className="lg:col-span-3 bg-zinc-900/20 border border-zinc-800/70 rounded-2xl p-5 flex flex-col min-h-0 relative overflow-hidden"
+      {/* Right Panel: Main detail and chapter list */}
+      <div 
+        className="flex-1 bg-[#121214] border border-[#1f1f23] rounded p-6 flex flex-col min-h-0 relative select-text"
         onDragEnter={handleDrag}
         onDragOver={handleDrag}
         onDragLeave={handleDrag}
         onDrop={handleDrop}
       >
+        {/* Drag and Drop Active Overlay */}
+        {dragActive && (
+          <div className="absolute inset-0 bg-zinc-950/70 border-2 border-dashed border-amber-500/50 rounded z-40 flex flex-col items-center justify-center p-6 backdrop-blur-sm pointer-events-none">
+            <Upload className="w-8 h-8 text-amber-500 animate-pulse mb-2" />
+            <p className="text-zinc-200 text-sm font-semibold">释放以导入小说文本</p>
+            <p className="text-zinc-500 text-xs mt-1">系统会自动处理编码与格式净化</p>
+          </div>
+        )}
+
         {!selectedNovelId ? (
-          <div
-            className={`flex-1 border border-dashed rounded-2xl flex flex-col items-center justify-center p-8 transition-colors ${
-              dragActive ? 'border-zinc-500 bg-zinc-900/25' : 'border-zinc-800 bg-zinc-950/20'
-            }`}
-          >
-            <div className="p-3 rounded-full bg-zinc-900/60 border border-zinc-800 text-zinc-400 mb-3">
-              <Upload className="w-7 h-7" />
+          /* Elegant Empty Dropzone State */
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-8 border border-dashed border-zinc-800 rounded bg-zinc-950/10">
+            <div className="p-3.5 rounded bg-zinc-900/60 border border-zinc-850 text-zinc-500 mb-4 animate-pulse">
+              <Upload className="w-6 h-6" />
             </div>
-            <h4 className="text-base font-semibold text-zinc-200">拖拽上传小说文本</h4>
-            <p className="text-xs text-zinc-500 mt-2 text-center max-w-sm">
-              系统会自动识别编码、净化噪声并智能切章。
+            <h4 className="text-sm font-semibold text-zinc-300">导入小说文本</h4>
+            <p className="text-xs text-zinc-500 mt-2 max-w-xs leading-relaxed">
+              拖拽小说 .txt 文件到此区域，或在左侧点击上传。系统支持智能分章、噪声过滤与多编码识别。
             </p>
           </div>
         ) : (
+          /* Novel Workspace Details */
           <div className="flex-1 flex flex-col min-h-0">
-            <div className="border border-zinc-800 rounded-xl px-4 py-3 bg-zinc-950/30">
-              <div className="flex items-start justify-between gap-3">
+            
+            {/* 1. Readiness Banner & Quality Info */}
+            <div className="bg-zinc-950/50 border border-zinc-850 rounded p-4 mb-4 flex flex-col gap-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-sm text-zinc-200">
-                    分章完成 · {activeSplitMeta ? toConfidenceLabel(activeSplitMeta.confidenceLevel) : '历史导入'} · {activeSplitMeta?.chapterCount ?? derivedStats?.chapterCount ?? chapters.length}章 · 均章 {Math.round(activeSplitMeta?.avgChapterChars ?? derivedStats?.avgChapterChars ?? 0)}字
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-zinc-200">
+                      分章评估: {activeSplitMeta ? toConfidenceLabel(activeSplitMeta.confidenceLevel) : '历史导入'}
+                    </span>
+                    {activeSplitMeta && (
+                      <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.25 rounded font-medium ${
+                        activeSplitMeta.confidenceLevel === 'high'
+                          ? 'bg-emerald-950/30 border border-emerald-900/40 text-emerald-400'
+                          : activeSplitMeta.confidenceLevel === 'medium'
+                            ? 'bg-zinc-900 border border-zinc-800 text-zinc-400'
+                            : 'bg-amber-950/30 border border-amber-900/40 text-amber-500'
+                      }`}>
+                        {activeSplitMeta.confidenceLevel === 'high' ? '就绪' : '建议修复'}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-zinc-500 mt-1 font-mono">
+                    共 {activeSplitMeta?.chapterCount ?? derivedStats?.chapterCount ?? chapters.length} 章节 · 均章 {Math.round(activeSplitMeta?.avgChapterChars ?? derivedStats?.avgChapterChars ?? 0)} 字
+                    {activeSplitMeta && ` · 引擎: ${activeSplitMeta.engineVersion.toUpperCase()} · 策略: ${activeSplitMeta.winnerStrategyId ? STRATEGY_LABELS[activeSplitMeta.winnerStrategyId] : '未知'}`}
                   </p>
-                  {activeSplitMeta ? (
-                    <p className="text-[11px] text-zinc-500 mt-1">
-                      引擎 {activeSplitMeta.engineVersion === 'v2' ? 'V2' : 'V1'}
-                      {' · '}
-                      选择方式 {activeSplitMeta.selectionMode === 'auto_v2' ? '自动智能(V2)' : '手动'}
-                      {' · '}
-                      命中策略 {activeSplitMeta.winnerStrategyId ? STRATEGY_LABELS[activeSplitMeta.winnerStrategyId] : '未知'}
-                    </p>
-                  ) : (
-                    <p className="text-[11px] text-zinc-500 mt-1">历史导入 · 未评估</p>
-                  )}
                 </div>
 
-                <div className="flex flex-col items-end gap-1">
+                <div className="flex items-center gap-2 shrink-0">
                   {needsSmartRepair && (
-                    <>
-                      <button
-                        onClick={() => void runResplit('auto_v2')}
-                        disabled={repairing}
-                        className="py-2 px-3 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-900 text-xs font-semibold disabled:opacity-50"
-                      >
-                        {repairing ? '重切处理中...' : '建议智能重切'}
-                      </button>
-                      <button
-                        onClick={() => setAdvancedRepairOpen((prev) => !prev)}
-                        className="text-[11px] text-zinc-500 hover:text-zinc-300"
-                      >
-                        手动规则
-                      </button>
-                    </>
-                  )}
-                  {!activeSplitMeta && (
                     <button
-                      onClick={() => void recomputeSplitMetaFromChapters()}
-                      disabled={recomputingMeta}
-                      className="py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold disabled:opacity-50 flex items-center gap-1.5"
+                      onClick={() => void runResplit('auto_v2')}
+                      disabled={repairing}
+                      className="py-1.5 px-3 rounded bg-amber-500 hover:bg-amber-600 text-zinc-950 text-xs font-semibold transition-linear active-press disabled:opacity-50"
                     >
-                      <RefreshCw className={`w-3 h-3 ${recomputingMeta ? 'animate-spin' : ''}`} />
-                      {recomputingMeta ? '评估中...' : '重新评估'}
+                      {repairing ? '重切处理中...' : '一键智能重切'}
                     </button>
                   )}
+                  <button
+                    onClick={() => setAdvancedRepairOpen((prev) => !prev)}
+                    className="py-1.5 px-2.5 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 text-xs transition-linear active-press"
+                  >
+                    {advancedRepairOpen ? '收起修复' : '高级修复'}
+                  </button>
+                  <button
+                    onClick={() => setResultDetailOpen((prev) => !prev)}
+                    className="py-1.5 px-2 rounded bg-transparent text-zinc-550 hover:text-zinc-300 text-[11px]"
+                  >
+                    {resultDetailOpen ? '收起详情' : '评估详情'}
+                  </button>
                 </div>
               </div>
 
-              <div className="mt-2 flex items-center gap-3">
-                <button
-                  onClick={() => setResultDetailOpen((prev) => !prev)}
-                  className="text-[11px] text-zinc-500 hover:text-zinc-300"
-                >
-                  {resultDetailOpen ? '收起详情' : '查看详情'}
-                </button>
-                {activeNovel && activeNovel.purifiedCount !== undefined && activeNovel.purifiedCount > 0 && (
-                  <span className="text-[11px] text-zinc-500">净化噪声字符 {activeNovel.purifiedCount}</span>
-                )}
-              </div>
-
+              {/* Details toggle */}
               {resultDetailOpen && activeSplitMeta && (
-                <div className="mt-3 pt-3 border-t border-zinc-800 text-xs text-zinc-400 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <div>最大章占比 {(activeSplitMeta.maxChapterRatio * 100).toFixed(1)}%</div>
-                  <div>短章占比 {(activeSplitMeta.shortChapterRatio * 100).toFixed(1)}%</div>
-                  <div>标题命中率 {formatMetricPercent(activeSplitMeta.titleHitRate)}</div>
-                  <div>编号连续性 {formatMetricPercent(activeSplitMeta.continuityScore)}</div>
-                  <div>分布得分 {formatMetricPercent(activeSplitMeta.distributionScore)}</div>
-                  <div>置信度 {(activeSplitMeta.confidence * 100).toFixed(1)}%</div>
+                <div className="pt-3 border-t border-zinc-900 text-[11px] text-zinc-500 font-mono grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5">
+                  <div>最大章比: <span className="text-zinc-300">{(activeSplitMeta.maxChapterRatio * 100).toFixed(1)}%</span></div>
+                  <div>短章比例: <span className="text-zinc-300">{(activeSplitMeta.shortChapterRatio * 100).toFixed(1)}%</span></div>
+                  <div>标题命中: <span className="text-zinc-300">{formatMetricPercent(activeSplitMeta.titleHitRate)}</span></div>
+                  <div>编号连续: <span className="text-zinc-300">{formatMetricPercent(activeSplitMeta.continuityScore)}</span></div>
+                  <div>分布得分: <span className="text-zinc-300">{formatMetricPercent(activeSplitMeta.distributionScore)}</span></div>
+                  <div>置信分数: <span className="text-zinc-300">{(activeSplitMeta.confidence * 100).toFixed(1)}%</span></div>
                   {activeSplitMeta.reviewReasons.length > 0 && (
-                    <div className="sm:col-span-2 text-amber-300/90">
-                      复核原因：{activeSplitMeta.reviewReasons.join('；')}
+                    <div className="col-span-full mt-1.5 text-amber-500/90 font-sans leading-normal">
+                      复核提示: {activeSplitMeta.reviewReasons.join('; ')}
                     </div>
                   )}
                 </div>
               )}
 
               {resultDetailOpen && !activeSplitMeta && derivedStats && (
-                <div className="mt-3 pt-3 border-t border-zinc-800 text-xs text-zinc-400 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <div>章节数 {derivedStats.chapterCount}</div>
-                  <div>均章 {Math.round(derivedStats.avgChapterChars)} 字</div>
-                  <div className="sm:col-span-2 text-amber-300/90">
-                    历史导入，缺少质量指标 — 点击「重新评估」生成
+                <div className="pt-3 border-t border-zinc-900 text-[11px] text-zinc-500 font-mono grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5">
+                  <div>章节数量: <span className="text-zinc-300">{derivedStats.chapterCount}</span></div>
+                  <div>均章字数: <span className="text-zinc-300">{Math.round(derivedStats.avgChapterChars)} 字</span></div>
+                  <div className="col-span-full mt-1 text-amber-500/90 font-sans">
+                    提示: 历史导入无质量指标，可点击下方「重新评估」重新生成
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="mt-3 border border-zinc-800 rounded-xl p-3 bg-zinc-950/20">
-              <button
-                onClick={() => setAdvancedRepairOpen((prev) => !prev)}
-                className="text-xs text-zinc-400 hover:text-zinc-200"
-              >
-                {advancedRepairOpen ? '收起高级修复' : '高级修复（手动规则）'}
-              </button>
-
-              {advancedRepairOpen && (
-                <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+            {/* 2. Collapsible Advanced Repair Options */}
+            {advancedRepairOpen && (
+              <div className="bg-zinc-950/30 border border-zinc-850 rounded p-4 mb-4 flex flex-col gap-3">
+                <h5 className="text-xs font-semibold text-zinc-400">手动重切规则修复</h5>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
                   <div>
-                    <label className="text-[10px] text-zinc-500 block mb-1">修复策略</label>
+                    <label className="text-[10px] text-zinc-500 block mb-1">重切策略</label>
                     <select
                       value={repairStrategy}
                       onChange={(e) => setRepairStrategy(e.target.value as SplitStrategyId)}
-                      className="w-full px-2 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs focus:outline-none"
+                      className="w-full px-2.5 py-1.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-205 text-xs focus:outline-none focus:border-zinc-700 transition-linear"
                     >
                       <option value="zh_strict">中文标准</option>
                       <option value="zh_extended">中文扩展</option>
                       <option value="mixed">中英混合</option>
                       <option value="en_basic">英文标准</option>
-                      <option value="custom">自定义正则</option>
+                      <option value="custom">自定义正则表达式</option>
                     </select>
                   </div>
 
                   <div className="md:col-span-2">
                     {repairStrategy === 'custom' ? (
                       <>
-                        <label className="text-[10px] text-zinc-500 block mb-1">自定义分章正则</label>
+                        <label className="text-[10px] text-zinc-500 block mb-1">自定义分章正则表达式</label>
                         <input
                           type="text"
                           value={repairRegex}
                           onChange={(e) => setRepairRegex(e.target.value)}
-                          className="w-full px-2 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs font-mono focus:outline-none"
+                          className="w-full px-2.5 py-1.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-205 text-xs font-mono focus:outline-none focus:border-zinc-700 transition-linear"
                         />
                       </>
                     ) : (
                       <button
                         onClick={() => void runResplit(repairStrategy)}
                         disabled={repairing}
-                        className="w-full md:w-auto py-2 px-4 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-900 text-xs font-semibold disabled:opacity-50"
+                        className="w-full md:w-auto py-1.5 px-4 rounded bg-[#1f1f23] hover:bg-[#27272a] border border-[#27272a] text-zinc-200 text-xs font-semibold transition-linear active-press disabled:opacity-50 cursor-pointer"
                       >
-                        {repairing ? '重切处理中...' : '应用修复并重切'}
+                        {repairing ? '重切处理中...' : '应用该策略并重切'}
                       </button>
                     )}
                   </div>
@@ -1894,485 +1914,552 @@ export default function NovelUploader() {
                       <button
                         onClick={() => void runResplit('custom')}
                         disabled={repairing}
-                        className="py-2 px-4 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-900 text-xs font-semibold disabled:opacity-50"
+                        className="py-1.5 px-4 rounded bg-[#1f1f23] hover:bg-[#27272a] border border-[#27272a] text-zinc-200 text-xs font-semibold transition-linear active-press disabled:opacity-50 cursor-pointer"
                       >
-                        {repairing ? '重切处理中...' : '应用修复并重切'}
+                        {repairing ? '重切处理中...' : '应用正则并重切'}
                       </button>
                     </div>
                   )}
                 </div>
-              )}
-            </div>
-
-            <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-800">
-              <div>
-                <h2 className="text-base font-semibold text-zinc-200">章节列表</h2>
-                <p className="text-xs text-zinc-500 mt-0.5">共 {chapters.length} 章，可直接开始结构化解析。</p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={retryFailedChapters}
-                  disabled={batchRun.active}
-                  className="py-2 px-3 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-200 rounded-lg text-xs disabled:opacity-50"
-                >
-                  重试失败
-                </button>
-                <button
-                  onClick={parseAllChapters}
-                  disabled={batchRun.active}
-                  className="py-2 px-3 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded-lg text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  <Cpu className="w-3.5 h-3.5" />
-                  解析全部
-                </button>
-                {batchRun.active && (
-                  <>
+                
+                {!activeSplitMeta && (
+                  <div className="flex justify-end pt-1">
                     <button
-                      onClick={() => (batchRun.paused ? resumeBatchRun() : pauseBatchRun())}
-                      className="py-2 px-3 bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 text-zinc-200 rounded-lg text-xs font-medium flex items-center gap-1.5"
+                      onClick={() => void recomputeSplitMetaFromChapters()}
+                      disabled={recomputingMeta}
+                      className="py-1.5 px-3 rounded bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-zinc-400 hover:text-zinc-200 text-xs transition-linear active-press flex items-center gap-1.5"
                     >
-                      {batchRun.paused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
-                      {batchRun.paused ? '继续' : '暂停'}
-                    </button>
-                    <button
-                      onClick={() => void cancelBatchRun()}
-                      className="py-2 px-3 bg-rose-950/20 border border-rose-900/40 hover:bg-rose-900/25 text-rose-300 rounded-lg text-xs font-medium flex items-center gap-1.5"
-                    >
-                      <Square className="w-3.5 h-3.5" />
-                      取消
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-3 flex flex-col md:flex-row gap-2 items-center justify-between">
-              <div className="relative w-full md:w-72">
-                <input
-                  type="text"
-                  placeholder="搜索章节名称"
-                  value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    setCurrentPage(1);
-                  }}
-                  className="w-full pl-3 pr-8 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => {
-                      setSearchQuery('');
-                      setCurrentPage(1);
-                    }}
-                    className="absolute right-2.5 top-1.5 text-zinc-500 hover:text-zinc-300 text-sm"
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-
-              <div className="flex items-center gap-1 overflow-x-auto w-full md:w-auto pb-1 md:pb-0">
-                {(['all', 'unparsed', 'parsing', 'done', 'error'] as const).map((status) => {
-                  const count = status === 'all'
-                    ? chapterStatusStats.total
-                    : status === 'unparsed'
-                      ? chapterStatusStats.unparsed
-                      : status === 'parsing'
-                        ? chapterStatusStats.parsing
-                        : status === 'done'
-                          ? chapterStatusStats.done
-                          : chapterStatusStats.error;
-                  const label = status === 'all'
-                    ? '全部'
-                    : status === 'unparsed'
-                      ? '待解析'
-                      : status === 'parsing'
-                        ? '解析中'
-                        : status === 'done'
-                          ? '已解析'
-                          : '失败';
-                  const active = statusFilter === status;
-                  return (
-                    <button
-                      key={status}
-                      onClick={() => {
-                        setStatusFilter(status);
-                        setCurrentPage(1);
-                      }}
-                      className={`px-2.5 py-1.5 rounded-lg text-[11px] whitespace-nowrap border ${
-                        active
-                          ? 'bg-zinc-800 text-zinc-100 border-zinc-700'
-                          : 'bg-zinc-950/50 text-zinc-500 hover:text-zinc-300 border-zinc-900'
-                      }`}
-                    >
-                      {label} ({count})
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Bulk Progress Panel */}
-            {batchPanelStats && (
-              <div className="mt-4 p-4 rounded-xl border border-zinc-800/80 bg-zinc-950/60 backdrop-blur-md flex flex-col gap-3.5 relative overflow-hidden group">
-                {/* Flowing background shine */}
-                <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-violet-500/5 via-indigo-500/5 to-transparent animate-pulse pointer-events-none" />
-
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="flex h-2 w-2 relative">
-                      {batchPanelStats.mode === 'active' && !batchPanelStats.paused ? (
-                        <>
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
-                        </>
-                      ) : batchPanelStats.mode === 'active' && batchPanelStats.paused ? (
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-400"></span>
-                      ) : (
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
-                      )}
-                    </span>
-                    <h4 className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
-                      {batchPanelStats.mode === 'active'
-                        ? (batchPanelStats.paused ? '批量解析已暂停' : '后台大模型结构化解析中')
-                        : (batchPanelStats.cancelled ? '批量解析已取消' : '批量解析已完成')}
-                    </h4>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-zinc-400 font-mono font-medium">
-                      {batchPanelStats.mode === 'active' ? `并发上限: ${PARSE_CONCURRENCY_LIMIT}` : '结果摘要'}
-                    </span>
-                    {batchPanelStats.mode === 'summary' && (
-                      <button
-                        onClick={() => setLastBatchSummary(null)}
-                        className="text-[10px] text-zinc-500 hover:text-zinc-300"
-                      >
-                        隐藏
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-[11px]">
-                    <span className="text-zinc-400 font-medium">
-                      解析进度：{batchPanelStats.done} / {batchPanelStats.total} 章 ({batchPanelStats.progress}%)
-                    </span>
-                    <span className="text-zinc-400 font-mono">
-                      {batchPanelStats.parsing} 个在途 · {batchPanelStats.error} 个失败
-                    </span>
-                  </div>
-
-                  <div className="h-1.5 w-full bg-zinc-900 rounded-full overflow-hidden p-[1px]">
-                    <div
-                      className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full transition-all duration-500 ease-out shadow-[0_0_8px_rgba(99,102,241,0.4)]"
-                      style={{ width: `${batchPanelStats.progress}%` }}
-                    />
-                  </div>
-                </div>
-
-                {batchPanelStats.error > 0 && (
-                  <div className="flex items-center justify-between pt-1 text-[10px] border-t border-zinc-900/60">
-                    <span className="text-rose-400/90 flex items-center gap-1">
-                      <AlertCircle className="w-3.5 h-3.5" />
-                      当前有 {batchPanelStats.error} 个章节解析失败，您可以点击重试
-                    </span>
-                    <button
-                      onClick={retryFailedChapters}
-                      disabled={batchRun.active}
-                      className="text-zinc-400 hover:text-zinc-200 transition-colors font-medium flex items-center gap-1"
-                    >
-                      <RefreshCw className="w-2.5 h-2.5 animate-spin-hover" />
-                      立即重试失败章节
+                      <RefreshCw className={`w-3 h-3 ${recomputingMeta ? 'animate-spin' : ''}`} />
+                      {recomputingMeta ? '评估中...' : '对当前章节进行质量评估'}
                     </button>
                   </div>
                 )}
               </div>
             )}
 
-            <div className="flex-1 overflow-y-auto mt-4 pr-1">
-              {paginatedChapters.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center py-16 text-zinc-500">
-                  <p className="text-sm font-medium">没有匹配章节</p>
-                  <p className="text-xs text-zinc-400 mt-1">请尝试修改搜索词或筛选条件</p>
+            {/* 3. Toolbar: Search, Filters & Bulk Actions */}
+            <div className="flex flex-col gap-3 pb-4 mb-4 border-b border-zinc-850">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-zinc-250">章节管理库</h2>
+                  <p className="text-[11px] text-zinc-500 mt-0.5">当前共 {chapters.length} 章节，点击可查看正文及解析细节</p>
                 </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {paginatedChapters.map((chapter) => {
-                    const isParsing = chapter.status === 'parsing';
-                    const isSelected = selectedChapterId === chapter.id || activeDrawerChapterId === chapter.id;
-
-                    return (
-                      <div
-                        key={chapter.id}
-                        onClick={() => {
-                          setSelectedChapterId(chapter.id);
-                          setActiveDrawerChapterId(chapter.id);
-                          if (chapter.status === 'error') {
-                            setDrawerTab('error');
-                          } else if (chapter.status === 'done') {
-                            setDrawerTab('analysis');
-                          } else {
-                            setDrawerTab('text');
-                          }
-                        }}
-                        className={`p-4 rounded-xl border cursor-pointer flex flex-col justify-between h-32 transition-all duration-250 ${
-                          isSelected
-                            ? 'bg-zinc-800/50 border-zinc-600 text-zinc-100 shadow-[0_4px_20px_rgba(0,0,0,0.15)] scale-[1.01]'
-                            : 'bg-zinc-950/20 border-zinc-800/60 hover:border-zinc-700 hover:bg-zinc-900/10 text-zinc-400'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="text-xs text-zinc-400">Chapter {chapter.chapterIndex}</p>
-                            <h4 className="font-medium text-sm text-zinc-200 truncate mt-1">{chapter.name}</h4>
-                            <p className="text-[11px] text-zinc-400 mt-0.5">{chapter.wordCount} 字</p>
-                          </div>
-
-                          <div>
-                            {chapter.status === 'done' && (
-                              <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-emerald-950/30 border border-emerald-900/40 text-emerald-300">
-                                <CheckCircle2 className="w-3 h-3 text-emerald-300" />
-                                已解析
-                              </span>
-                            )}
-                            {chapter.status === 'unparsed' && (
-                              <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-zinc-400">
-                                待解析
-                              </span>
-                            )}
-                            {isParsing && (
-                              <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-indigo-950/30 border border-indigo-900/40 text-indigo-300">
-                                <Loader2 className="w-3 h-3 animate-spin text-indigo-300" />
-                                解析中
-                              </span>
-                            )}
-                            {chapter.status === 'error' && (
-                              <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-rose-950/20 border border-rose-900/30 text-rose-300">
-                                <AlertCircle className="w-3 h-3" />
-                                失败
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between border-t border-zinc-800/80 pt-2 mt-2">
-                          <div className="min-w-0 flex-1">
-                            {chapter.status === 'error' ? (
-                              <p className="text-[11px] text-rose-300 truncate pr-2" title={chapter.errorMsg || '解析出错'}>{chapter.errorMsg || '解析出错'}</p>
-                            ) : chapter.status === 'done' ? (
-                              <p className="text-[11px] text-zinc-300 truncate pr-2">
-                                角色 {chapter.analysis?.characters?.length ?? 0} · 关系 {chapter.analysis?.relationships?.length ?? 0}
-                              </p>
-                            ) : (
-                              <p className="text-[11px] text-zinc-400 truncate pr-2">暂无结构化结果</p>
-                            )}
-                          </div>
-
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void parseChapter(chapter);
-                            }}
-                            disabled={isParsing || batchRun.active}
-                            className="py-1 px-2.5 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-[11px] flex items-center gap-1 disabled:opacity-50"
-                          >
-                            <Play className="w-3 h-3" />
-                            {chapter.status === 'done' ? '重解析' : '解析'}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between border-t border-zinc-800/80 pt-4 mt-4">
-                <span className="text-[11px] text-zinc-400">第 {safePage} 页 / 共 {totalPages} 页（共 {filteredChapters.length} 章）</span>
+                
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-                    disabled={safePage === 1}
-                    className="py-1 px-3 rounded bg-zinc-950 border border-zinc-800 hover:bg-zinc-900 text-zinc-300 text-xs disabled:opacity-30"
+                    onClick={retryFailedChapters}
+                    disabled={batchRun.active}
+                    className="py-1.5 px-3 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 text-xs rounded transition-linear active-press disabled:opacity-50"
                   >
-                    上一页
+                    重试失败章节
                   </button>
                   <button
-                    onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
-                    disabled={safePage === totalPages}
-                    className="py-1 px-3 rounded bg-zinc-950 border border-zinc-800 hover:bg-zinc-900 text-zinc-300 text-xs disabled:opacity-30"
+                    onClick={parseAllChapters}
+                    disabled={batchRun.active}
+                    className="py-1.5 px-3 bg-zinc-100 hover:bg-zinc-200 text-zinc-950 font-semibold text-xs rounded transition-linear active-press flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
                   >
-                    下一页
+                    <Cpu className="w-3.5 h-3.5" />
+                    解析全部章节
                   </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {toast && (
-        <div className="fixed top-4 right-4 z-[70]">
-          <div className={`px-4 py-2.5 rounded-xl border shadow-lg text-xs flex items-center gap-2 ${
-            toast.tone === 'error'
-              ? 'bg-rose-950/90 border-rose-800 text-rose-100'
-              : toast.tone === 'success'
-                ? 'bg-emerald-950/90 border-emerald-800 text-emerald-100'
-                : 'bg-zinc-900/95 border-zinc-700 text-zinc-100'
-          }`}>
-            {toast.tone === 'error' ? <CircleX className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-            <span>{toast.message}</span>
-          </div>
-        </div>
-      )}
-
-      {confirmDialog && (
-        <div className="fixed inset-0 z-[75] flex items-center justify-center p-4">
-          <button
-            type="button"
-            aria-label="关闭确认对话框"
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setConfirmDialog(null)}
-          />
-          <div className="relative w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
-            <h4 className="text-sm font-semibold text-zinc-100">{confirmDialog.title}</h4>
-            <p className="text-xs text-zinc-400 mt-2 leading-relaxed">{confirmDialog.description}</p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmDialog(null)}
-                className="px-3 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs hover:bg-zinc-800"
-              >
-                取消
-              </button>
-              <button
-                onClick={() => void confirmDialog.onConfirm()}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
-                  confirmDialog.danger
-                    ? 'bg-rose-600 hover:bg-rose-500 text-white'
-                    : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-900'
-                }`}
-              >
-                {confirmDialog.confirmText}
-              </button>
+                  
+                  {batchRun.active && (
+                    <>
+                      <button
+                        onClick={() => (batchRun.paused ? resumeBatchRun() : pauseBatchRun())}
+                        className="py-1.5 px-2.5 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 text-xs rounded transition-linear active-press flex items-center gap-1"
+                      >
+                        {batchRun.paused ? <Play className="w-3 h-3 text-amber-500" /> : <Pause className="w-3 h-3 text-amber-500" />}
+                        {batchRun.paused ? '继续' : '暂停'}
+                      </button>
+                      <button
+                        onClick={() => void cancelBatchRun()}
+                        className="py-1.5 px-2.5 bg-rose-950/20 border border-rose-900/30 hover:bg-rose-900/40 text-rose-350 text-xs rounded transition-linear active-press flex items-center gap-1"
+                      >
+                        <Square className="w-3 h-3" />
+                        取消
+                  </button>
+                </>
+              )}
             </div>
           </div>
-        </div>
-      )}
 
-      {activeDrawerChapterId && (
-        <div className="fixed inset-0 z-[60] flex justify-end">
-          <button
-            type="button"
-            aria-label="关闭章节详情"
-            className="absolute inset-0 bg-black/55 backdrop-blur-sm"
-            onClick={() => setActiveDrawerChapterId(null)}
-          />
-          <aside className="relative h-full w-full max-w-2xl bg-zinc-900 border-l border-zinc-800 shadow-2xl animate-slide-in flex flex-col">
-            <div className="p-4 border-b border-zinc-800 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[11px] text-zinc-400 uppercase tracking-wider">章节详情</p>
-                <h3 className="text-sm font-semibold text-zinc-100 truncate">
-                  {drawerChapter ? drawerChapter.name : '章节未找到'}
-                </h3>
-                {drawerChapter && (
-                  <p className="text-[11px] text-zinc-400 mt-0.5">
-                    第 {drawerChapter.chapterIndex} 章 · {drawerChapter.wordCount} 字 · 状态 {drawerChapter.status}
-                  </p>
-                )}
-              </div>
-              <button
-                onClick={() => setActiveDrawerChapterId(null)}
-                className="p-1.5 rounded-lg border border-zinc-700 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
-                aria-label="关闭章节详情"
-              >
-                <X className="w-4 h-4" />
-              </button>
+          <div className="flex flex-col md:flex-row gap-3 items-center justify-between">
+            {/* Search Input */}
+            <div className="relative w-full md:w-64">
+              <input
+                type="text"
+                placeholder="搜索章节..."
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="w-full pl-3 pr-8 py-1.5 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-250 text-xs focus:outline-none focus:border-zinc-600 focus:ring-0 placeholder-zinc-650 transition-linear"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => {
+                    setSearchQuery('');
+                    setCurrentPage(1);
+                  }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 text-xs font-bold font-sans"
+                >
+                  ×
+                </button>
+              )}
             </div>
 
-            <div className="px-4 pt-3 flex items-center gap-2 border-b border-zinc-800">
-              {([
-                { id: 'text', label: '正文', icon: FileText },
-                { id: 'analysis', label: '结构化分析', icon: Eye },
-                { id: 'error', label: '错误详情', icon: AlertCircle },
-              ] as const).map((tab) => {
-                const active = drawerTab === tab.id;
-                const Icon = tab.icon;
+            {/* Filter Buttons */}
+            <div className="flex items-center gap-1 overflow-x-auto w-full md:w-auto pb-1 md:pb-0 scrollbar-none">
+              {(['all', 'unparsed', 'parsing', 'done', 'error'] as const).map((status) => {
+                const count = status === 'all'
+                  ? chapterStatusStats.total
+                  : status === 'unparsed'
+                    ? chapterStatusStats.unparsed
+                    : status === 'parsing'
+                      ? chapterStatusStats.parsing
+                      : status === 'done'
+                        ? chapterStatusStats.done
+                        : chapterStatusStats.error;
+                
+                const label = status === 'all'
+                  ? '全部'
+                  : status === 'unparsed'
+                    ? '待解析'
+                    : status === 'parsing'
+                      ? '解析中'
+                      : status === 'done'
+                        ? '已解析'
+                        : '失败';
+                
+                const active = statusFilter === status;
+                
                 return (
                   <button
-                    key={tab.id}
-                    onClick={() => setDrawerTab(tab.id)}
-                    className={`px-3 py-2 rounded-t-lg text-xs flex items-center gap-1.5 border ${
+                    key={status}
+                    onClick={() => {
+                      setStatusFilter(status);
+                      setCurrentPage(1);
+                    }}
+                    className={`px-2.5 py-1.5 rounded text-[11px] whitespace-nowrap border transition-linear ${
                       active
-                        ? 'bg-zinc-800 border-zinc-700 text-zinc-100'
-                        : 'bg-transparent border-transparent text-zinc-400 hover:text-zinc-200'
+                        ? 'bg-zinc-800 border-zinc-750 text-zinc-100 font-semibold'
+                        : 'bg-transparent border-transparent text-zinc-550 hover:text-zinc-300'
                     }`}
                   >
-                    <Icon className="w-3.5 h-3.5" />
-                    {tab.label}
+                    {label} <span className="font-mono text-[9px] opacity-70">({count})</span>
                   </button>
                 );
               })}
             </div>
-
-            <div className="p-4 overflow-y-auto flex-1">
-              {!drawerChapter ? (
-                <p className="text-xs text-zinc-400">未找到章节数据，可能已被删除。</p>
-              ) : drawerTab === 'text' ? (
-                <pre className="whitespace-pre-wrap text-xs leading-relaxed text-zinc-200 font-sans">{drawerChapter.content}</pre>
-              ) : drawerTab === 'analysis' ? (
-                drawerChapter.status === 'done' && drawerChapter.analysis ? (
-                  <div className="space-y-4 text-xs text-zinc-200">
-                    <section>
-                      <h4 className="text-zinc-100 font-semibold mb-1.5">世界观</h4>
-                      <p className="text-zinc-300 leading-relaxed">{drawerChapter.analysis.worldview}</p>
-                    </section>
-                    <section>
-                      <h4 className="text-zinc-100 font-semibold mb-1.5">核心骨架</h4>
-                      <p className="text-zinc-300 leading-relaxed">{drawerChapter.analysis.plotSkeleton}</p>
-                    </section>
-                    <section>
-                      <h4 className="text-zinc-100 font-semibold mb-1.5">角色（{drawerChapter.analysis.characters.length}）</h4>
-                      <div className="space-y-2">
-                        {drawerChapter.analysis.characters.map((char, idx) => (
-                          <div key={`${char.name}-${idx}`} className="p-2 rounded-lg border border-zinc-800 bg-zinc-950/60">
-                            <p className="text-zinc-100 font-medium">{char.name}</p>
-                            <p className="text-zinc-300 mt-1">性格：{char.personality}</p>
-                            <p className="text-zinc-300">外貌：{char.appearance}</p>
-                            <p className="text-zinc-300">冲突：{char.coreConflict}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                    <section>
-                      <h4 className="text-zinc-100 font-semibold mb-1.5">人物关系（{drawerChapter.analysis.relationships.length}）</h4>
-                      <div className="space-y-2">
-                        {drawerChapter.analysis.relationships.map((rel, idx) => (
-                          <div key={`${rel.roleA}-${rel.roleB}-${idx}`} className="p-2 rounded-lg border border-zinc-800 bg-zinc-950/60 text-zinc-300">
-                            {rel.roleA} ↔ {rel.roleB}：{rel.description}
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                    <section>
-                      <h4 className="text-zinc-100 font-semibold mb-1.5">叙事风格</h4>
-                      <p className="text-zinc-300 leading-relaxed">{drawerChapter.analysis.style}</p>
-                    </section>
-                  </div>
-                ) : (
-                  <p className="text-xs text-zinc-400">该章节尚未完成结构化解析。</p>
-                )
-              ) : (
-                <div className="rounded-lg border border-rose-900/40 bg-rose-950/20 p-3 text-xs text-rose-200 whitespace-pre-wrap">
-                  {drawerChapter.errorMsg || '暂无错误详情。'}
-                </div>
-              )}
-            </div>
-          </aside>
+          </div>
         </div>
-      )}
+
+        {/* 4. Bulk Process Panel */}
+        {batchPanelStats && (
+          <div className="mb-4 p-3.5 rounded border border-zinc-850 bg-zinc-950/40 flex flex-col gap-2.5 relative overflow-hidden">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="flex h-2 w-2 relative">
+                  {batchPanelStats.mode === 'active' && !batchPanelStats.paused ? (
+                    <>
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                    </>
+                  ) : batchPanelStats.mode === 'active' && batchPanelStats.paused ? (
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-zinc-500"></span>
+                  ) : (
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  )}
+                </span>
+                <span className="text-xs font-semibold text-zinc-300">
+                  {batchPanelStats.mode === 'active'
+                    ? (batchPanelStats.paused ? '批量解析已暂停' : '智能结构化解析中')
+                    : (batchPanelStats.cancelled ? '批量任务已取消' : '批量任务已完成')}
+                </span>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-zinc-550 font-mono">
+                  {batchPanelStats.mode === 'active' ? `并发: ${PARSE_CONCURRENCY_LIMIT}` : '运行摘要'}
+                </span>
+                {batchPanelStats.mode === 'summary' && (
+                  <button
+                    onClick={() => setLastBatchSummary(null)}
+                    className="text-[10px] text-zinc-500 hover:text-zinc-300 font-medium"
+                  >
+                    清除记录
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-[11px] font-mono text-zinc-400">
+                <span>进度: {batchPanelStats.done} / {batchPanelStats.total} 章 ({batchPanelStats.progress}%)</span>
+                <span>{batchPanelStats.parsing} 解析中 · {batchPanelStats.error} 失败</span>
+              </div>
+
+              <div className="h-1 w-full bg-zinc-900 rounded overflow-hidden">
+                <div
+                  className="h-full bg-amber-500 rounded transition-all duration-300 ease-out"
+                  style={{ width: `${batchPanelStats.progress}%` }}
+                />
+              </div>
+            </div>
+
+            {batchPanelStats.error > 0 && (
+              <div className="flex items-center justify-between pt-2 border-t border-zinc-900/60 text-[10px]">
+                <span className="text-rose-450 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" />
+                  当前有 {batchPanelStats.error} 个章节解析失败，可重试
+                </span>
+                <button
+                  onClick={retryFailedChapters}
+                  disabled={batchRun.active}
+                  className="text-zinc-300 hover:text-zinc-100 font-semibold transition-linear flex items-center gap-1"
+                >
+                  <RefreshCw className="w-2.5 h-2.5" />
+                  立即重试失败章节
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 5. Notion-style Chapters Database List */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar pr-0.5 min-h-0">
+          {paginatedChapters.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-center py-16 text-zinc-600 bg-zinc-950/10 border border-dashed border-zinc-850 rounded">
+              <p className="text-xs font-semibold">未找到匹配章节</p>
+              <p className="text-[11px] text-zinc-500 mt-1">请尝试修改搜索词或更改过滤器状态</p>
+            </div>
+          ) : (
+            <div className="border border-zinc-850 rounded bg-zinc-950/10 overflow-hidden">
+              {/* Table Header */}
+              <div className="grid grid-cols-12 gap-3 px-4 py-2 bg-zinc-900/40 border-b border-zinc-850 text-[10px] font-mono uppercase tracking-wider text-zinc-500 font-bold">
+                <div className="col-span-1">序号</div>
+                <div className="col-span-4">章节名称</div>
+                <div className="col-span-2 text-right">字数</div>
+                <div className="col-span-2 text-center">状态</div>
+                <div className="col-span-3">解析摘要 / 错误提示</div>
+              </div>
+
+              {/* Table Rows */}
+              <div className="divide-y divide-zinc-850/80 bg-[#121214]">
+                {paginatedChapters.map((chapter) => {
+                  const isParsing = chapter.status === 'parsing';
+                  const isSelected = selectedChapterId === chapter.id || activeDrawerChapterId === chapter.id;
+
+                  return (
+                    <div
+                      key={chapter.id}
+                      onClick={() => {
+                        setSelectedChapterId(chapter.id);
+                        setActiveDrawerChapterId(chapter.id);
+                        if (chapter.status === 'error') {
+                          setDrawerTab('error');
+                        } else if (chapter.status === 'done') {
+                          setDrawerTab('analysis');
+                        } else {
+                          setDrawerTab('text');
+                        }
+                      }}
+                      className={`grid grid-cols-12 gap-3 px-4 py-3 items-center text-xs cursor-pointer transition-linear hover:bg-zinc-900/60 ${
+                        isSelected
+                          ? 'bg-zinc-900/45 text-zinc-100 font-medium border-l border-amber-500 pl-[15px]'
+                          : 'text-zinc-400'
+                      }`}
+                    >
+                      {/* 1. Index */}
+                      <div className="col-span-1 font-mono text-zinc-500">
+                        #{chapter.chapterIndex.toString().padStart(2, '0')}
+                      </div>
+
+                      {/* 2. Name */}
+                      <div className="col-span-4 truncate font-medium text-zinc-200" title={chapter.name}>
+                        {chapter.name}
+                      </div>
+
+                      {/* 3. Wordcount */}
+                      <div className="col-span-2 text-right font-mono text-zinc-400">
+                        {chapter.wordCount.toLocaleString()} 字
+                      </div>
+
+                      {/* 4. Status Badge */}
+                      <div className="col-span-2 flex justify-center">
+                        {chapter.status === 'done' && (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/20 border border-emerald-900/30 text-emerald-400 font-medium">
+                            <CheckCircle2 className="w-2.5 h-2.5" />
+                            已解析
+                          </span>
+                        )}
+                        {chapter.status === 'unparsed' && (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-450">
+                            待解析
+                          </span>
+                        )}
+                        {isParsing && (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-950/20 border border-amber-900/30 text-amber-500">
+                            <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                            解析中
+                          </span>
+                        )}
+                        {chapter.status === 'error' && (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-rose-950/20 border border-rose-900/30 text-rose-400">
+                            <AlertCircle className="w-2.5 h-2.5" />
+                            失败
+                          </span>
+                        )}
+                      </div>
+
+                      {/* 5. Summary & Action */}
+                      <div className="col-span-3 flex items-center justify-between gap-2 min-w-0">
+                        <div className="truncate flex-1 text-[11px] text-zinc-500">
+                          {chapter.status === 'error' ? (
+                            <span className="text-rose-400 truncate" title={chapter.errorMsg || '解析出错'}>
+                              {chapter.errorMsg || '解析出错'}
+                            </span>
+                          ) : chapter.status === 'done' ? (
+                            <span>
+                              {chapter.analysis?.characters?.length ?? 0} 角色 · {chapter.analysis?.relationships?.length ?? 0} 关系
+                            </span>
+                          ) : (
+                            <span className="text-zinc-650">待解析提取</span>
+                          )}
+                        </div>
+
+                        {/* Inline Run Button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void parseChapter(chapter);
+                          }}
+                          disabled={isParsing || batchRun.active}
+                          className="shrink-0 py-1 px-2 border border-zinc-800 hover:border-zinc-700 bg-zinc-900 text-zinc-300 text-[10px] font-semibold rounded active-press transition-linear flex items-center gap-1 disabled:opacity-40"
+                          title={chapter.status === 'done' ? '重新解析' : '开始解析'}
+                        >
+                          <Play className="w-2.5 h-2.5" />
+                          {chapter.status === 'done' ? '重试' : '解析'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 6. Pagination Footer */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between border-t border-zinc-850/80 pt-3 mt-3">
+            <span className="text-[11px] text-zinc-500 font-mono">
+              第 {safePage} / {totalPages} 页 · 共 {filteredChapters.length} 章节
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                disabled={safePage === 1}
+                className="py-1 px-2.5 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 text-xs font-semibold disabled:opacity-30 active-press transition-linear"
+              >
+                上一页
+              </button>
+              <button
+                onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                disabled={safePage === totalPages}
+                className="py-1 px-2.5 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 text-xs font-semibold disabled:opacity-30 active-press transition-linear"
+              >
+                下一页
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+
+  {/* Toast Notifications */}
+  {toast && (
+    <div className="fixed top-4 right-4 z-[70] animate-fade-in">
+      <div className={`px-4 py-2.5 rounded border shadow-2xl text-xs flex items-center gap-2 font-sans ${
+        toast.tone === 'error'
+          ? 'bg-rose-950/90 border-rose-900/60 text-rose-200'
+          : toast.tone === 'success'
+            ? 'bg-emerald-950/90 border-emerald-900/60 text-emerald-200'
+            : 'bg-zinc-900/95 border-zinc-800 text-zinc-200'
+      }`}>
+        {toast.tone === 'error' ? <CircleX className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-450" />}
+        <span className="font-medium">{toast.message}</span>
+      </div>
     </div>
+  )}
+
+  {/* Elegant Confirm Dialog Modal */}
+  {confirmDialog && (
+    <div className="fixed inset-0 z-[75] flex items-center justify-center p-4">
+      <button
+        type="button"
+        aria-label="关闭对话框"
+        className="absolute inset-0 bg-black/60 backdrop-blur-xs cursor-default"
+        onClick={() => setConfirmDialog(null)}
+      />
+      <div className="relative w-full max-w-sm rounded border border-zinc-800 bg-[#121214] p-5 shadow-2xl z-10 animate-fade-in font-sans">
+        <h4 className="text-sm font-bold text-zinc-200">{confirmDialog.title}</h4>
+        <p className="text-xs text-zinc-400 mt-2 leading-relaxed">{confirmDialog.description}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            onClick={() => setConfirmDialog(null)}
+            className="px-3 py-1.5 rounded border border-zinc-800 text-zinc-400 hover:text-zinc-200 text-xs font-semibold hover:bg-zinc-900 transition-linear active-press"
+          >
+            取消
+          </button>
+          <button
+            onClick={() => void confirmDialog.onConfirm()}
+            className={`px-3 py-1.5 rounded text-xs font-semibold transition-linear active-press ${
+              confirmDialog.danger
+                ? 'bg-rose-600 hover:bg-rose-500 text-white border border-rose-600'
+                : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-950'
+            }`}
+          >
+            {confirmDialog.confirmText}
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+
+  {/* Right slide-out detail Drawer (Notion-style) */}
+  {activeDrawerChapterId && (
+    <div className="fixed inset-0 z-[60] flex justify-end">
+      {/* Drawer Overlay */}
+      <button
+        type="button"
+        aria-label="Close chapter details drawer"
+        className="absolute inset-0 bg-black/60 backdrop-blur-xs cursor-default"
+        onClick={() => setActiveDrawerChapterId(null)}
+      />
+      
+      {/* Drawer Container */}
+      <aside className="relative h-full w-full max-w-2xl bg-[#08080a] border-l border-[#1f1f23] shadow-2xl flex flex-col z-10 select-text animate-slide-in">
+        {/* Drawer Header */}
+        <div className="p-4.5 border-b border-zinc-850 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <span className="text-[10px] uppercase font-mono tracking-widest text-zinc-500">章节审校提取</span>
+            <h3 className="text-sm font-semibold text-zinc-100 truncate mt-1">
+              {drawerChapter ? drawerChapter.name : '章节数据错误'}
+            </h3>
+            {drawerChapter && (
+              <p className="text-[11px] text-zinc-500 font-mono mt-1">
+                第 {drawerChapter.chapterIndex} 章 · {drawerChapter.wordCount.toLocaleString()} 字 · 状态: {drawerChapter.status === 'done' ? '已解析' : drawerChapter.status === 'parsing' ? '解析中' : drawerChapter.status === 'error' ? '失败' : '未解析'}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={() => setActiveDrawerChapterId(null)}
+            className="p-1.5 rounded border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-zinc-100 transition-linear active-press"
+            aria-label="Close drawer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Drawer Tab Options */}
+        <div className="px-4.5 pt-2 flex items-center gap-1.5 border-b border-zinc-850 bg-zinc-950/20 shrink-0">
+          {([
+            { id: 'text', label: '章节原正文', icon: FileText },
+            { id: 'analysis', label: '大模型结构化结果', icon: Eye },
+            { id: 'error', label: '错误追踪日志', icon: AlertCircle },
+          ] as const).map((tab) => {
+            const active = drawerTab === tab.id;
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setDrawerTab(tab.id)}
+                className={`px-3 py-2 rounded-t text-xs font-semibold flex items-center gap-1.5 border border-b-0 transition-linear ${
+                  active
+                    ? 'bg-[#08080a] border-zinc-850 text-zinc-100'
+                    : 'bg-transparent border-transparent text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5 text-zinc-450" />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Drawer Scrollable Content */}
+        <div className="p-5 overflow-y-auto flex-1 custom-scrollbar bg-zinc-950/10">
+          {!drawerChapter ? (
+            <p className="text-xs text-zinc-500 font-sans">未找到有效的章节实体，可能已被从数据库清除。</p>
+          ) : drawerTab === 'text' ? (
+            <pre className="whitespace-pre-wrap text-xs leading-relaxed text-zinc-300 font-sans pr-1 select-text">
+              {drawerChapter.content}
+            </pre>
+          ) : drawerTab === 'analysis' ? (
+            drawerChapter.status === 'done' && drawerChapter.analysis ? (
+              <div className="space-y-5 text-xs select-text">
+                <section className="bg-zinc-900/30 border border-zinc-850 p-3.5 rounded flex flex-col gap-1.5">
+                  <h4 className="text-zinc-150 font-bold uppercase font-mono tracking-wider text-[10px]">① 宏观世界观</h4>
+                  <p className="text-zinc-300 leading-relaxed font-sans">{drawerChapter.analysis.worldview || '无'}</p>
+                </section>
+                
+                <section className="bg-zinc-900/30 border border-zinc-850 p-3.5 rounded flex flex-col gap-1.5">
+                  <h4 className="text-zinc-150 font-bold uppercase font-mono tracking-wider text-[10px]">② 核心骨架情节</h4>
+                  <p className="text-zinc-300 leading-relaxed font-sans">{drawerChapter.analysis.plotSkeleton || '无'}</p>
+                </section>
+                
+                <section className="flex flex-col gap-2">
+                  <h4 className="text-zinc-150 font-bold uppercase font-mono tracking-wider text-[10px] px-1">③ 章节登场角色 ({drawerChapter.analysis.characters.length})</h4>
+                  <div className="space-y-2">
+                    {drawerChapter.analysis.characters.map((char, idx) => (
+                      <div key={`${char.name}-${idx}`} className="p-3 rounded border border-zinc-850 bg-zinc-900/20">
+                        <p className="text-amber-500 font-semibold text-xs">{char.name}</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2 text-[11px] text-zinc-400 font-sans leading-normal">
+                          <div><span className="text-zinc-500 font-mono">性格:</span> {char.personality || '无'}</div>
+                          <div><span className="text-zinc-500 font-mono">外貌特征:</span> {char.appearance || '无'}</div>
+                          <div><span className="text-zinc-500 font-mono">核心冲突:</span> {char.coreConflict || '无'}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+                
+                <section className="flex flex-col gap-2">
+                  <h4 className="text-zinc-150 font-bold uppercase font-mono tracking-wider text-[10px] px-1">④ 登场角色人物关系网 ({drawerChapter.analysis.relationships.length})</h4>
+                  <div className="space-y-2">
+                    {drawerChapter.analysis.relationships.map((rel, idx) => (
+                      <div key={`${rel.roleA}-${rel.roleB}-${idx}`} className="p-2.5 rounded border border-zinc-850 bg-zinc-900/20 text-zinc-300 font-sans">
+                        <span className="text-zinc-100 font-semibold">{rel.roleA}</span>
+                        <span className="text-zinc-500 font-mono mx-2">↔</span>
+                        <span className="text-zinc-100 font-semibold">{rel.roleB}</span>
+                        <span className="text-zinc-500 font-mono mx-2">:</span>
+                        <span className="text-zinc-300">{rel.description || '无'}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+                
+                <section className="bg-zinc-900/30 border border-zinc-850 p-3.5 rounded flex flex-col gap-1.5">
+                  <h4 className="text-zinc-150 font-bold uppercase font-mono tracking-wider text-[10px]">⑤ 叙事行文风格评语</h4>
+                  <p className="text-zinc-300 leading-relaxed font-sans">{drawerChapter.analysis.style || '无'}</p>
+                </section>
+              </div>
+            ) : (
+              <p className="text-xs text-zinc-500 font-sans">该章节尚未通过大模型提取结构化数据，请在列表中点击「解析」运行。</p>
+            )
+          ) : (
+            <div className="rounded border border-rose-900/40 bg-rose-950/20 p-3.5 text-xs text-rose-300 whitespace-pre-wrap font-mono">
+              {drawerChapter.errorMsg || '暂无错误堆栈日志。'}
+            </div>
+          )}
+        </div>
+      </aside>
+    </div>
+  )}
+</div>
   );
 }
+
