@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAppStore } from './store';
 import NovelUploader from '../components/NovelUploader';
 import ContrastBoard from '../components/ContrastBoard';
@@ -11,6 +11,12 @@ import { Settings, Sparkles, Columns, Upload, BookOpen } from 'lucide-react';
 export default function Home() {
   const { activeTab, setActiveTab } = useAppStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setSettingsOpen(true);
+    window.addEventListener('open-settings-panel', handler);
+    return () => window.removeEventListener('open-settings-panel', handler);
+  }, []);
 
   return (
     <main className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col font-sans relative overflow-y-auto lg:overflow-hidden">
@@ -87,24 +93,24 @@ export default function Home() {
       <div className="md:hidden bg-zinc-900/60 backdrop-blur-md border-b border-zinc-800 p-2 flex justify-around">
         <button
           onClick={() => setActiveTab('upload')}
-          className={`flex-1 py-2 text-center text-xs font-bold transition-all ${
-            activeTab === 'upload' ? 'text-zinc-200' : 'text-zinc-500'
+          className={`flex-1 py-2 text-center text-xs font-bold transition-all rounded-lg ${
+            activeTab === 'upload' ? 'text-zinc-100 bg-zinc-800 border border-zinc-700' : 'text-zinc-500'
           }`}
         >
           导入解析
         </button>
         <button
           onClick={() => setActiveTab('contrast')}
-          className={`flex-1 py-2 text-center text-xs font-bold transition-all ${
-            activeTab === 'contrast' ? 'text-zinc-200' : 'text-zinc-500'
+          className={`flex-1 py-2 text-center text-xs font-bold transition-all rounded-lg ${
+            activeTab === 'contrast' ? 'text-zinc-100 bg-zinc-800 border border-zinc-700' : 'text-zinc-500'
           }`}
         >
           横向对比
         </button>
         <button
           onClick={() => setActiveTab('fusion')}
-          className={`flex-1 py-2 text-center text-xs font-bold transition-all ${
-            activeTab === 'fusion' ? 'text-zinc-200' : 'text-zinc-500'
+          className={`flex-1 py-2 text-center text-xs font-bold transition-all rounded-lg ${
+            activeTab === 'fusion' ? 'text-zinc-100 bg-zinc-800 border border-zinc-700' : 'text-zinc-500'
           }`}
         >
           创意融合

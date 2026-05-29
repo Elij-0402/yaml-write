@@ -65,6 +65,8 @@ export interface Chapter {
   status: 'unparsed' | 'parsing' | 'done' | 'error';
   analysis?: ChapterAnalysis;
   errorMsg?: string;
+  parsingSessionId?: string;
+  parsingOwnerId?: string;
 }
 
 class NovelFusionDB extends Dexie {

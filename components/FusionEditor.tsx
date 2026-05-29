@@ -11,6 +11,57 @@ interface CharacterBinding {
   customDesc?: string;
 }
 
+interface StreamEventPayload {
+  text?: string;
+  code?: string;
+  message?: string;
+}
+
+interface ParsedSseEvent {
+  event: string;
+  payload: StreamEventPayload;
+}
+
+function parseSseBuffer(buffer: string): { events: ParsedSseEvent[]; rest: string } {
+  const chunks = buffer.split('\n\n');
+  const rest = chunks.pop() ?? '';
+  const events: ParsedSseEvent[] = [];
+
+  for (const rawChunk of chunks) {
+    const lines = rawChunk.split('\n');
+    let event = 'message';
+    let dataLine = '';
+    for (const line of lines) {
+      if (line.startsWith('event:')) {
+        event = line.slice(6).trim();
+      } else if (line.startsWith('data:')) {
+        dataLine += line.slice(5).trim();
+      }
+    }
+    if (!dataLine) continue;
+    try {
+      events.push({ event, payload: JSON.parse(dataLine) as StreamEventPayload });
+    } catch {
+      events.push({ event: 'error', payload: { code: 'invalid_stream_payload', message: '流式返回格式异常。' } });
+    }
+  }
+
+  return { events, rest };
+}
+
+async function readApiErrorMessage(response: Response): Promise<string> {
+  const statusText = `HTTP ${response.status}`;
+  const raw = await response.text();
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed?.error?.message || parsed?.detail || `${statusText} 接口请求失败`;
+  } catch {
+    const trimmed = raw.trim();
+    if (!trimmed) return `${statusText} 接口请求失败`;
+    return `${statusText} ${trimmed.slice(0, 120)}`;
+  }
+}
+
 export default function FusionEditor() {
   const { llmConfig } = useAppStore();
   
@@ -118,7 +169,7 @@ export default function FusionEditor() {
       });
 
       if (!response.ok) {
-        throw new Error('启动大纲流式生成失败');
+        throw new Error(await readApiErrorMessage(response));
       }
 
       const reader = response.body?.getReader();
@@ -128,14 +179,33 @@ export default function FusionEditor() {
 
       const decoder = new TextDecoder('utf-8');
       let done = false;
+      let buffer = '';
+      let gotDoneEvent = false;
+      let receivedDelta = false;
 
       while (!done) {
         const { value, done: readerDone } = await reader.read();
         done = readerDone;
-        if (value) {
-          const chunk = decoder.decode(value, { stream: !done });
-          setOutline((prev) => prev + chunk);
+        if (!value) continue;
+
+        buffer += decoder.decode(value, { stream: !done });
+        const parsed = parseSseBuffer(buffer);
+        buffer = parsed.rest;
+
+        for (const event of parsed.events) {
+          if (event.event === 'delta' && event.payload.text) {
+            receivedDelta = true;
+            setOutline((prev) => prev + event.payload.text!);
+          } else if (event.event === 'error') {
+            throw new Error(event.payload.message || '流式生成失败');
+          } else if (event.event === 'done') {
+            gotDoneEvent = true;
+          }
         }
+      }
+
+      if (!gotDoneEvent && !receivedDelta) {
+        throw new Error('生成提前结束，请重试。');
       }
     } catch (err: any) {
       console.error(err);
@@ -176,7 +246,7 @@ export default function FusionEditor() {
       });
 
       if (!response.ok) {
-        throw new Error('启动正文流式生成失败');
+        throw new Error(await readApiErrorMessage(response));
       }
 
       const reader = response.body?.getReader();
@@ -186,14 +256,33 @@ export default function FusionEditor() {
 
       const decoder = new TextDecoder('utf-8');
       let done = false;
+      let buffer = '';
+      let gotDoneEvent = false;
+      let receivedDelta = false;
 
       while (!done) {
         const { value, done: readerDone } = await reader.read();
         done = readerDone;
-        if (value) {
-          const chunk = decoder.decode(value, { stream: !done });
-          setNovelText((prev) => prev + chunk);
+        if (!value) continue;
+
+        buffer += decoder.decode(value, { stream: !done });
+        const parsed = parseSseBuffer(buffer);
+        buffer = parsed.rest;
+
+        for (const event of parsed.events) {
+          if (event.event === 'delta' && event.payload.text) {
+            receivedDelta = true;
+            setNovelText((prev) => prev + event.payload.text!);
+          } else if (event.event === 'error') {
+            throw new Error(event.payload.message || '流式生成失败');
+          } else if (event.event === 'done') {
+            gotDoneEvent = true;
+          }
         }
+      }
+
+      if (!gotDoneEvent && !receivedDelta) {
+        throw new Error('生成提前结束，请重试。');
       }
     } catch (err: any) {
       console.error(err);

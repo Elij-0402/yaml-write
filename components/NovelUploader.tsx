@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Chapter, type Novel, type SplitConfidenceLevel, type SplitMeta, type SplitStatus, type SplitStrategyId } from '../app/db';
 import { useAppStore } from '../app/store';
-import { AlertCircle, AlertTriangle, BookOpen, CheckCircle2, Cpu, Loader2, Play, Trash2, Upload, X, Eye, Sparkles, ChevronRight, FileText, RefreshCw, Layers, HelpCircle } from 'lucide-react';
+import { AlertCircle, AlertTriangle, BookOpen, CheckCircle2, Cpu, Loader2, Pause, Play, Trash2, Upload, X, Eye, Sparkles, ChevronRight, FileText, RefreshCw, Layers, HelpCircle, Square, CircleX } from 'lucide-react';
 import jschardet from 'jschardet';
 
 const MAX_UPLOAD_SIZE_MB = 50;
@@ -11,6 +11,48 @@ const LARGE_FILE_THRESHOLD_BYTES = 20 * 1024 * 1024;
 const READ_CHUNK_SIZE_BYTES = 512 * 1024;
 const SHORT_CHAPTER_CHAR_LIMIT = 120;
 const DEFAULT_CUSTOM_REGEX = '^\\s*(第\\s*[零〇一二三四五六七八九十百千万两\\d]+\\s*[章节回卷篇幕节].*?)$';
+const MAX_CHAPTER_CONTENT_CHARS = 30000;
+const PARSE_CONCURRENCY_LIMIT = 3;
+const TAB_PARSE_OWNER_KEY = 'novel-fusion-parse-owner-id';
+
+interface ApiErrorBody {
+  error?: {
+    code?: string;
+    message?: string;
+  };
+  detail?: string;
+}
+
+interface ToastState {
+  message: string;
+  tone: 'info' | 'success' | 'error';
+}
+
+interface ConfirmDialogState {
+  title: string;
+  description: string;
+  confirmText: string;
+  danger?: boolean;
+  onConfirm: () => Promise<void> | void;
+}
+
+interface BatchRunSnapshot {
+  active: boolean;
+  paused: boolean;
+  total: number;
+  done: number;
+  error: number;
+  inFlight: number;
+}
+
+function getOrCreateTabOwnerId(): string {
+  if (typeof window === 'undefined') return crypto.randomUUID();
+  const existing = sessionStorage.getItem(TAB_PARSE_OWNER_KEY);
+  if (existing) return existing;
+  const created = crypto.randomUUID();
+  sessionStorage.setItem(TAB_PARSE_OWNER_KEY, created);
+  return created;
+}
 
 type BaseStrategyId = Exclude<SplitStrategyId, 'custom' | 'auto_v2'>;
 
@@ -93,10 +135,6 @@ const adPatterns: RegExp[] = [
   /www\..*?\.(com|net|org|cn|cc|xyz|info)/gi,
   /推荐下，.*?真心不错，值得装一个。/g,
   /【\s*广告\s*】/g,
-  /&nbsp;/g,
-  /&lt;/g,
-  /&gt;/g,
-  /&amp;/g,
 ];
 
 const adKeywords = [
@@ -143,9 +181,37 @@ function validateLineRegex(pattern: string): string | null {
   return null;
 }
 
+function normalizeGlyphs(line: string): string {
+  return line
+    // strip zero-width characters and BOM
+    .replace(/[​‌‍⁠﻿]/g, '')
+    // strip control characters but keep tab and newline
+    .replace(/[\u0000-\b\u000b-\u001f]/g, '')
+    // ideographic (full-width) space -> normal space
+    .replace(/　/g, ' ')
+    // full-width digits/letters -> half-width (CJK punctuation left intact)
+    .replace(/[０-９Ａ-Ｚａ-ｚ]/g, (ch) =>
+      String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+    // decode the HTML entities that show up in scraped novels
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&mdash;/gi, '—')
+    .replace(/&hellip;/gi, '…')
+    .replace(/&#(\d+);/g, (_, code) => {
+      const point = Number(code);
+      return Number.isFinite(point) ? String.fromCharCode(point) : '';
+    })
+    // collapse tabs and runs of spaces
+    .replace(/\t+/g, ' ')
+    .replace(/ {2,}/g, ' ');
+}
+
 function cleanLine(line: string): { cleanedLine: string; removedCount: number } {
   const originalLength = line.length;
-  let cleaned = line;
+  let cleaned = normalizeGlyphs(line);
 
   for (const pattern of adPatterns) {
     cleaned = cleaned.replace(pattern, '');
@@ -196,6 +262,15 @@ function splitNovel(text: string, regexPattern: string): ParsedChapter[] {
   }
 
   const chapters: ParsedChapter[] = [];
+  let offset = 0;
+
+  // Capture front-matter before the first chapter title as a pseudo-chapter
+  const lead = normalizedText.slice(0, positions[0].index).trim();
+  if (lead.length >= SHORT_CHAPTER_CHAR_LIMIT) {
+    chapters.push({ title: '前言/序', content: lead, wordCount: lead.length, chapterIndex: 1 });
+    offset = 1;
+  }
+
   for (let i = 0; i < positions.length; i++) {
     const current = positions[i];
     const next = positions[i + 1];
@@ -206,7 +281,7 @@ function splitNovel(text: string, regexPattern: string): ParsedChapter[] {
       title: current.title,
       content,
       wordCount: content.length,
-      chapterIndex: i + 1,
+      chapterIndex: i + 1 + offset,
     });
   }
 
@@ -307,19 +382,18 @@ function extractChapterNumber(title: string): number | null {
   return parseChineseNumber(zh[1]);
 }
 
+/**
+ * Measures "title parseability" — the fraction of chapter titles that contain
+ * a well-formed chapter number (via extractChapterNumber).  This replaced an
+ * earlier first-line-equality check that was tautological (~100% always)
+ * because chapter content starts with the title line.
+ */
 function computeTitleHitRate(chapters: ParsedChapter[]): number {
   if (chapters.length === 0) return 0;
 
   let hit = 0;
   for (const chapter of chapters) {
-    const firstLine = normalizeText(chapter.content).split('\n').find((line) => line.trim().length > 0) || '';
-    const normalizedTitle = chapter.title.replace(/\s+/g, '');
-    const normalizedFirst = firstLine.trim().replace(/\s+/g, '');
-
-    if (!normalizedTitle || !normalizedFirst) continue;
-
-    const probe = normalizedTitle.slice(0, Math.min(12, normalizedTitle.length));
-    if (probe && normalizedFirst.includes(probe)) {
+    if (extractChapterNumber(chapter.title) !== null) {
       hit += 1;
     }
   }
@@ -462,22 +536,29 @@ function selectBetterCandidate(a: SplitCandidate, b: SplitCandidate): SplitCandi
   return a.splitMeta.shortChapterRatio < b.splitMeta.shortChapterRatio ? a : b;
 }
 
-function autoSplit(text: string): SplitCandidate {
-  const candidates: SplitCandidate[] = [
-    ...BASE_STRATEGIES.map((strategy) => runSplitWithPattern(text, STRATEGY_REGEX[strategy], strategy, 'v2')),
-    runSplitWithPattern(text, V2_EXTRA_REGEX, 'zh_extended', 'v2'),
+async function autoSplitAsync(
+  text: string,
+  onProgress?: (i: number, n: number) => void,
+): Promise<SplitCandidate> {
+  const patterns: Array<[string, SplitStrategyId]> = [
+    ...BASE_STRATEGIES.map((strategy) => [STRATEGY_REGEX[strategy], strategy] as [string, SplitStrategyId]),
+    [V2_EXTRA_REGEX, 'zh_extended'],
   ];
 
-  let best = candidates[0];
-  for (let i = 1; i < candidates.length; i++) {
-    best = selectBetterCandidate(best, candidates[i]);
+  let best: SplitCandidate | null = null;
+  for (let i = 0; i < patterns.length; i++) {
+    const [regex, strategyId] = patterns[i];
+    const cand = runSplitWithPattern(text, regex, strategyId, 'v2');
+    best = best ? selectBetterCandidate(best, cand) : cand;
+    onProgress?.(i + 1, patterns.length);
+    await pauseToKeepUiResponsive();
   }
 
   return {
-    ...best,
+    ...best!,
     strategyId: 'auto_v2',
     splitMeta: {
-      ...best.splitMeta,
+      ...best!.splitMeta,
       strategyId: 'auto_v2',
       engineVersion: 'v2',
       updatedAt: Date.now(),
@@ -485,13 +566,18 @@ function autoSplit(text: string): SplitCandidate {
   };
 }
 
-function runSplitWithStrategy(text: string, strategyId: SplitStrategyId, customRegex?: string): SplitCandidate {
+async function runSplitWithStrategy(
+  text: string,
+  strategyId: SplitStrategyId,
+  customRegex?: string,
+  onProgress?: (i: number, n: number) => void,
+): Promise<SplitCandidate> {
   if (strategyId === 'custom') {
     const pattern = customRegex?.trim() ? customRegex : DEFAULT_CUSTOM_REGEX;
     return runSplitWithPattern(text, pattern, 'custom', 'v2');
   }
   if (strategyId === 'auto_v2') {
-    return autoSplit(text);
+    return autoSplitAsync(text, onProgress);
   }
   return runSplitWithPattern(text, STRATEGY_REGEX[strategyId], strategyId, 'v2');
 }
@@ -522,7 +608,8 @@ export default function NovelUploader() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [uploadStage, setUploadStage] = useState<UploadStage>('idle');
   const [uploadStageText, setUploadStageText] = useState('');
-  const [parsingQueue, setParsingQueue] = useState<Record<string, boolean>>({});
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'unparsed' | 'parsing' | 'done' | 'error'>('all');
@@ -533,12 +620,33 @@ export default function NovelUploader() {
   const [repairStrategy, setRepairStrategy] = useState<SplitStrategyId>('zh_extended');
   const [repairRegex, setRepairRegex] = useState(DEFAULT_CUSTOM_REGEX);
   const [repairing, setRepairing] = useState(false);
+  const [recomputingMeta, setRecomputingMeta] = useState(false);
 
   // New states for slide-out Chapter Detail review drawer
   const [activeDrawerChapterId, setActiveDrawerChapterId] = useState<string | null>(null);
   const [drawerTab, setDrawerTab] = useState<'text' | 'analysis' | 'error'>('text');
+  const [batchRun, setBatchRun] = useState<BatchRunSnapshot>({
+    active: false,
+    paused: false,
+    total: 0,
+    done: 0,
+    error: 0,
+    inFlight: 0,
+  });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const tabOwnerIdRef = useRef<string>(getOrCreateTabOwnerId());
+  const parseRunRef = useRef<{
+    id: string;
+    queue: Chapter[];
+    index: number;
+    paused: boolean;
+    cancelled: boolean;
+    inFlight: Set<string>;
+    done: Set<string>;
+    error: Set<string>;
+    controllers: Map<string, AbortController>;
+  } | null>(null);
 
   const novels = useLiveQuery<Novel[]>(() => db.novels.reverse().toArray(), []) || [];
   const chapters = useLiveQuery<Chapter[]>(() => {
@@ -553,10 +661,10 @@ export default function NovelUploader() {
     const meta = activeNovel.splitMeta;
     return {
       strategyId: meta.strategyId,
-      chapterCount: meta.chapterCount,
-      avgChapterChars: meta.avgChapterChars,
-      maxChapterRatio: meta.maxChapterRatio,
-      shortChapterRatio: meta.shortChapterRatio,
+      chapterCount: typeof meta.chapterCount === 'number' ? meta.chapterCount : 0,
+      avgChapterChars: typeof meta.avgChapterChars === 'number' ? meta.avgChapterChars : 0,
+      maxChapterRatio: typeof meta.maxChapterRatio === 'number' ? meta.maxChapterRatio : 1,
+      shortChapterRatio: typeof meta.shortChapterRatio === 'number' ? meta.shortChapterRatio : 0,
       confidence: typeof meta.confidence === 'number' ? meta.confidence : 0.5,
       confidenceLevel: meta.confidenceLevel || (activeNovel.splitStatus === 'needs_review' ? 'low' : 'medium'),
       reviewReasons: meta.reviewReasons || [],
@@ -568,20 +676,36 @@ export default function NovelUploader() {
     };
   }, [activeNovel]);
 
+  // Derive real stats from loaded chapters — always truthful, used as fallback
+  const derivedStats = useMemo(() => {
+    if (chapters.length === 0) return null;
+    const totalWords = chapters.reduce((s, c) => s + c.wordCount, 0);
+    return { chapterCount: chapters.length, avgChapterChars: totalWords / chapters.length };
+  }, [chapters]);
+
   const needsSmartRepair = activeSplitMeta?.confidenceLevel === 'low';
 
-  // Compute parsing aggregate metrics for the Bulk Progress Panel
-  const bulkStats = useMemo(() => {
-    if (chapters.length === 0) return null;
+  const chapterStatusStats = useMemo(() => {
     const total = chapters.length;
     const done = chapters.filter((c) => c.status === 'done').length;
-    const parsing = chapters.filter((c) => c.status === 'parsing' || parsingQueue[c.id]).length;
+    const parsing = chapters.filter((c) => c.status === 'parsing').length;
     const error = chapters.filter((c) => c.status === 'error').length;
     const unparsed = chapters.filter((c) => c.status === 'unparsed').length;
-    const progress = Math.round((done / total) * 100);
+    return { total, done, parsing, error, unparsed };
+  }, [chapters]);
 
-    return { total, done, parsing, error, unparsed, progress };
-  }, [chapters, parsingQueue]);
+  const bulkStats = useMemo(() => {
+    if (!batchRun.active) return null;
+    const progress = batchRun.total > 0 ? Math.round((batchRun.done / batchRun.total) * 100) : 0;
+    return {
+      total: batchRun.total,
+      done: batchRun.done,
+      parsing: batchRun.inFlight,
+      error: batchRun.error,
+      progress,
+      paused: batchRun.paused,
+    };
+  }, [batchRun]);
 
   // Retrieve selected chapter reactive entity for the drawer details
   const drawerChapter = useMemo(() => {
@@ -589,16 +713,91 @@ export default function NovelUploader() {
     return chapters.find((c) => c.id === activeDrawerChapterId) || null;
   }, [chapters, activeDrawerChapterId]);
 
+  const pushToast = (message: string, tone: ToastState['tone'] = 'info') => {
+    setToast({ message, tone });
+  };
+
+  const resetChapterListView = () => {
+    setCurrentPage(1);
+    setSearchQuery('');
+    setStatusFilter('all');
+  };
+
+  const openSettingsPanel = () => {
+    window.dispatchEvent(new Event('open-settings-panel'));
+  };
+
+  const refreshBatchSnapshot = () => {
+    const run = parseRunRef.current;
+    if (!run) {
+      setBatchRun({
+        active: false,
+        paused: false,
+        total: 0,
+        done: 0,
+        error: 0,
+        inFlight: 0,
+      });
+      return;
+    }
+    const active = !run.cancelled && (run.index < run.queue.length || run.inFlight.size > 0);
+    setBatchRun({
+      active,
+      paused: run.paused && active,
+      total: run.queue.length,
+      done: run.done.size,
+      error: run.error.size,
+      inFlight: run.inFlight.size,
+    });
+  };
+
+  const ensureApiKeyReady = () => {
+    if (llmConfig.apiKey.trim()) return true;
+    pushToast('请先配置 API Key。已为你打开设置面板。', 'error');
+    openSettingsPanel();
+    return false;
+  };
+
   useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 2600);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setActiveDrawerChapterId(null);
+      }
+    };
+    if (activeDrawerChapterId) {
+      window.addEventListener('keydown', onKeyDown);
+    }
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeDrawerChapterId]);
+
+  useEffect(() => {
+    const ownerId = tabOwnerIdRef.current;
     const recoverStaleParsing = async () => {
       const staleChapters = await db.chapters.where('status').equals('parsing').toArray();
-      if (staleChapters.length === 0) return;
-      await Promise.all(staleChapters.map((chapter) => db.chapters.update(chapter.id, {
-        status: 'error',
-        errorMsg: chapter.errorMsg || '上次解析任务已中断，请重试。',
+      const owned = staleChapters.filter((chapter) => chapter.parsingOwnerId === ownerId);
+      if (owned.length === 0) return;
+      await Promise.all(owned.map((chapter) => db.chapters.update(chapter.id, {
+        status: 'unparsed',
+        errorMsg: '上次解析任务中断，已回退为待解析。',
+        parsingSessionId: undefined,
+        parsingOwnerId: undefined,
       })));
     };
     void recoverStaleParsing();
+
+    return () => {
+      const run = parseRunRef.current;
+      if (!run) return;
+      run.cancelled = true;
+      run.controllers.forEach((controller) => controller.abort());
+      parseRunRef.current = null;
+    };
   }, []);
 
   const stageLabelMap: Record<UploadStage, string> = {
@@ -736,6 +935,7 @@ export default function NovelUploader() {
     let pendingFragment = '';
     let previousLineWasEmpty = false;
     let removedCount = 0;
+    let originalTotalLength = 0;
     let totalRead = 0;
 
     const pushLine = (rawLine: string) => {
@@ -760,6 +960,7 @@ export default function NovelUploader() {
       totalRead += bytes.byteLength;
 
       const decodedText = decoder.decode(bytes, { stream: true });
+      originalTotalLength += decodedText.length;
       pendingFragment += decodedText;
       const splitByLine = pendingFragment.split('\n');
       pendingFragment = splitByLine.pop() ?? '';
@@ -770,13 +971,18 @@ export default function NovelUploader() {
       await pauseToKeepUiResponsive();
     }
 
-    pendingFragment += decoder.decode();
+    const tailText = decoder.decode();
+    originalTotalLength += tailText.length;
+    pendingFragment += tailText;
     if (pendingFragment.length > 0) {
       pushLine(pendingFragment);
     }
 
     const cleanedText = cleanedLines.join('\n').trim();
-    return { cleanedText, removedCount };
+    return {
+      cleanedText,
+      removedCount: Math.max(removedCount, Math.max(0, originalTotalLength - cleanedText.length)),
+    };
   };
 
   const loadAndCleanText = async (file: File, encoding: Encoding): Promise<CleanedTextResult> => {
@@ -790,16 +996,42 @@ export default function NovelUploader() {
     return cleanText(text);
   };
 
-  const parseChapter = async (chapter: Chapter) => {
-    if (!llmConfig.apiKey) {
-      alert('请先配置大模型 API Key！(在右上角设置面板)');
-      return;
+  const readParseApiError = async (response: Response): Promise<string> => {
+    const prefix = `HTTP ${response.status}`;
+    const raw = await response.text();
+    try {
+      const parsed = JSON.parse(raw) as ApiErrorBody;
+      return parsed.error?.message || parsed.detail || `${prefix} 解析失败`;
+    } catch {
+      const trimmed = raw.trim();
+      if (!trimmed) return `${prefix} 解析失败`;
+      return `${prefix} ${trimmed.slice(0, 120)}`;
+    }
+  };
+
+  const parseChapter = async (
+    chapter: Chapter,
+    options?: { signal?: AbortSignal; runId?: string; suppressToast?: boolean },
+  ): Promise<'done' | 'error' | 'cancelled'> => {
+    if (!ensureApiKeyReady()) return 'error';
+    const contentChars = chapter.content.length;
+    if (contentChars > MAX_CHAPTER_CONTENT_CHARS) {
+      const tooLargeMessage = `章节「${chapter.name}」过长（${contentChars} 字），超过上限 ${MAX_CHAPTER_CONTENT_CHARS} 字。`;
+      await db.chapters.update(chapter.id, {
+        status: 'error',
+        errorMsg: tooLargeMessage,
+        parsingSessionId: undefined,
+        parsingOwnerId: undefined,
+      });
+      if (!options?.suppressToast) pushToast(tooLargeMessage, 'error');
+      return 'error';
     }
 
-    setParsingQueue((prev) => ({ ...prev, [chapter.id]: true }));
     await db.chapters.update(chapter.id, {
       status: 'parsing',
       errorMsg: undefined,
+      parsingSessionId: options?.runId,
+      parsingOwnerId: tabOwnerIdRef.current,
     });
 
     try {
@@ -808,9 +1040,10 @@ export default function NovelUploader() {
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: options?.signal,
         body: JSON.stringify({
           title: chapter.name,
-          content: chapter.content.slice(0, 15000),
+          content: chapter.content,
           apiKey: llmConfig.apiKey,
           baseUrl: llmConfig.baseUrl,
           model: llmConfig.model,
@@ -819,81 +1052,191 @@ export default function NovelUploader() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || '接口解析失败');
+        throw new Error(await readParseApiError(response));
       }
 
       const analysis = await response.json();
       await db.chapters.update(chapter.id, {
         status: 'done',
         analysis,
+        errorMsg: undefined,
+        parsingSessionId: undefined,
+        parsingOwnerId: undefined,
       });
+      return 'done';
     } catch (err: any) {
+      const aborted = options?.signal?.aborted || err?.name === 'AbortError';
+      if (aborted) {
+        await db.chapters.update(chapter.id, {
+          status: 'unparsed',
+          errorMsg: '已取消解析。',
+          parsingSessionId: undefined,
+          parsingOwnerId: undefined,
+        });
+        return 'cancelled';
+      }
+
       await db.chapters.update(chapter.id, {
         status: 'error',
-        errorMsg: err.message || '大模型解析出错',
+        errorMsg: err?.message || '大模型解析出错',
+        parsingSessionId: undefined,
+        parsingOwnerId: undefined,
       });
-    } finally {
-      setParsingQueue((prev) => ({ ...prev, [chapter.id]: false }));
+      return 'error';
     }
   };
 
-  const parseChaptersInParallel = async (targets: Chapter[]) => {
-    const concurrencyLimit = 3;
-    let index = 0;
+  const cancelBatchRun = async (message = '已取消批量解析任务。') => {
+    const run = parseRunRef.current;
+    if (!run) return;
+
+    run.cancelled = true;
+    run.paused = false;
+    run.controllers.forEach((controller) => controller.abort());
+
+    const parsingIds = Array.from(run.inFlight);
+    if (parsingIds.length > 0) {
+      await Promise.all(parsingIds.map((id) => db.chapters.update(id, {
+        status: 'unparsed',
+        errorMsg: '已取消解析。',
+        parsingSessionId: undefined,
+        parsingOwnerId: undefined,
+      })));
+    }
+
+    parseRunRef.current = null;
+    refreshBatchSnapshot();
+    pushToast(message, 'info');
+  };
+
+  const pauseBatchRun = () => {
+    const run = parseRunRef.current;
+    if (!run || run.cancelled) return;
+    run.paused = true;
+    refreshBatchSnapshot();
+    pushToast('已暂停批量解析。', 'info');
+  };
+
+  const resumeBatchRun = () => {
+    const run = parseRunRef.current;
+    if (!run || run.cancelled) return;
+    run.paused = false;
+    refreshBatchSnapshot();
+    pushToast('继续批量解析。', 'success');
+  };
+
+  const runBatchParsing = async (targets: Chapter[]) => {
+    if (targets.length === 0) return;
+    if (!ensureApiKeyReady()) return;
+    if (parseRunRef.current) {
+      pushToast('已有批量解析任务在运行。', 'info');
+      return;
+    }
+
+    const runId = crypto.randomUUID();
+    parseRunRef.current = {
+      id: runId,
+      queue: targets,
+      index: 0,
+      paused: false,
+      cancelled: false,
+      inFlight: new Set<string>(),
+      done: new Set<string>(),
+      error: new Set<string>(),
+      controllers: new Map<string, AbortController>(),
+    };
+    refreshBatchSnapshot();
 
     const worker = async () => {
-      while (index < targets.length) {
-        const currentIdx = index++;
-        const chapter = targets[currentIdx];
-        await parseChapter(chapter);
+      while (true) {
+        const run = parseRunRef.current;
+        if (!run || run.id !== runId || run.cancelled) return;
+
+        while (run.paused && !run.cancelled) {
+          await new Promise((resolve) => setTimeout(resolve, 120));
+        }
+        if (run.cancelled) return;
+
+        const idx = run.index;
+        if (idx >= run.queue.length) return;
+        run.index += 1;
+
+        const chapter = run.queue[idx];
+        const controller = new AbortController();
+        run.controllers.set(chapter.id, controller);
+        run.inFlight.add(chapter.id);
+        refreshBatchSnapshot();
+
+        const result = await parseChapter(chapter, {
+          signal: controller.signal,
+          runId,
+          suppressToast: true,
+        });
+
+        run.controllers.delete(chapter.id);
+        run.inFlight.delete(chapter.id);
+        if (result === 'done') {
+          run.done.add(chapter.id);
+        } else if (result === 'error') {
+          run.error.add(chapter.id);
+        }
+        refreshBatchSnapshot();
       }
     };
 
-    const workers = [];
-    for (let i = 0; i < Math.min(concurrencyLimit, targets.length); i++) {
+    const workers: Promise<void>[] = [];
+    for (let i = 0; i < Math.min(PARSE_CONCURRENCY_LIMIT, targets.length); i++) {
       workers.push(worker());
     }
 
     await Promise.all(workers);
+    const run = parseRunRef.current;
+    if (!run || run.id !== runId) return;
+
+    const hasError = run.error.size > 0;
+    parseRunRef.current = null;
+    refreshBatchSnapshot();
+    if (hasError) {
+      pushToast(`批量解析结束：成功 ${run.done.size}，失败 ${run.error.size}。`, 'info');
+    } else {
+      pushToast(`批量解析完成，共 ${run.done.size} 章。`, 'success');
+    }
   };
 
   const parseAllChapters = async () => {
-    if (!llmConfig.apiKey) {
-      alert('请先配置大模型 API Key！');
-      return;
-    }
-
     const targets = chapters.filter((chapter) => chapter.status === 'unparsed' || chapter.status === 'error');
     if (targets.length === 0) {
-      alert('没有可解析章节（待解析/失败章节为空）。');
+      pushToast('没有可解析章节（待解析/失败章节为空）。', 'info');
       return;
     }
 
-    if (!confirm(`准备解析 ${targets.length} 个章节，由于调用大模型可能产生流量和延迟，确定继续吗？`)) {
-      return;
-    }
-
-    await parseChaptersInParallel(targets);
+    setConfirmDialog({
+      title: '开始批量解析',
+      description: `准备解析 ${targets.length} 章。过程中可暂停或取消。`,
+      confirmText: '开始解析',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        await runBatchParsing(targets);
+      },
+    });
   };
 
   const retryFailedChapters = async () => {
-    if (!llmConfig.apiKey) {
-      alert('请先配置大模型 API Key！');
-      return;
-    }
-
     const failedChapters = chapters.filter((chapter) => chapter.status === 'error');
     if (failedChapters.length === 0) {
-      alert('当前没有解析失败章节。');
+      pushToast('当前没有解析失败章节。', 'info');
       return;
     }
 
-    if (!confirm(`准备重试 ${failedChapters.length} 个失败章节，确定继续吗？`)) {
-      return;
-    }
-
-    await parseChaptersInParallel(failedChapters);
+    setConfirmDialog({
+      title: '重试失败章节',
+      description: `准备重试 ${failedChapters.length} 个失败章节。`,
+      confirmText: '开始重试',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        await runBatchParsing(failedChapters);
+      },
+    });
   };
 
   const persistSplitResult = async (novelId: string, splitResult: SplitCandidate) => {
@@ -943,7 +1286,9 @@ export default function NovelUploader() {
 
       setUploadStage('splitting');
       setUploadStageText('正在智能切章...');
-      const splitResult = autoSplit(cleanedText);
+      const splitResult = await autoSplitAsync(cleanedText, (i, n) =>
+        setUploadStageText(`正在智能切章... 策略 ${i}/${n}`),
+      );
       const chaptersToSave = chaptersToDbRows(novelId, splitResult.chapters);
       const totalWords = splitResult.chapters.reduce((sum, chapter) => sum + chapter.wordCount, 0);
 
@@ -965,8 +1310,10 @@ export default function NovelUploader() {
       });
 
       setSelectedNovelId(novelId);
+      resetChapterListView();
       if (chaptersToSave[0]) {
         setSelectedChapterId(chaptersToSave[0].id);
+        setActiveDrawerChapterId(chaptersToSave[0].id);
       }
     } catch (err: any) {
       setErrorMsg(err?.message || '文件解析入库失败');
@@ -977,15 +1324,11 @@ export default function NovelUploader() {
     }
   };
 
-  const runResplit = async (strategy: SplitStrategyId) => {
+  const doResplit = async (strategy: SplitStrategyId) => {
     if (!activeNovel || repairing || uploading) return;
 
     if (!activeNovel.sourceTextCleaned.trim()) {
       setErrorMsg('当前小说缺少原始文本缓存，请重新上传该小说以启用重切功能。');
-      return;
-    }
-
-    if (!confirm('重切将覆盖当前小说的章节列表，并清空已有章节解析结果。确定继续吗？')) {
       return;
     }
 
@@ -1011,12 +1354,15 @@ export default function NovelUploader() {
     setErrorMsg(null);
 
     try {
-      const splitResult = runSplitWithStrategy(
+      const splitResult = await runSplitWithStrategy(
         activeNovel.sourceTextCleaned,
         strategy,
         strategy === 'custom' ? repairRegex : undefined,
+        (i, n) => setUploadStageText(`正在智能切章... 策略 ${i}/${n}`),
       );
       await persistSplitResult(activeNovel.id, splitResult);
+      resetChapterListView();
+      pushToast('重切完成。', 'success');
     } catch (err: any) {
       setErrorMsg(err?.message || '重切失败，请检查规则后重试。');
     } finally {
@@ -1024,20 +1370,79 @@ export default function NovelUploader() {
     }
   };
 
+  const runResplit = async (strategy: SplitStrategyId) => {
+    if (!activeNovel || repairing || uploading) return;
+    const chapterCount = chapters.length;
+    setConfirmDialog({
+      title: '确认重切',
+      description: `将覆盖当前小说章节并清空已有解析结果（${chapterCount} 章）。`,
+      confirmText: '确认重切',
+      danger: true,
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        await doResplit(strategy);
+      },
+    });
+  };
+
+  /** Rebuild splitMeta from stored chapters — non-destructive (no chapter deletion). */
+  const recomputeSplitMetaFromChapters = async () => {
+    if (!activeNovel || chapters.length === 0 || recomputingMeta) return;
+    setRecomputingMeta(true);
+    setErrorMsg(null);
+
+    try {
+      const parsed: ParsedChapter[] = chapters.map((c) => ({
+        title: c.name,
+        content: c.content,
+        wordCount: c.wordCount,
+        chapterIndex: c.chapterIndex,
+      }));
+      const totalChars = parsed.reduce((s, c) => s + c.wordCount, 0);
+      const quality = evaluateSplitQuality(parsed, totalChars);
+      const meta = buildSplitMeta(
+        activeNovel.splitMeta?.strategyId ?? 'auto_v2',
+        quality,
+        'v2',
+      );
+      await db.novels.update(activeNovel.id, {
+        splitStatus: quality.splitStatus,
+        splitMeta: meta,
+      });
+    } catch (err: any) {
+      setErrorMsg(err?.message || '重新评估失败');
+    } finally {
+      setRecomputingMeta(false);
+    }
+  };
+
   const deleteNovel = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('确认删除这部小说及其所有章节解析吗？')) return;
+    const chapterCount = await db.chapters.where('novelId').equals(id).count();
+    setConfirmDialog({
+      title: '删除小说',
+      description: `将删除该小说及 ${chapterCount} 章解析结果。此操作不可撤销。`,
+      confirmText: '确认删除',
+      danger: true,
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        if (selectedNovelId === id && parseRunRef.current) {
+          await cancelBatchRun('已取消正在进行的批量解析。');
+        }
+        await db.transaction('rw', db.novels, db.chapters, async () => {
+          await db.chapters.where('novelId').equals(id).delete();
+          await db.novels.delete(id);
+        });
 
-    await db.transaction('rw', db.novels, db.chapters, async () => {
-      await db.chapters.where('novelId').equals(id).delete();
-      await db.novels.delete(id);
+        if (selectedNovelId === id) {
+          setSelectedNovelId(null);
+          setSelectedChapterId(null);
+          setActiveDrawerChapterId(null);
+          resetChapterListView();
+        }
+        pushToast('小说已删除。', 'success');
+      },
     });
-
-    if (selectedNovelId === id) {
-      setSelectedNovelId(null);
-      setSelectedChapterId(null);
-      setActiveDrawerChapterId(null);
-    }
   };
 
   const filteredChapters = chapters.filter((chapter) => {
@@ -1100,9 +1505,7 @@ export default function NovelUploader() {
                 key={novel.id}
                 onClick={() => {
                   setSelectedNovelId(novel.id);
-                  setCurrentPage(1);
-                  setSearchQuery('');
-                  setStatusFilter('all');
+                  resetChapterListView();
                   setActiveDrawerChapterId(null);
                 }}
                 className={`group p-3 rounded-xl border transition-colors cursor-pointer flex items-center justify-between ${
@@ -1130,13 +1533,15 @@ export default function NovelUploader() {
         </div>
       </div>
 
-      <div className="lg:col-span-3 bg-zinc-900/20 border border-zinc-800/70 rounded-2xl p-5 flex flex-col min-h-0 relative overflow-hidden">
+      <div
+        className="lg:col-span-3 bg-zinc-900/20 border border-zinc-800/70 rounded-2xl p-5 flex flex-col min-h-0 relative overflow-hidden"
+        onDragEnter={handleDrag}
+        onDragOver={handleDrag}
+        onDragLeave={handleDrag}
+        onDrop={handleDrop}
+      >
         {!selectedNovelId ? (
           <div
-            onDragEnter={handleDrag}
-            onDragOver={handleDrag}
-            onDragLeave={handleDrag}
-            onDrop={handleDrop}
             className={`flex-1 border border-dashed rounded-2xl flex flex-col items-center justify-center p-8 transition-colors ${
               dragActive ? 'border-zinc-500 bg-zinc-900/25' : 'border-zinc-800 bg-zinc-950/20'
             }`}
@@ -1155,30 +1560,46 @@ export default function NovelUploader() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm text-zinc-200">
-                    分章完成 · {toConfidenceLabel(activeSplitMeta?.confidenceLevel || 'medium')} · {activeSplitMeta?.chapterCount ?? chapters.length}章 · 均章 {Math.round(activeSplitMeta?.avgChapterChars ?? 0)}字
+                    分章完成 · {activeSplitMeta ? toConfidenceLabel(activeSplitMeta.confidenceLevel) : '历史导入'} · {activeSplitMeta?.chapterCount ?? derivedStats?.chapterCount ?? chapters.length}章 · 均章 {Math.round(activeSplitMeta?.avgChapterChars ?? derivedStats?.avgChapterChars ?? 0)}字
                   </p>
-                  <p className="text-[11px] text-zinc-500 mt-1">
-                    引擎 {activeSplitMeta?.engineVersion === 'v2' ? 'V2' : 'V1'} · 策略 {activeSplitMeta ? STRATEGY_LABELS[activeSplitMeta.strategyId] : '未知'}
-                  </p>
+                  {activeSplitMeta ? (
+                    <p className="text-[11px] text-zinc-500 mt-1">
+                      引擎 {activeSplitMeta.engineVersion === 'v2' ? 'V2' : 'V1'} · 策略 {STRATEGY_LABELS[activeSplitMeta.strategyId]}
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-zinc-500 mt-1">历史导入 · 未评估</p>
+                  )}
                 </div>
 
-                {needsSmartRepair && (
-                  <div className="flex flex-col items-end gap-1">
+                <div className="flex flex-col items-end gap-1">
+                  {needsSmartRepair && (
+                    <>
+                      <button
+                        onClick={() => void runResplit('auto_v2')}
+                        disabled={repairing}
+                        className="py-2 px-3 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-900 text-xs font-semibold disabled:opacity-50"
+                      >
+                        {repairing ? '重切处理中...' : '建议智能重切'}
+                      </button>
+                      <button
+                        onClick={() => setAdvancedRepairOpen((prev) => !prev)}
+                        className="text-[11px] text-zinc-500 hover:text-zinc-300"
+                      >
+                        手动规则
+                      </button>
+                    </>
+                  )}
+                  {!activeSplitMeta && (
                     <button
-                      onClick={() => void runResplit('auto_v2')}
-                      disabled={repairing}
-                      className="py-2 px-3 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-900 text-xs font-semibold disabled:opacity-50"
+                      onClick={() => void recomputeSplitMetaFromChapters()}
+                      disabled={recomputingMeta}
+                      className="py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold disabled:opacity-50 flex items-center gap-1.5"
                     >
-                      {repairing ? '重切处理中...' : '建议智能重切'}
+                      <RefreshCw className={`w-3 h-3 ${recomputingMeta ? 'animate-spin' : ''}`} />
+                      {recomputingMeta ? '评估中...' : '重新评估'}
                     </button>
-                    <button
-                      onClick={() => setAdvancedRepairOpen((prev) => !prev)}
-                      className="text-[11px] text-zinc-500 hover:text-zinc-300"
-                    >
-                      手动规则
-                    </button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
 
               <div className="mt-2 flex items-center gap-3">
@@ -1206,6 +1627,16 @@ export default function NovelUploader() {
                       复核原因：{activeSplitMeta.reviewReasons.join('；')}
                     </div>
                   )}
+                </div>
+              )}
+
+              {resultDetailOpen && !activeSplitMeta && derivedStats && (
+                <div className="mt-3 pt-3 border-t border-zinc-800 text-xs text-zinc-400 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>章节数 {derivedStats.chapterCount}</div>
+                  <div>均章 {Math.round(derivedStats.avgChapterChars)} 字</div>
+                  <div className="sm:col-span-2 text-amber-300/90">
+                    历史导入，缺少质量指标 — 点击「重新评估」生成
+                  </div>
                 </div>
               )}
             </div>
@@ -1281,17 +1712,37 @@ export default function NovelUploader() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={retryFailedChapters}
-                  className="py-2 px-3 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-200 rounded-lg text-xs"
+                  disabled={batchRun.active}
+                  className="py-2 px-3 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-200 rounded-lg text-xs disabled:opacity-50"
                 >
                   重试失败
                 </button>
                 <button
                   onClick={parseAllChapters}
-                  className="py-2 px-3 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded-lg text-xs font-semibold flex items-center gap-1.5"
+                  disabled={batchRun.active}
+                  className="py-2 px-3 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded-lg text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
                 >
                   <Cpu className="w-3.5 h-3.5" />
                   解析全部
                 </button>
+                {batchRun.active && (
+                  <>
+                    <button
+                      onClick={() => (batchRun.paused ? resumeBatchRun() : pauseBatchRun())}
+                      className="py-2 px-3 bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 text-zinc-200 rounded-lg text-xs font-medium flex items-center gap-1.5"
+                    >
+                      {batchRun.paused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+                      {batchRun.paused ? '继续' : '暂停'}
+                    </button>
+                    <button
+                      onClick={() => void cancelBatchRun()}
+                      className="py-2 px-3 bg-rose-950/20 border border-rose-900/40 hover:bg-rose-900/25 text-rose-300 rounded-lg text-xs font-medium flex items-center gap-1.5"
+                    >
+                      <Square className="w-3.5 h-3.5" />
+                      取消
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
@@ -1322,7 +1773,15 @@ export default function NovelUploader() {
 
               <div className="flex items-center gap-1 overflow-x-auto w-full md:w-auto pb-1 md:pb-0">
                 {(['all', 'unparsed', 'parsing', 'done', 'error'] as const).map((status) => {
-                  const count = chapters.filter((chapter) => status === 'all' || chapter.status === status).length;
+                  const count = status === 'all'
+                    ? chapterStatusStats.total
+                    : status === 'unparsed'
+                      ? chapterStatusStats.unparsed
+                      : status === 'parsing'
+                        ? chapterStatusStats.parsing
+                        : status === 'done'
+                          ? chapterStatusStats.done
+                          : chapterStatusStats.error;
                   const label = status === 'all'
                     ? '全部'
                     : status === 'unparsed'
@@ -1354,23 +1813,29 @@ export default function NovelUploader() {
             </div>
 
             {/* Bulk Progress Panel */}
-            {bulkStats && bulkStats.parsing > 0 && (
+            {bulkStats && (
               <div className="mt-4 p-4 rounded-xl border border-zinc-800/80 bg-zinc-950/60 backdrop-blur-md flex flex-col gap-3.5 relative overflow-hidden group">
                 {/* Flowing background shine */}
-                <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-violet-500/5 via-indigo-500/5 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-in-out pointer-events-none" />
+                <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-violet-500/5 via-indigo-500/5 to-transparent animate-pulse pointer-events-none" />
 
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="flex h-2 w-2 relative">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                      {!bulkStats.paused ? (
+                        <>
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                        </>
+                      ) : (
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-400"></span>
+                      )}
                     </span>
-                    <h4 className="text-xs font-semibold text-zinc-300">
-                      后台大模型结构化解析中
+                    <h4 className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+                      {bulkStats.paused ? '批量解析已暂停' : '后台大模型结构化解析中'}
                     </h4>
                   </div>
-                  <span className="text-[10px] text-zinc-500 font-mono font-medium">
-                    并发数限制: 3
+                  <span className="text-[10px] text-zinc-400 font-mono font-medium">
+                    并发上限: {PARSE_CONCURRENCY_LIMIT}
                   </span>
                 </div>
 
@@ -1379,7 +1844,7 @@ export default function NovelUploader() {
                     <span className="text-zinc-400 font-medium">
                       解析进度：{bulkStats.done} / {bulkStats.total} 章 ({bulkStats.progress}%)
                     </span>
-                    <span className="text-zinc-500 font-mono">
+                    <span className="text-zinc-400 font-mono">
                       {bulkStats.parsing} 个在途 · {bulkStats.error} 个失败
                     </span>
                   </div>
@@ -1400,6 +1865,7 @@ export default function NovelUploader() {
                     </span>
                     <button
                       onClick={retryFailedChapters}
+                      disabled={batchRun.active}
                       className="text-zinc-400 hover:text-zinc-200 transition-colors font-medium flex items-center gap-1"
                     >
                       <RefreshCw className="w-2.5 h-2.5 animate-spin-hover" />
@@ -1414,12 +1880,12 @@ export default function NovelUploader() {
               {paginatedChapters.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center py-16 text-zinc-500">
                   <p className="text-sm font-medium">没有匹配章节</p>
-                  <p className="text-xs text-zinc-600 mt-1">请尝试修改搜索词或筛选条件</p>
+                  <p className="text-xs text-zinc-400 mt-1">请尝试修改搜索词或筛选条件</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {paginatedChapters.map((chapter) => {
-                    const isParsing = parsingQueue[chapter.id] || chapter.status === 'parsing';
+                    const isParsing = chapter.status === 'parsing';
                     const isSelected = selectedChapterId === chapter.id || activeDrawerChapterId === chapter.id;
 
                     return (
@@ -1438,37 +1904,37 @@ export default function NovelUploader() {
                         }}
                         className={`p-4 rounded-xl border cursor-pointer flex flex-col justify-between h-32 transition-all duration-250 ${
                           isSelected
-                            ? 'bg-zinc-800/50 border-zinc-650 text-zinc-100 shadow-[0_4px_20px_rgba(0,0,0,0.15)] scale-[1.01]'
+                            ? 'bg-zinc-800/50 border-zinc-600 text-zinc-100 shadow-[0_4px_20px_rgba(0,0,0,0.15)] scale-[1.01]'
                             : 'bg-zinc-950/20 border-zinc-800/60 hover:border-zinc-700 hover:bg-zinc-900/10 text-zinc-400'
                         }`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <p className="text-xs text-zinc-500">Chapter {chapter.chapterIndex}</p>
+                            <p className="text-xs text-zinc-400">Chapter {chapter.chapterIndex}</p>
                             <h4 className="font-medium text-sm text-zinc-200 truncate mt-1">{chapter.name}</h4>
-                            <p className="text-[10px] text-zinc-500 mt-0.5">{chapter.wordCount} 字</p>
+                            <p className="text-[11px] text-zinc-400 mt-0.5">{chapter.wordCount} 字</p>
                           </div>
 
                           <div>
                             {chapter.status === 'done' && (
-                              <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
-                                <CheckCircle2 className="w-3 h-3 text-zinc-400" />
+                              <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-emerald-950/30 border border-emerald-900/40 text-emerald-300">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-300" />
                                 已解析
                               </span>
                             )}
                             {chapter.status === 'unparsed' && (
-                              <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-500">
+                              <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-zinc-400">
                                 待解析
                               </span>
                             )}
                             {isParsing && (
-                              <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
-                                <Loader2 className="w-3 h-3 animate-spin text-zinc-400" />
+                              <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-indigo-950/30 border border-indigo-900/40 text-indigo-300">
+                                <Loader2 className="w-3 h-3 animate-spin text-indigo-300" />
                                 解析中
                               </span>
                             )}
                             {chapter.status === 'error' && (
-                              <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-rose-950/20 border border-rose-900/30 text-rose-400">
+                              <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-rose-950/20 border border-rose-900/30 text-rose-300">
                                 <AlertCircle className="w-3 h-3" />
                                 失败
                               </span>
@@ -1479,13 +1945,13 @@ export default function NovelUploader() {
                         <div className="flex items-center justify-between border-t border-zinc-800/80 pt-2 mt-2">
                           <div className="min-w-0 flex-1">
                             {chapter.status === 'error' ? (
-                              <p className="text-[10px] text-rose-400 truncate pr-2">{chapter.errorMsg || '解析出错'}</p>
+                              <p className="text-[11px] text-rose-300 truncate pr-2" title={chapter.errorMsg || '解析出错'}>{chapter.errorMsg || '解析出错'}</p>
                             ) : chapter.status === 'done' ? (
-                              <p className="text-[10px] text-zinc-400 truncate pr-2">
+                              <p className="text-[11px] text-zinc-300 truncate pr-2">
                                 角色 {chapter.analysis?.characters?.length ?? 0} · 关系 {chapter.analysis?.relationships?.length ?? 0}
                               </p>
                             ) : (
-                              <p className="text-[10px] text-zinc-600 truncate pr-2">暂无结构化结果</p>
+                              <p className="text-[11px] text-zinc-400 truncate pr-2">暂无结构化结果</p>
                             )}
                           </div>
 
@@ -1494,7 +1960,7 @@ export default function NovelUploader() {
                               e.stopPropagation();
                               void parseChapter(chapter);
                             }}
-                            disabled={isParsing}
+                            disabled={isParsing || batchRun.active}
                             className="py-1 px-2.5 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-[11px] flex items-center gap-1 disabled:opacity-50"
                           >
                             <Play className="w-3 h-3" />
@@ -1510,7 +1976,7 @@ export default function NovelUploader() {
 
             {totalPages > 1 && (
               <div className="flex items-center justify-between border-t border-zinc-800/80 pt-4 mt-4">
-                <span className="text-[10px] text-zinc-500">第 {safePage} 页 / 共 {totalPages} 页（共 {filteredChapters.length} 章）</span>
+                <span className="text-[11px] text-zinc-400">第 {safePage} 页 / 共 {totalPages} 页（共 {filteredChapters.length} 章）</span>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
@@ -1532,6 +1998,166 @@ export default function NovelUploader() {
           </div>
         )}
       </div>
+
+      {toast && (
+        <div className="fixed top-4 right-4 z-[70]">
+          <div className={`px-4 py-2.5 rounded-xl border shadow-lg text-xs flex items-center gap-2 ${
+            toast.tone === 'error'
+              ? 'bg-rose-950/90 border-rose-800 text-rose-100'
+              : toast.tone === 'success'
+                ? 'bg-emerald-950/90 border-emerald-800 text-emerald-100'
+                : 'bg-zinc-900/95 border-zinc-700 text-zinc-100'
+          }`}>
+            {toast.tone === 'error' ? <CircleX className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+            <span>{toast.message}</span>
+          </div>
+        </div>
+      )}
+
+      {confirmDialog && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center p-4">
+          <button
+            type="button"
+            aria-label="关闭确认对话框"
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setConfirmDialog(null)}
+          />
+          <div className="relative w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+            <h4 className="text-sm font-semibold text-zinc-100">{confirmDialog.title}</h4>
+            <p className="text-xs text-zinc-400 mt-2 leading-relaxed">{confirmDialog.description}</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="px-3 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs hover:bg-zinc-800"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => void confirmDialog.onConfirm()}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
+                  confirmDialog.danger
+                    ? 'bg-rose-600 hover:bg-rose-500 text-white'
+                    : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-900'
+                }`}
+              >
+                {confirmDialog.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeDrawerChapterId && (
+        <div className="fixed inset-0 z-[60] flex justify-end">
+          <button
+            type="button"
+            aria-label="关闭章节详情"
+            className="absolute inset-0 bg-black/55 backdrop-blur-sm"
+            onClick={() => setActiveDrawerChapterId(null)}
+          />
+          <aside className="relative h-full w-full max-w-2xl bg-zinc-900 border-l border-zinc-800 shadow-2xl animate-slide-in flex flex-col">
+            <div className="p-4 border-b border-zinc-800 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] text-zinc-400 uppercase tracking-wider">章节详情</p>
+                <h3 className="text-sm font-semibold text-zinc-100 truncate">
+                  {drawerChapter ? drawerChapter.name : '章节未找到'}
+                </h3>
+                {drawerChapter && (
+                  <p className="text-[11px] text-zinc-400 mt-0.5">
+                    第 {drawerChapter.chapterIndex} 章 · {drawerChapter.wordCount} 字 · 状态 {drawerChapter.status}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={() => setActiveDrawerChapterId(null)}
+                className="p-1.5 rounded-lg border border-zinc-700 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
+                aria-label="关闭章节详情"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-4 pt-3 flex items-center gap-2 border-b border-zinc-800">
+              {([
+                { id: 'text', label: '正文', icon: FileText },
+                { id: 'analysis', label: '结构化分析', icon: Eye },
+                { id: 'error', label: '错误详情', icon: AlertCircle },
+              ] as const).map((tab) => {
+                const active = drawerTab === tab.id;
+                const Icon = tab.icon;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setDrawerTab(tab.id)}
+                    className={`px-3 py-2 rounded-t-lg text-xs flex items-center gap-1.5 border ${
+                      active
+                        ? 'bg-zinc-800 border-zinc-700 text-zinc-100'
+                        : 'bg-transparent border-transparent text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="p-4 overflow-y-auto flex-1">
+              {!drawerChapter ? (
+                <p className="text-xs text-zinc-400">未找到章节数据，可能已被删除。</p>
+              ) : drawerTab === 'text' ? (
+                <pre className="whitespace-pre-wrap text-xs leading-relaxed text-zinc-200 font-sans">{drawerChapter.content}</pre>
+              ) : drawerTab === 'analysis' ? (
+                drawerChapter.status === 'done' && drawerChapter.analysis ? (
+                  <div className="space-y-4 text-xs text-zinc-200">
+                    <section>
+                      <h4 className="text-zinc-100 font-semibold mb-1.5">世界观</h4>
+                      <p className="text-zinc-300 leading-relaxed">{drawerChapter.analysis.worldview}</p>
+                    </section>
+                    <section>
+                      <h4 className="text-zinc-100 font-semibold mb-1.5">核心骨架</h4>
+                      <p className="text-zinc-300 leading-relaxed">{drawerChapter.analysis.plotSkeleton}</p>
+                    </section>
+                    <section>
+                      <h4 className="text-zinc-100 font-semibold mb-1.5">角色（{drawerChapter.analysis.characters.length}）</h4>
+                      <div className="space-y-2">
+                        {drawerChapter.analysis.characters.map((char, idx) => (
+                          <div key={`${char.name}-${idx}`} className="p-2 rounded-lg border border-zinc-800 bg-zinc-950/60">
+                            <p className="text-zinc-100 font-medium">{char.name}</p>
+                            <p className="text-zinc-300 mt-1">性格：{char.personality}</p>
+                            <p className="text-zinc-300">外貌：{char.appearance}</p>
+                            <p className="text-zinc-300">冲突：{char.coreConflict}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                    <section>
+                      <h4 className="text-zinc-100 font-semibold mb-1.5">人物关系（{drawerChapter.analysis.relationships.length}）</h4>
+                      <div className="space-y-2">
+                        {drawerChapter.analysis.relationships.map((rel, idx) => (
+                          <div key={`${rel.roleA}-${rel.roleB}-${idx}`} className="p-2 rounded-lg border border-zinc-800 bg-zinc-950/60 text-zinc-300">
+                            {rel.roleA} ↔ {rel.roleB}：{rel.description}
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                    <section>
+                      <h4 className="text-zinc-100 font-semibold mb-1.5">叙事风格</h4>
+                      <p className="text-zinc-300 leading-relaxed">{drawerChapter.analysis.style}</p>
+                    </section>
+                  </div>
+                ) : (
+                  <p className="text-xs text-zinc-400">该章节尚未完成结构化解析。</p>
+                )
+              ) : (
+                <div className="rounded-lg border border-rose-900/40 bg-rose-950/20 p-3 text-xs text-rose-200 whitespace-pre-wrap">
+                  {drawerChapter.errorMsg || '暂无错误详情。'}
+                </div>
+              )}
+            </div>
+          </aside>
+        </div>
+      )}
     </div>
   );
 }

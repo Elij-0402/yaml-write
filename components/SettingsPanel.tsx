@@ -65,10 +65,14 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           model: llmConfig.model,
         }),
       });
-      const data = await response.json();
+      const raw = await response.text();
+      const data = raw ? JSON.parse(raw) : {};
+      if (!response.ok) {
+        throw new Error(data?.error?.message || `连接测试失败（HTTP ${response.status}）`);
+      }
       setTestResult({
-        success: data.success,
-        message: data.message,
+        success: Boolean(data.success),
+        message: data.message || '连接测试完成。',
         latency: data.latency,
       });
     } catch (err: any) {

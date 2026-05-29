@@ -32,7 +32,7 @@ class OutlineInput(BaseModel):
     apiKey: str = Field(..., description="大模型 API 密钥")
     baseUrl: str = Field(..., description="大模型 API Base URL")
     model: str = Field(..., description="所选的模型名称")
-    temperature: float = Field(0.7, description="采样温度")
+    temperature: float = Field(0.7, ge=0.0, le=1.5, description="采样温度")
     characterBindings: Optional[List[CharacterBinding]] = Field(None, description="可选的角色互动绑定规则列表")
 
 class GenerationInput(BaseModel):
@@ -41,4 +41,4 @@ class GenerationInput(BaseModel):
     apiKey: str = Field(..., description="大模型 API 密钥")
     baseUrl: str = Field(..., description="大模型 API Base URL")
     model: str = Field(..., description="所选的模型名称")
-    temperature: float = Field(0.7, description="采样温度")
+    temperature: float = Field(0.7, ge=0.0, le=1.5, description="采样温度")
