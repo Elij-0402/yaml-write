@@ -24,7 +24,9 @@ export interface ChapterAnalysis {
 
 export type SplitStatus = 'ok' | 'needs_review';
 
-export type SplitStrategyId = 'zh_strict' | 'zh_extended' | 'mixed' | 'en_basic' | 'custom';
+export type SplitStrategyId = 'auto_v2' | 'zh_strict' | 'zh_extended' | 'mixed' | 'en_basic' | 'custom';
+
+export type SplitConfidenceLevel = 'high' | 'medium' | 'low';
 
 export interface SplitMeta {
   strategyId: SplitStrategyId;
@@ -32,6 +34,13 @@ export interface SplitMeta {
   avgChapterChars: number;
   maxChapterRatio: number;
   shortChapterRatio: number;
+  confidence: number;
+  confidenceLevel: SplitConfidenceLevel;
+  reviewReasons: string[];
+  titleHitRate: number;
+  continuityScore: number;
+  distributionScore: number;
+  engineVersion: 'v1' | 'v2';
   updatedAt: number;
 }
 
@@ -81,6 +90,34 @@ class NovelFusionDB extends Dexie {
           }
           if (typeof novel.sourceTextCleaned !== 'string') {
             novel.sourceTextCleaned = '';
+          }
+        });
+      });
+    this.version(3)
+      .stores({
+        novels: 'id, name, createdAt, splitStatus',
+        chapters: 'id, novelId, chapterIndex, status',
+      })
+      .upgrade(async (tx) => {
+        const novelsTable = tx.table('novels');
+        await novelsTable.toCollection().modify((novel: Partial<Novel>) => {
+          if (!novel.splitStatus) {
+            novel.splitStatus = 'ok';
+          }
+          if (typeof novel.sourceTextCleaned !== 'string') {
+            novel.sourceTextCleaned = '';
+          }
+          if (novel.splitMeta) {
+            novel.splitMeta = {
+              ...novel.splitMeta,
+              confidence: typeof novel.splitMeta.confidence === 'number' ? novel.splitMeta.confidence : 0.5,
+              confidenceLevel: novel.splitMeta.confidenceLevel || 'medium',
+              reviewReasons: Array.isArray(novel.splitMeta.reviewReasons) ? novel.splitMeta.reviewReasons : [],
+              titleHitRate: typeof novel.splitMeta.titleHitRate === 'number' ? novel.splitMeta.titleHitRate : 0,
+              continuityScore: typeof novel.splitMeta.continuityScore === 'number' ? novel.splitMeta.continuityScore : 0,
+              distributionScore: typeof novel.splitMeta.distributionScore === 'number' ? novel.splitMeta.distributionScore : 0.5,
+              engineVersion: novel.splitMeta.engineVersion || 'v1',
+            } as SplitMeta;
           }
         });
       });
