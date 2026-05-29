@@ -41,8 +41,6 @@ MAX_CHAPTER_CONTENT_CHARS = 30000
 MAX_OUTLINE_INPUT_CHARS = 100000
 MAX_GENERATION_INPUT_CHARS = 120000
 RATE_LIMIT_RULES = {
-    "/api/py/test-connection": (60, 20),
-    "/api/py/list-models": (60, 20),
     "/api/py/parse-chapter": (60, 30),
     "/api/py/generate-outline": (60, 12),
     "/api/py/generate-text": (60, 12),
@@ -72,12 +70,6 @@ class ApiError(Exception):
         self.message = message
 
 
-class TestConnectionInput(BaseModel):
-    apiKey: str = Field(..., min_length=1, max_length=512)
-    baseUrl: str = Field(..., min_length=1, max_length=512)
-    model: str = Field(..., min_length=1, max_length=200)
-
-
 class ParseChapterInput(BaseModel):
     title: str = Field(..., min_length=1, max_length=300)
     content: str = Field(..., min_length=1, max_length=MAX_CHAPTER_CONTENT_CHARS)
@@ -85,11 +77,6 @@ class ParseChapterInput(BaseModel):
     baseUrl: str = Field(..., min_length=1, max_length=512)
     model: str = Field(..., min_length=1, max_length=200)
     temperature: float = Field(default=0.7, ge=0.0, le=1.5)
-
-
-class ListModelsInput(BaseModel):
-    apiKey: str = Field(default="", max_length=512)
-    baseUrl: str = Field(..., min_length=1, max_length=512)
 
 
 def error_payload(code: str, message: str) -> dict:
@@ -269,61 +256,6 @@ async def validation_error_handler(_: Request, exc: RequestValidationError):
 async def unhandled_error_handler(request: Request, exc: Exception):
     logger.exception("unhandled error endpoint=%s ip=%s", request.url.path, get_client_ip(request))
     return JSONResponse(status_code=500, content=error_payload("internal_error", "服务暂时不可用，请稍后重试。"))
-
-
-@app.post("/api/py/test-connection")
-async def test_connection(data: TestConnectionInput, request: Request):
-    await ensure_rate_limit(request, "/api/py/test-connection")
-    start_time = time.time()
-
-    api_key = sanitize_text(data.apiKey)
-    model_name = sanitize_text(data.model)
-    normalized_base_url = validate_base_url(data.baseUrl)
-    if not model_name:
-        raise ApiError(status_code=400, code="invalid_request", message="模型名称不能为空。")
-
-    logger.info("test_connection ip=%s model=%s base_url=%s", get_client_ip(request), model_name, normalized_base_url)
-
-    try:
-        client = build_openai_client(api_key, normalized_base_url, timeout=8.0)
-        await client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": "ping"}],
-            max_tokens=5,
-        )
-        latency = int((time.time() - start_time) * 1000)
-        return {"success": True, "message": "连接成功。", "latency": latency}
-    except Exception as exc:
-        logger.warning("test_connection failed ip=%s model=%s err=%s", get_client_ip(request), model_name, exc.__class__.__name__)
-        status_code, _, friendly_msg = classify_openai_error(exc)
-        latency = int((time.time() - start_time) * 1000)
-        return {"success": False, "message": friendly_msg, "latency": latency, "statusCode": status_code}
-
-
-@app.post("/api/py/list-models")
-async def list_models(data: ListModelsInput, request: Request):
-    await ensure_rate_limit(request, "/api/py/list-models")
-    normalized_base_url = validate_base_url(data.baseUrl)
-    api_key = sanitize_text(data.apiKey) or "local-llm"
-    logger.info("list_models ip=%s base_url=%s", get_client_ip(request), normalized_base_url)
-
-    try:
-        client = build_openai_client(api_key, normalized_base_url, timeout=10.0)
-        models_page = await client.models.list()
-        model_ids: list[str] = []
-        for item in getattr(models_page, "data", []) or []:
-            model_id = getattr(item, "id", None)
-            if isinstance(model_id, str):
-                cleaned = model_id.strip()
-                if cleaned:
-                    model_ids.append(cleaned)
-        deduped = sorted(set(model_ids))
-        return {"models": deduped, "message": "ok"}
-    except Exception as exc:
-        status_code, code, message = classify_openai_error(exc)
-        if code in {"model_or_endpoint_not_found", "bad_request"}:
-            message = "当前服务暂不支持自动拉取模型列表，请手动输入模型名称。"
-        raise ApiError(status_code=status_code, code=code, message=message) from exc
 
 
 @app.post("/api/py/parse-chapter")

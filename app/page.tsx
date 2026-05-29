@@ -175,10 +175,7 @@ export default function Home() {
             <div className="bg-zinc-950 border border-zinc-900 rounded p-2 flex items-center justify-between gap-2 text-[10px] font-mono text-zinc-500 animate-fade-in">
               <span className="truncate">大模型: <span className="text-zinc-300 font-sans">{llmConfig.activeProvider.toUpperCase()}</span></span>
               <div className="flex items-center gap-1.5 shrink-0">
-                <span className="relative flex h-1.5 w-1.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
-                </span>
+                <span className="inline-flex rounded-full h-1.5 w-1.5 bg-zinc-600"></span>
                 <span className="text-zinc-400">就绪</span>
               </div>
             </div>

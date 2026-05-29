@@ -29,7 +29,6 @@ interface AppState {
   selectedChapterId: string | null;
   setActiveProvider: (provider: ProviderId) => void;
   updateActiveProviderProfile: (patch: Partial<ProviderProfile>) => void;
-  setTemperature: (temperature: number) => void;
   setActiveTab: (tab: string) => void;
   setSelectedNovelId: (id: string | null) => void;
   setSelectedChapterId: (id: string | null) => void;
@@ -144,13 +143,6 @@ export const useAppStore = create<AppState>()(
             },
           };
         }),
-      setTemperature: (temperature) =>
-        set((state) => ({
-          llmConfig: {
-            ...state.llmConfig,
-            temperature: clampTemperature(temperature),
-          },
-        })),
       setActiveTab: (tab) => set({ activeTab: tab }),
       setSelectedNovelId: (id) => set({ selectedNovelId: id, selectedChapterId: null }),
       setSelectedChapterId: (id) => set({ selectedChapterId: id }),
