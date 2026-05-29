@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Novel, type Chapter, type Character, type Relationship, type ChapterAnalysis } from '../app/db';
+import { useAppStore } from '../app/store';
 import { BookOpen, HelpCircle, Edit3, Check, Globe, GitCommit, Users, Heart, MessageSquare, Trash, Plus, X } from 'lucide-react';
 
 export default function ContrastBoard() {
@@ -34,31 +35,65 @@ export default function ContrastBoard() {
     return db.chapters.get(rightChapterId);
   }, [rightChapterId]);
 
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-auto min-h-0 flex-1">
-      {/* Left Column Comparison Panel */}
-      <ComparisonColumn
-        side="A"
-        novels={novels}
-        novelId={leftNovelId}
-        setNovelId={(id) => { setLeftNovelId(id); setLeftChapterId(''); }}
-        chapters={leftChapters}
-        chapterId={leftChapterId}
-        setChapterId={setLeftChapterId}
-        chapter={leftChapter}
-      />
+  const { setActiveTab, setFusionSeedChapterIds } = useAppStore();
 
-      {/* Right Column Comparison Panel */}
-      <ComparisonColumn
-        side="B"
-        novels={novels}
-        novelId={rightNovelId}
-        setNovelId={(id) => { setRightNovelId(id); setRightChapterId(''); }}
-        chapters={rightChapters}
-        chapterId={rightChapterId}
-        setChapterId={setRightChapterId}
-        chapter={rightChapter}
-      />
+  // Parsed chapters currently loaded in either column — the handoff payload.
+  const fusionSeedIds = Array.from(
+    new Set(
+      [leftChapter, rightChapter]
+        .filter((c): c is Chapter => !!c && c.status === 'done')
+        .map((c) => c.id)
+    )
+  );
+
+  const handleSendToFusion = () => {
+    if (fusionSeedIds.length === 0) return;
+    setFusionSeedChapterIds(fusionSeedIds);
+    setActiveTab('fusion');
+  };
+
+  return (
+    <div className="flex flex-col gap-4 h-auto min-h-0 flex-1">
+      {/* Handoff bar: carry the compared chapters into the Fusion Workshop */}
+      <div className="linear-card rounded px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#121214]/40 shrink-0">
+        <p className="text-[11px] text-zinc-500 leading-relaxed">
+          在两侧挑选并审校已解析章节，满意后可一键将它们送入创意融合工坊作为融合样本。
+        </p>
+        <button
+          onClick={handleSendToFusion}
+          disabled={fusionSeedIds.length === 0}
+          className="shrink-0 py-2 px-4 rounded bg-zinc-100 hover:bg-zinc-200 text-zinc-950 text-xs font-semibold transition-linear active-press disabled:opacity-40 disabled:cursor-not-allowed"
+          title={fusionSeedIds.length === 0 ? '请先在任一侧选择已解析的章节' : '将选中章节送入创意融合工坊'}
+        >
+          送入创意融合工坊（{fusionSeedIds.length}）→
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-0 flex-1">
+        {/* Left Column Comparison Panel */}
+        <ComparisonColumn
+          side="A"
+          novels={novels}
+          novelId={leftNovelId}
+          setNovelId={(id) => { setLeftNovelId(id); setLeftChapterId(''); }}
+          chapters={leftChapters}
+          chapterId={leftChapterId}
+          setChapterId={setLeftChapterId}
+          chapter={leftChapter}
+        />
+
+        {/* Right Column Comparison Panel */}
+        <ComparisonColumn
+          side="B"
+          novels={novels}
+          novelId={rightNovelId}
+          setNovelId={(id) => { setRightNovelId(id); setRightChapterId(''); }}
+          chapters={rightChapters}
+          chapterId={rightChapterId}
+          setChapterId={setRightChapterId}
+          chapter={rightChapter}
+        />
+      </div>
     </div>
   );
 }
@@ -78,6 +113,7 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
   const [editingField, setEditingField] = useState<string | null>(null); // e.g. 'worldview', 'plotSkeleton', 'style', 'char-0-name', 'rel-0-description'
   const [editValue, setEditValue] = useState<string>('');
   const blurTimeoutRef = useRef<number | null>(null);
+  const setActiveTab = useAppStore((s) => s.setActiveTab);
 
   const handleNovelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setNovelId(e.target.value);
@@ -243,7 +279,7 @@ function ComparisonColumn({ side, novels, novelId, setNovelId, chapters, chapter
             </div>
             <p className="text-xs font-semibold text-zinc-450">当前章节尚未结构化解析</p>
             <p className="text-[11px] text-zinc-550 mt-2 max-w-[280px] leading-relaxed">
-              此章节正文已载入，但尚未完成结构分析。请前往 <span className="text-zinc-350 underline">导入与解析库</span> 并执行解析。
+              此章节正文已载入，但尚未完成结构分析。请前往 <button onClick={() => setActiveTab('upload')} className="text-zinc-300 underline hover:text-zinc-100 transition-linear">导入与解析库</button> 并执行解析。
             </p>
           </div>
         ) : (

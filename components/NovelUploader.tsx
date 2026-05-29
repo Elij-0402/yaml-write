@@ -62,15 +62,6 @@ type BaseStrategyId = Exclude<SplitStrategyId, 'custom' | 'auto_v2'>;
 
 const BASE_STRATEGIES: BaseStrategyId[] = ['zh_strict', 'zh_extended', 'mixed', 'en_basic'];
 
-const STRATEGY_LABELS: Record<SplitStrategyId, string> = {
-  auto_v2: '自动智能 (V2)',
-  zh_strict: '中文标准',
-  zh_extended: '中文扩展',
-  mixed: '中英混合',
-  en_basic: '英文标准',
-  custom: '自定义正则',
-};
-
 const STRATEGY_REGEX: Record<BaseStrategyId, string> = {
   zh_strict: '^\\s*(第\\s*[零〇一二三四五六七八九十百千万两\\d]+\\s*[章节回卷篇幕节].*?)$',
   zh_extended: '^\\s*((?:第\\s*[零〇一二三四五六七八九十百千万两\\d]+\\s*[章节回卷篇幕节]|序章|楔子|引子|前言|后记|尾声|终章|番外|完结感言)\\s*.*?)$',
@@ -153,13 +144,6 @@ function clamp(value: number, min: number, max: number): number {
 
 function formatSizeInMb(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-}
-
-function formatMetricPercent(value: number | null | undefined): string {
-  if (typeof value !== 'number' || Number.isNaN(value)) {
-    return '未评估';
-  }
-  return `${(value * 100).toFixed(1)}%`;
 }
 
 function isWinnerStrategyId(value: unknown): value is WinnerStrategyId {
@@ -693,12 +677,6 @@ function chaptersToDbRows(novelId: string, parsedChapters: ParsedChapter[]): Cha
   }));
 }
 
-function toConfidenceLabel(level: SplitConfidenceLevel): string {
-  if (level === 'high') return '高置信';
-  if (level === 'medium') return '中置信';
-  return '低置信';
-}
-
 export default function NovelUploader() {
   const { selectedNovelId, setSelectedNovelId, selectedChapterId, setSelectedChapterId } = useAppStore();
 
@@ -715,11 +693,9 @@ export default function NovelUploader() {
   const [currentPage, setCurrentPage] = useState(1);
 
   const [advancedRepairOpen, setAdvancedRepairOpen] = useState(false);
-  const [resultDetailOpen, setResultDetailOpen] = useState(false);
   const [repairStrategy, setRepairStrategy] = useState<SplitStrategyId>('zh_extended');
   const [repairRegex, setRepairRegex] = useState(DEFAULT_CUSTOM_REGEX);
   const [repairing, setRepairing] = useState(false);
-  const [recomputingMeta, setRecomputingMeta] = useState(false);
 
   // New states for slide-out Chapter Detail review drawer
   const [activeDrawerChapterId, setActiveDrawerChapterId] = useState<string | null>(null);
@@ -756,45 +732,14 @@ export default function NovelUploader() {
 
   const activeNovel = novels.find((n) => n.id === selectedNovelId) || null;
 
-  const activeSplitMeta = useMemo<SplitMeta | null>(() => {
-    if (!activeNovel?.splitMeta) return null;
-    const meta = activeNovel.splitMeta;
-    const strategyId = meta.strategyId || 'custom';
-    const selectionMode = meta.selectionMode === 'auto_v2'
-      ? 'auto_v2'
-      : (strategyId === 'auto_v2' ? 'auto_v2' : 'manual');
-    const winnerStrategyId = isWinnerStrategyId(meta.winnerStrategyId)
-      ? meta.winnerStrategyId
-      : (strategyId !== 'auto_v2' && isWinnerStrategyId(strategyId) ? strategyId : undefined);
-    return {
-      strategyId,
-      selectionMode,
-      winnerStrategyId,
-      chapterCount: typeof meta.chapterCount === 'number' ? meta.chapterCount : 0,
-      avgChapterChars: typeof meta.avgChapterChars === 'number' ? meta.avgChapterChars : 0,
-      maxChapterRatio: typeof meta.maxChapterRatio === 'number' ? meta.maxChapterRatio : 1,
-      shortChapterRatio: typeof meta.shortChapterRatio === 'number' ? meta.shortChapterRatio : 0,
-      confidence: typeof meta.confidence === 'number' ? meta.confidence : 0.5,
-      confidenceLevel: meta.confidenceLevel || (activeNovel.splitStatus === 'needs_review' ? 'low' : 'medium'),
-      reviewReasons: meta.reviewReasons || [],
-      titleHitRate: typeof meta.titleHitRate === 'number' ? meta.titleHitRate : null,
-      continuityScore: typeof meta.continuityScore === 'number' ? meta.continuityScore : null,
-      distributionScore: typeof meta.distributionScore === 'number' ? meta.distributionScore : null,
-      engineVersion: meta.engineVersion || 'v1',
-      updatedAt: typeof meta.updatedAt === 'number' ? meta.updatedAt : Date.now(),
-    };
-  }, [activeNovel]);
-
-  // Derive real stats from loaded chapters — always truthful, used as fallback
+  // Derive real stats from loaded chapters — always truthful
   const derivedStats = useMemo(() => {
     if (chapters.length === 0) return null;
     const totalWords = chapters.reduce((s, c) => s + c.wordCount, 0);
     return { chapterCount: chapters.length, avgChapterChars: totalWords / chapters.length };
   }, [chapters]);
 
-  const needsSmartRepair = activeSplitMeta
-    ? (activeSplitMeta.confidenceLevel === 'low' || activeSplitMeta.reviewReasons.length > 0)
-    : false;
+  const needsSmartRepair = activeNovel?.splitStatus === 'needs_review';
 
   const chapterStatusStats = useMemo(() => {
     const total = chapters.length;
@@ -1569,48 +1514,6 @@ export default function NovelUploader() {
     });
   };
 
-  /** Rebuild splitMeta from stored chapters — non-destructive (no chapter deletion). */
-  const recomputeSplitMetaFromChapters = async () => {
-    if (!activeNovel || chapters.length === 0 || recomputingMeta) return;
-    setRecomputingMeta(true);
-    setErrorMsg(null);
-
-    try {
-      const parsed: ParsedChapter[] = chapters.map((c) => ({
-        title: c.name,
-        content: c.content,
-        wordCount: c.wordCount,
-        chapterIndex: c.chapterIndex,
-      }));
-      const totalChars = parsed.reduce((s, c) => s + c.wordCount, 0);
-      const quality = evaluateSplitQuality(parsed, totalChars);
-      const preservedStrategyId = activeNovel.splitMeta?.strategyId ?? 'custom';
-      const preservedSelectionMode = activeNovel.splitMeta?.selectionMode === 'auto_v2'
-        ? 'auto_v2'
-        : (preservedStrategyId === 'auto_v2' ? 'auto_v2' : 'manual');
-      const preservedWinnerStrategyId = isWinnerStrategyId(activeNovel.splitMeta?.winnerStrategyId)
-        ? activeNovel.splitMeta?.winnerStrategyId
-        : (preservedStrategyId !== 'auto_v2' && isWinnerStrategyId(preservedStrategyId) ? preservedStrategyId : undefined);
-      const meta = buildSplitMeta(
-        preservedStrategyId,
-        quality,
-        activeNovel.splitMeta?.engineVersion || 'v1',
-        {
-          selectionMode: preservedSelectionMode,
-          winnerStrategyId: preservedWinnerStrategyId,
-        },
-      );
-      await db.novels.update(activeNovel.id, {
-        splitStatus: quality.splitStatus,
-        splitMeta: meta,
-      });
-    } catch (err: any) {
-      setErrorMsg(err?.message || '重新评估失败');
-    } finally {
-      setRecomputingMeta(false);
-    }
-  };
-
   const deleteNovel = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const chapterCount = await db.chapters.where('novelId').equals(id).count();
@@ -1787,30 +1690,16 @@ export default function NovelUploader() {
           /* Novel Workspace Details */
           <div className="flex-1 flex flex-col min-h-0">
             
-            {/* 1. Readiness Banner & Quality Info */}
+            {/* 1. Split summary + repair entry */}
             <div className="bg-zinc-950/50 border border-zinc-850 rounded p-4 mb-4 flex flex-col gap-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-zinc-200">
-                      分章评估: {activeSplitMeta ? toConfidenceLabel(activeSplitMeta.confidenceLevel) : '历史导入'}
-                    </span>
-                    {activeSplitMeta && (
-                      <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.25 rounded font-medium ${
-                        activeSplitMeta.confidenceLevel === 'high'
-                          ? 'bg-emerald-950/30 border border-emerald-900/40 text-emerald-400'
-                          : activeSplitMeta.confidenceLevel === 'medium'
-                            ? 'bg-zinc-900 border border-zinc-800 text-zinc-400'
-                            : 'bg-amber-950/30 border border-amber-900/40 text-amber-500'
-                      }`}>
-                        {activeSplitMeta.confidenceLevel === 'high' ? '就绪' : '建议修复'}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-zinc-500 mt-1 font-mono">
-                    共 {activeSplitMeta?.chapterCount ?? derivedStats?.chapterCount ?? chapters.length} 章节 · 均章 {Math.round(activeSplitMeta?.avgChapterChars ?? derivedStats?.avgChapterChars ?? 0)} 字
-                    {activeSplitMeta && ` · 引擎: ${activeSplitMeta.engineVersion.toUpperCase()} · 策略: ${activeSplitMeta.winnerStrategyId ? STRATEGY_LABELS[activeSplitMeta.winnerStrategyId] : '未知'}`}
+                  <p className="text-[11px] text-zinc-500 font-mono">
+                    共 {derivedStats?.chapterCount ?? chapters.length} 章节 · 均章 {Math.round(derivedStats?.avgChapterChars ?? 0)} 字
                   </p>
+                  {needsSmartRepair && (
+                    <p className="text-[11px] text-amber-500/90 mt-1">切分结果可能不理想，建议重新切分。</p>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
@@ -1829,41 +1718,8 @@ export default function NovelUploader() {
                   >
                     {advancedRepairOpen ? '收起修复' : '高级修复'}
                   </button>
-                  <button
-                    onClick={() => setResultDetailOpen((prev) => !prev)}
-                    className="py-1.5 px-2 rounded bg-transparent text-zinc-550 hover:text-zinc-300 text-[11px]"
-                  >
-                    {resultDetailOpen ? '收起详情' : '评估详情'}
-                  </button>
                 </div>
               </div>
-
-              {/* Details toggle */}
-              {resultDetailOpen && activeSplitMeta && (
-                <div className="pt-3 border-t border-zinc-900 text-[11px] text-zinc-500 font-mono grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5">
-                  <div>最大章比: <span className="text-zinc-300">{(activeSplitMeta.maxChapterRatio * 100).toFixed(1)}%</span></div>
-                  <div>短章比例: <span className="text-zinc-300">{(activeSplitMeta.shortChapterRatio * 100).toFixed(1)}%</span></div>
-                  <div>标题命中: <span className="text-zinc-300">{formatMetricPercent(activeSplitMeta.titleHitRate)}</span></div>
-                  <div>编号连续: <span className="text-zinc-300">{formatMetricPercent(activeSplitMeta.continuityScore)}</span></div>
-                  <div>分布得分: <span className="text-zinc-300">{formatMetricPercent(activeSplitMeta.distributionScore)}</span></div>
-                  <div>置信分数: <span className="text-zinc-300">{(activeSplitMeta.confidence * 100).toFixed(1)}%</span></div>
-                  {activeSplitMeta.reviewReasons.length > 0 && (
-                    <div className="col-span-full mt-1.5 text-amber-500/90 font-sans leading-normal">
-                      复核提示: {activeSplitMeta.reviewReasons.join('; ')}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {resultDetailOpen && !activeSplitMeta && derivedStats && (
-                <div className="pt-3 border-t border-zinc-900 text-[11px] text-zinc-500 font-mono grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5">
-                  <div>章节数量: <span className="text-zinc-300">{derivedStats.chapterCount}</span></div>
-                  <div>均章字数: <span className="text-zinc-300">{Math.round(derivedStats.avgChapterChars)} 字</span></div>
-                  <div className="col-span-full mt-1 text-amber-500/90 font-sans">
-                    提示: 历史导入无质量指标，可点击下方「重新评估」重新生成
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* 2. Collapsible Advanced Repair Options */}
@@ -1921,19 +1777,6 @@ export default function NovelUploader() {
                     </div>
                   )}
                 </div>
-                
-                {!activeSplitMeta && (
-                  <div className="flex justify-end pt-1">
-                    <button
-                      onClick={() => void recomputeSplitMetaFromChapters()}
-                      disabled={recomputingMeta}
-                      className="py-1.5 px-3 rounded bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-zinc-400 hover:text-zinc-200 text-xs transition-linear active-press flex items-center gap-1.5"
-                    >
-                      <RefreshCw className={`w-3 h-3 ${recomputingMeta ? 'animate-spin' : ''}`} />
-                      {recomputingMeta ? '评估中...' : '对当前章节进行质量评估'}
-                    </button>
-                  </div>
-                )}
               </div>
             )}
 

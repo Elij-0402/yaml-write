@@ -136,7 +136,7 @@ export default function Home() {
               title="导入与解析库"
             >
               <Upload className="w-4 h-4 text-zinc-400" />
-              {!sidebarCollapsed && <span className="truncate">导入与解析库</span>}
+              {!sidebarCollapsed && <span className="truncate">1 · 导入与解析库</span>}
             </button>
 
             <button
@@ -149,7 +149,7 @@ export default function Home() {
               title="横向对比面板"
             >
               <Columns className="w-4 h-4 text-zinc-400" />
-              {!sidebarCollapsed && <span className="truncate">横向对比面板</span>}
+              {!sidebarCollapsed && <span className="truncate">2 · 横向对比面板</span>}
             </button>
 
             <button
@@ -162,7 +162,7 @@ export default function Home() {
               title="创意融合工坊"
             >
               <BookOpen className="w-4 h-4 text-zinc-400" />
-              {!sidebarCollapsed && <span className="truncate">创意融合工坊</span>}
+              {!sidebarCollapsed && <span className="truncate">3 · 创意融合工坊</span>}
             </button>
           </div>
 

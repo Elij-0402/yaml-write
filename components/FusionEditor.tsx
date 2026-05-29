@@ -1,15 +1,9 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Chapter, type Novel } from '../app/db';
-import { Sparkles, PenTool, FileDown, Copy, Check, RotateCcw, HelpCircle, Loader2, ArrowRight, BookOpen, X } from 'lucide-react';
+import { db } from '../app/db';
+import { useAppStore } from '../app/store';
+import { PenTool, FileDown, Copy, Check, RotateCcw, HelpCircle, Loader2, ArrowRight, BookOpen } from 'lucide-react';
 import { ensureLlmConfigReady, postWithLlmConfig, readApiErrorMessage } from '../app/llmClient';
-
-interface CharacterBinding {
-  sourceChar: string;
-  targetChar: string;
-  bindingType: 'merge' | 'clash' | 'mentor' | 'custom';
-  customDesc?: string;
-}
 
 interface StreamEventPayload {
   text?: string;
@@ -63,46 +57,20 @@ export default function FusionEditor() {
   
   const [copiedOutline, setCopiedOutline] = useState<boolean>(false);
   const [copiedText, setCopiedText] = useState<boolean>(false);
-  
-  // 角色拉线深度绑定状态
-  const [characterBindings, setCharacterBindings] = useState<CharacterBinding[]>([]);
 
   // Live query novels and all done parsed chapters
   const novels = useLiveQuery(() => db.novels.toArray()) || [];
   const parsedChapters = useLiveQuery(() => db.chapters.where('status').equals('done').toArray()) || [];
 
-  // 从选中章节中提取全部已分析出的角色列表
-  const availableCharacters = React.useMemo(() => {
-    const chars: { name: string; chapterName: string; novelId: string; novelName: string }[] = [];
-    selectedChapterIds.forEach((id) => {
-      const chap = parsedChapters.find((c) => c.id === id);
-      if (chap && chap.analysis?.characters) {
-        const novel = novels.find((n) => n.id === chap.novelId);
-        chap.analysis.characters.forEach((char) => {
-          if (!chars.some((c) => c.name === char.name)) {
-            chars.push({
-              name: char.name,
-              chapterName: chap.name,
-              novelId: chap.novelId,
-              novelName: novel?.name || '未知小说',
-            });
-          }
-        });
-      }
-    });
-    return chars;
-  }, [selectedChapterIds, parsedChapters, novels]);
+  const { fusionSeedChapterIds, setFusionSeedChapterIds } = useAppStore();
 
-  // 当选择章节变更、角色池变动时，静默清洗掉无效的拉线配对规则
-  React.useEffect(() => {
-    setCharacterBindings((prev) =>
-      prev.filter(
-        (b) =>
-          availableCharacters.some((c) => c.name === b.sourceChar) &&
-          availableCharacters.some((c) => c.name === b.targetChar)
-      )
-    );
-  }, [availableCharacters]);
+  // One-shot handoff from ContrastBoard: pre-select the chapters sent over, then clear the seed.
+  useEffect(() => {
+    if (fusionSeedChapterIds.length > 0) {
+      setSelectedChapterIds(fusionSeedChapterIds);
+      setFusionSeedChapterIds([]);
+    }
+  }, [fusionSeedChapterIds, setFusionSeedChapterIds]);
 
   const handleToggleChapter = (id: string) => {
     setSelectedChapterIds((prev) =>
@@ -142,7 +110,6 @@ export default function FusionEditor() {
       const response = await postWithLlmConfig('/api/py/generate-outline', {
           selectedChapters: selectedChaptersData,
           fusionPrompt,
-          characterBindings,
       });
 
       if (!response.ok) {
@@ -400,130 +367,6 @@ export default function FusionEditor() {
                 className="w-full px-4 py-3 rounded bg-zinc-950 border border-zinc-850 text-xs text-zinc-205 placeholder-zinc-650 focus:outline-none focus:border-zinc-700 transition-linear leading-relaxed font-sans"
               />
             </div>
-
-            {/* 角色交互深度绑定面板 (可选) */}
-            {selectedChapterIds.length > 0 && availableCharacters.length >= 2 && (
-              <div className="p-4 rounded border border-zinc-850 bg-zinc-950/20 space-y-3">
-                <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
-                  <label className="text-[10px] font-semibold text-zinc-300 uppercase tracking-widest font-mono flex items-center gap-2">
-                    👥 出场角色互动配对规则 (可选)
-                  </label>
-                  <button
-                    onClick={() => {
-                      if (availableCharacters.length < 2) return;
-                      setCharacterBindings((prev) => [
-                        ...prev,
-                        {
-                          sourceChar: availableCharacters[0].name,
-                          targetChar: availableCharacters[1].name,
-                          bindingType: 'merge',
-                          customDesc: '',
-                        },
-                      ]);
-                    }}
-                    className="px-2 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-semibold rounded transition-linear active-press"
-                  >
-                    + 新建互动
-                  </button>
-                </div>
-
-                {characterBindings.length === 0 ? (
-                  <p className="text-[10px] text-zinc-550 italic font-mono">暂无指定配对。大模型将按默认逻辑自然编排人物行为与冲突。</p>
-                ) : (
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                    {characterBindings.map((binding, idx) => (
-                      <div key={idx} className="flex flex-col sm:flex-row gap-2 items-center bg-zinc-950/40 p-2.5 rounded border border-zinc-900 text-xs animate-fade-in">
-                        {/* Source Character */}
-                        <select
-                          value={binding.sourceChar}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setCharacterBindings((prev) =>
-                              prev.map((b, i) => (i === idx ? { ...b, sourceChar: val } : b))
-                            );
-                          }}
-                          className="w-full sm:w-1/3 px-2 py-1.5 rounded bg-zinc-900 border border-zinc-850 text-xs text-zinc-300 focus:outline-none"
-                        >
-                          {availableCharacters.map((c) => (
-                            <option key={c.name} value={c.name} className="bg-[#121214]">
-                              {c.name} ({c.novelName})
-                            </option>
-                          ))}
-                        </select>
-
-                        <span className="text-[10px] text-zinc-600 font-bold font-mono">⇄</span>
-
-                        {/* Target Character */}
-                        <select
-                          value={binding.targetChar}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setCharacterBindings((prev) =>
-                              prev.map((b, i) => (i === idx ? { ...b, targetChar: val } : b))
-                            );
-                          }}
-                          className="w-full sm:w-1/3 px-2 py-1.5 rounded bg-zinc-900 border border-zinc-850 text-xs text-zinc-300 focus:outline-none"
-                        >
-                          {availableCharacters
-                              .filter((c) => c.name !== binding.sourceChar)
-                              .map((c) => (
-                                <option key={c.name} value={c.name} className="bg-[#121214]">
-                                  {c.name} ({c.novelName})
-                                </option>
-                              ))}
-                        </select>
-
-                        {/* Relationship Binding Type */}
-                        <select
-                          value={binding.bindingType}
-                          onChange={(e) => {
-                            const val = e.target.value as any;
-                            setCharacterBindings((prev) =>
-                              prev.map((b, i) => (i === idx ? { ...b, bindingType: val } : b))
-                            );
-                          }}
-                          className="w-full sm:w-1/4 px-2 py-1.5 rounded bg-zinc-900 border border-zinc-850 text-xs text-zinc-300 focus:outline-none font-medium"
-                        >
-                          <option value="merge" className="bg-[#121214]">🧬 灵魂融合 (Merge)</option>
-                          <option value="clash" className="bg-[#121214]">⚔️ 宿命对决 (Clash)</option>
-                          <option value="mentor" className="bg-[#121214]">🎓 名师指点 (Mentor)</option>
-                          <option value="custom" className="bg-[#121214]">⚙️ 自定义关系规则</option>
-                        </select>
-
-                        {/* Delete button */}
-                        <button
-                          onClick={() => {
-                            setCharacterBindings((prev) => prev.filter((_, i) => i !== idx));
-                          }}
-                          className="p-1 text-zinc-500 hover:text-rose-400 hover:bg-rose-950/20 rounded transition-linear active-press ml-auto shrink-0"
-                          title="删除绑定"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-
-                        {/* Custom description row */}
-                        {binding.bindingType === 'custom' && (
-                          <div className="w-full mt-1.5 sm:col-span-4 animate-fade-in">
-                            <input
-                              type="text"
-                              placeholder="输入指定关系（如：仙凡同修的眷侣、双重人格的主次关系等）..."
-                              value={binding.customDesc || ''}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setCharacterBindings((prev) =>
-                                  prev.map((b, i) => (i === idx ? { ...b, customDesc: val } : b))
-                                );
-                              }}
-                              className="w-full px-2.5 py-1.5 rounded bg-zinc-900 border border-zinc-850 text-xs text-zinc-200 placeholder-zinc-650 focus:outline-none focus:border-zinc-700 transition-linear"
-                            />
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
 
             <div className="p-4 rounded border border-zinc-850 bg-zinc-950/20 flex items-start gap-3">
               <HelpCircle className="w-4 h-4 text-zinc-500 flex-shrink-0 mt-0.5" />

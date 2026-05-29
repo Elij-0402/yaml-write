@@ -349,25 +349,9 @@ async def generate_outline(data: OutlineInput, request: Request):
             chapters_context += f"- {rel.get('roleA')} 与 {rel.get('roleB')}: {rel.get('description')}\n"
         chapters_context += "\n"
 
-    bindings_context = ""
-    if data.characterBindings:
-        bindings_context += "\n=== ⚠️ 强制出场人物互动与融合规则 ===\n"
-        bindings_context += "你必须严格在生成的大纲中实现以下指定角色之间的深度互动或融合配置：\n"
-        for binding in data.characterBindings:
-            binding_desc = "灵魂融合 / 强力合体 (Merge settings)"
-            if binding.bindingType == "clash":
-                binding_desc = "宿命对决 / 终极宿敌 (Antagonists)"
-            elif binding.bindingType == "mentor":
-                binding_desc = "名师高徒 / 功法传承 (Mentor & Disciple)"
-            elif binding.bindingType == "custom":
-                binding_desc = f"自定义指定交互关系: {binding.customDesc or '互动'}"
-            bindings_context += f"- 把角色【{binding.sourceChar}】与角色【{binding.targetChar}】绑定为【{binding_desc}】。请在融合大纲的人物设定与故事走向中深度融合他们，并突出这种指定的纠葛摩擦。\n"
-        bindings_context += "===================================\n\n"
-
     user_prompt = (
         f"下面是供你融合的现有小说章节结构化解析信息：\n\n"
         f"{chapters_context}\n"
-        f"{bindings_context}"
         f"作家的融合指令/要求如下：\n"
         f"【{data.fusionPrompt}】\n\n"
         f"请根据上述信息，为我生成精美的融合大纲。"

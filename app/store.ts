@@ -27,11 +27,13 @@ interface AppState {
   activeTab: string; // 'upload' | 'contrast' | 'fusion'
   selectedNovelId: string | null;
   selectedChapterId: string | null;
+  fusionSeedChapterIds: string[]; // one-shot handoff: chapters sent from ContrastBoard to FusionEditor
   setActiveProvider: (provider: ProviderId) => void;
   updateActiveProviderProfile: (patch: Partial<ProviderProfile>) => void;
   setActiveTab: (tab: string) => void;
   setSelectedNovelId: (id: string | null) => void;
   setSelectedChapterId: (id: string | null) => void;
+  setFusionSeedChapterIds: (ids: string[]) => void;
 }
 
 function clampTemperature(value: unknown): number {
@@ -114,6 +116,7 @@ export const useAppStore = create<AppState>()(
       activeTab: 'upload', // 'upload' | 'contrast' | 'fusion'
       selectedNovelId: null,
       selectedChapterId: null,
+      fusionSeedChapterIds: [],
       setActiveProvider: (provider) =>
         set((state) => {
           if (provider === state.llmConfig.activeProvider) return state;
@@ -146,6 +149,7 @@ export const useAppStore = create<AppState>()(
       setActiveTab: (tab) => set({ activeTab: tab }),
       setSelectedNovelId: (id) => set({ selectedNovelId: id, selectedChapterId: null }),
       setSelectedChapterId: (id) => set({ selectedChapterId: id }),
+      setFusionSeedChapterIds: (ids) => set({ fusionSeedChapterIds: ids }),
     }),
     {
       name: 'novel-fusion-store', // name of the item in the storage (must be unique)

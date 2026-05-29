@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List
 
 class Character(BaseModel):
     name: str = Field(..., description="角色的姓名")
@@ -20,12 +20,6 @@ class ChapterAnalysis(BaseModel):
     relationships: List[Relationship] = Field(..., description="本章中体现或发生变化的角色关系网络")
     style: str = Field(..., description="本章展现出的叙事风格、语言特色、基调（如：冷峻、幽默、热血）")
 
-class CharacterBinding(BaseModel):
-    sourceChar: str = Field(..., description="来源角色姓名")
-    targetChar: str = Field(..., description="目标角色姓名")
-    bindingType: str = Field(..., description="绑定互动类型（如 merge, clash, mentor, custom）")
-    customDesc: Optional[str] = Field(None, description="自定义关系描述")
-
 class OutlineInput(BaseModel):
     selectedChapters: List[dict] = Field(..., description="选中的多章解析结构列表")
     fusionPrompt: str = Field(..., description="用户的融合指令/要求")
@@ -33,7 +27,6 @@ class OutlineInput(BaseModel):
     baseUrl: str = Field(..., description="大模型 API Base URL")
     model: str = Field(..., description="所选的模型名称")
     temperature: float = Field(0.7, ge=0.0, le=1.5, description="采样温度")
-    characterBindings: Optional[List[CharacterBinding]] = Field(None, description="可选的角色互动绑定规则列表")
 
 class GenerationInput(BaseModel):
     outline: str = Field(..., description="微调后的融合大纲")
