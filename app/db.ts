@@ -25,11 +25,15 @@ export interface ChapterAnalysis {
 export type SplitStatus = 'ok' | 'needs_review';
 
 export type SplitStrategyId = 'auto_v2' | 'zh_strict' | 'zh_extended' | 'mixed' | 'en_basic' | 'custom';
+export type WinnerStrategyId = Exclude<SplitStrategyId, 'auto_v2'>;
+export type SplitSelectionMode = 'manual' | 'auto_v2';
 
 export type SplitConfidenceLevel = 'high' | 'medium' | 'low';
 
 export interface SplitMeta {
   strategyId: SplitStrategyId;
+  selectionMode: SplitSelectionMode;
+  winnerStrategyId?: WinnerStrategyId;
   chapterCount: number;
   avgChapterChars: number;
   maxChapterRatio: number;
@@ -37,11 +41,19 @@ export interface SplitMeta {
   confidence: number;
   confidenceLevel: SplitConfidenceLevel;
   reviewReasons: string[];
-  titleHitRate: number;
-  continuityScore: number;
-  distributionScore: number;
+  titleHitRate: number | null;
+  continuityScore: number | null;
+  distributionScore: number | null;
   engineVersion: 'v1' | 'v2';
   updatedAt: number;
+}
+
+function isWinnerStrategyId(value: unknown): value is WinnerStrategyId {
+  return value === 'zh_strict'
+    || value === 'zh_extended'
+    || value === 'mixed'
+    || value === 'en_basic'
+    || value === 'custom';
 }
 
 export interface Novel {
@@ -115,12 +127,70 @@ class NovelFusionDB extends Dexie {
               confidence: typeof novel.splitMeta.confidence === 'number' ? novel.splitMeta.confidence : 0.5,
               confidenceLevel: novel.splitMeta.confidenceLevel || 'medium',
               reviewReasons: Array.isArray(novel.splitMeta.reviewReasons) ? novel.splitMeta.reviewReasons : [],
-              titleHitRate: typeof novel.splitMeta.titleHitRate === 'number' ? novel.splitMeta.titleHitRate : 0,
-              continuityScore: typeof novel.splitMeta.continuityScore === 'number' ? novel.splitMeta.continuityScore : 0,
-              distributionScore: typeof novel.splitMeta.distributionScore === 'number' ? novel.splitMeta.distributionScore : 0.5,
+              titleHitRate: typeof novel.splitMeta.titleHitRate === 'number' ? novel.splitMeta.titleHitRate : null,
+              continuityScore: typeof novel.splitMeta.continuityScore === 'number' ? novel.splitMeta.continuityScore : null,
+              distributionScore: typeof novel.splitMeta.distributionScore === 'number' ? novel.splitMeta.distributionScore : null,
+              selectionMode: novel.splitMeta.selectionMode === 'auto_v2'
+                ? 'auto_v2'
+                : (novel.splitMeta.strategyId === 'auto_v2' ? 'auto_v2' : 'manual'),
+              winnerStrategyId: isWinnerStrategyId(novel.splitMeta.winnerStrategyId)
+                ? novel.splitMeta.winnerStrategyId
+                : (novel.splitMeta.strategyId !== 'auto_v2' && isWinnerStrategyId(novel.splitMeta.strategyId)
+                  ? novel.splitMeta.strategyId
+                  : undefined),
               engineVersion: novel.splitMeta.engineVersion || 'v1',
             } as SplitMeta;
           }
+        });
+      });
+    this.version(4)
+      .stores({
+        novels: 'id, name, createdAt, splitStatus',
+        chapters: 'id, novelId, chapterIndex, status',
+      })
+      .upgrade(async (tx) => {
+        const novelsTable = tx.table('novels');
+        await novelsTable.toCollection().modify((novel: Partial<Novel>) => {
+          if (!novel.splitMeta) return;
+          const meta = novel.splitMeta as Partial<SplitMeta>;
+
+          const confidence = typeof meta.confidence === 'number' ? meta.confidence : 0.5;
+          const confidenceLevel = meta.confidenceLevel || 'medium';
+          const reviewReasons = Array.isArray(meta.reviewReasons) ? meta.reviewReasons : [];
+          const titleHitRate = typeof meta.titleHitRate === 'number' ? meta.titleHitRate : null;
+          const continuityScore = typeof meta.continuityScore === 'number' ? meta.continuityScore : null;
+          const distributionScore = typeof meta.distributionScore === 'number' ? meta.distributionScore : null;
+          const syntheticLegacyMetrics = titleHitRate === 0
+            && continuityScore === 0
+            && distributionScore === 0.5
+            && confidence === 0.5
+            && confidenceLevel === 'medium'
+            && reviewReasons.length === 0
+            && meta.selectionMode === undefined
+            && meta.winnerStrategyId === undefined;
+
+          const strategyId = meta.strategyId || 'custom';
+          const selectionMode: SplitSelectionMode = meta.selectionMode === 'auto_v2'
+            ? 'auto_v2'
+            : (strategyId === 'auto_v2' ? 'auto_v2' : 'manual');
+          const winnerStrategyId = isWinnerStrategyId(meta.winnerStrategyId)
+            ? meta.winnerStrategyId
+            : (strategyId !== 'auto_v2' && isWinnerStrategyId(strategyId) ? strategyId : undefined);
+
+          novel.splitMeta = {
+            ...meta,
+            strategyId,
+            selectionMode,
+            winnerStrategyId,
+            confidence,
+            confidenceLevel,
+            reviewReasons,
+            titleHitRate: syntheticLegacyMetrics ? null : titleHitRate,
+            continuityScore: syntheticLegacyMetrics ? null : continuityScore,
+            distributionScore: syntheticLegacyMetrics ? null : distributionScore,
+            engineVersion: meta.engineVersion || 'v1',
+            updatedAt: typeof meta.updatedAt === 'number' ? meta.updatedAt : Date.now(),
+          } as SplitMeta;
         });
       });
   }

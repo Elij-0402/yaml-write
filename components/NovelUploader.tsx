@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Chapter, type Novel, type SplitConfidenceLevel, type SplitMeta, type SplitStatus, type SplitStrategyId } from '../app/db';
+import { db, type Chapter, type Novel, type SplitConfidenceLevel, type SplitMeta, type SplitStatus, type SplitStrategyId, type WinnerStrategyId } from '../app/db';
 import { useAppStore } from '../app/store';
 import { AlertCircle, AlertTriangle, BookOpen, CheckCircle2, Cpu, Loader2, Pause, Play, Trash2, Upload, X, Eye, Sparkles, ChevronRight, FileText, RefreshCw, Layers, HelpCircle, Square, CircleX } from 'lucide-react';
 import jschardet from 'jschardet';
@@ -14,6 +14,9 @@ const DEFAULT_CUSTOM_REGEX = '^\\s*(第\\s*[零〇一二三四五六七八九十
 const MAX_CHAPTER_CONTENT_CHARS = 30000;
 const PARSE_CONCURRENCY_LIMIT = 3;
 const TAB_PARSE_OWNER_KEY = 'novel-fusion-parse-owner-id';
+const MAX_CUSTOM_REGEX_LENGTH = 300;
+const SPLIT_MATCH_LIMIT = 20000;
+const SPLIT_TIME_BUDGET_MS = 2000;
 
 interface ApiErrorBody {
   error?: {
@@ -43,6 +46,14 @@ interface BatchRunSnapshot {
   done: number;
   error: number;
   inFlight: number;
+}
+
+interface BatchRunSummary {
+  total: number;
+  done: number;
+  error: number;
+  cancelled: boolean;
+  finishedAt: number;
 }
 
 function getOrCreateTabOwnerId(): string {
@@ -85,7 +96,7 @@ const REVIEW_REASON_TEXT: Record<string, string> = {
 };
 
 type UploadStage = 'idle' | 'detecting' | 'reading' | 'splitting' | 'saving';
-type Encoding = 'UTF-8' | 'GB18030' | 'UTF-16LE';
+type Encoding = 'UTF-8' | 'GB18030' | 'BIG5' | 'UTF-16LE' | 'UTF-16BE';
 
 interface ParsedChapter {
   title: string;
@@ -106,7 +117,7 @@ interface SplitQuality {
   maxChapterRatio: number;
   shortChapterRatio: number;
   titleHitRate: number;
-  continuityScore: number;
+  continuityScore: number | null;
   distributionScore: number;
   confidence: number;
   confidenceLevel: SplitConfidenceLevel;
@@ -151,6 +162,21 @@ function formatSizeInMb(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
 }
 
+function formatMetricPercent(value: number | null | undefined): string {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return '未评估';
+  }
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function isWinnerStrategyId(value: unknown): value is WinnerStrategyId {
+  return value === 'zh_strict'
+    || value === 'zh_extended'
+    || value === 'mixed'
+    || value === 'en_basic'
+    || value === 'custom';
+}
+
 function normalizeText(text: string): string {
   return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
@@ -164,7 +190,30 @@ function toLineRegex(pattern: string): RegExp {
   return new RegExp(inputRegex.source, safeFlags);
 }
 
+function toGlobalLineRegex(pattern: string): RegExp {
+  const lineRegex = toLineRegex(pattern);
+  const flags = lineRegex.flags.includes('g') ? lineRegex.flags : `${lineRegex.flags}g`;
+  return new RegExp(lineRegex.source, flags);
+}
+
+function hasNestedQuantifierRisk(pattern: string): boolean {
+  const nestedQuantifierRules = [
+    /\((?:\\.|[^()]){0,240}(?:\*|\+|\{\d*,?\d*\})(?:\\.|[^()]){0,240}\)\s*(?:\*|\+|\{\d*,?\d*\})/,
+    /\((?:\\.|[^()]){0,240}\.\*(?:\\.|[^()]){0,240}\)\s*(?:\*|\+)/,
+    /\((?:\\.|[^()]){0,240}\.\+(?:\\.|[^()]){0,240}\)\s*(?:\*|\+)/,
+  ];
+  return nestedQuantifierRules.some((rule) => rule.test(pattern));
+}
+
 function validateLineRegex(pattern: string): string | null {
+  const trimmed = pattern.trim();
+  if (!trimmed) {
+    return '请先填写有效的自定义正则表达式。';
+  }
+  if (trimmed.length > MAX_CUSTOM_REGEX_LENGTH) {
+    return `自定义分章正则过长（>${MAX_CUSTOM_REGEX_LENGTH} 字符），请简化后重试。`;
+  }
+
   const blockedPatterns = [
     /\\n|\\r/,
     /\r|\n/,
@@ -176,6 +225,20 @@ function validateLineRegex(pattern: string): string | null {
 
   if (blockedPatterns.some((rule) => rule.test(pattern))) {
     return '自定义分章正则需基于“单行章节标题”匹配，当前表达式包含跨行语义，请改为单行规则。';
+  }
+
+  if (hasNestedQuantifierRisk(trimmed)) {
+    return '自定义分章正则包含高风险嵌套量词，可能导致浏览器卡死，请改为更简单的线性匹配规则。';
+  }
+
+  try {
+    const regex = toLineRegex(trimmed);
+    const match = regex.exec('');
+    if (match && match[0].length === 0) {
+      return '自定义分章正则不能匹配空字符串，否则会触发无限匹配。';
+    }
+  } catch {
+    return '分章失败：自定义分章正则表达式无效';
   }
 
   return null;
@@ -241,11 +304,27 @@ async function pauseToKeepUiResponsive(): Promise<void> {
 
 function splitNovel(text: string, regexPattern: string): ParsedChapter[] {
   const normalizedText = normalizeText(text);
-  const regex = new RegExp(regexPattern, 'gm');
+  const regex = toGlobalLineRegex(regexPattern);
   const positions: { title: string; index: number }[] = [];
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  let matchedCount = 0;
 
   let match: RegExpExecArray | null;
   while ((match = regex.exec(normalizedText)) !== null) {
+    matchedCount += 1;
+    if (matchedCount > SPLIT_MATCH_LIMIT) {
+      throw new Error(`分章失败：匹配次数超过安全阈值（${SPLIT_MATCH_LIMIT}），请简化正则。`);
+    }
+    const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt;
+    if (elapsed > SPLIT_TIME_BUDGET_MS) {
+      throw new Error(`分章失败：正则执行超时（>${SPLIT_TIME_BUDGET_MS}ms），请简化规则后重试。`);
+    }
+
+    if (match[0].length === 0) {
+      regex.lastIndex = match.index + 1;
+      continue;
+    }
+
     const title = (match[1] || match[0] || '').trim();
     if (title) {
       positions.push({ title, index: match.index });
@@ -401,7 +480,7 @@ function computeTitleHitRate(chapters: ParsedChapter[]): number {
   return hit / chapters.length;
 }
 
-function computeContinuityScore(chapters: ParsedChapter[]): number {
+function computeContinuityScore(chapters: ParsedChapter[]): number | null {
   const numbers = chapters.map((chapter) => extractChapterNumber(chapter.title));
   let pairs = 0;
   let score = 0;
@@ -422,7 +501,7 @@ function computeContinuityScore(chapters: ParsedChapter[]): number {
     }
   }
 
-  if (pairs === 0) return 0.55;
+  if (pairs === 0) return null;
   return clamp(score / pairs, 0, 1);
 }
 
@@ -453,8 +532,16 @@ function evaluateSplitQuality(chapters: ParsedChapter[], totalChars: number): Sp
     1,
   );
 
+  const weightedMetrics: Array<{ value: number; weight: number }> = [
+    { value: distributionScore, weight: 0.45 },
+    { value: titleHitRate, weight: 0.25 },
+  ];
+  if (typeof continuityScore === 'number') {
+    weightedMetrics.push({ value: continuityScore, weight: 0.3 });
+  }
+  const totalWeight = weightedMetrics.reduce((sum, metric) => sum + metric.weight, 0) || 1;
   const confidence = clamp(
-    distributionScore * 0.45 + continuityScore * 0.3 + titleHitRate * 0.25,
+    weightedMetrics.reduce((sum, metric) => sum + metric.value * metric.weight, 0) / totalWeight,
     0,
     1,
   );
@@ -469,7 +556,9 @@ function evaluateSplitQuality(chapters: ParsedChapter[], totalChars: number): Sp
   if (totalChars >= 8000 && chapterCount <= 1) reviewReasons.push(REVIEW_REASON_TEXT.single_chapter);
   if (maxChapterRatio >= 0.82) reviewReasons.push(REVIEW_REASON_TEXT.oversized_chapter);
   if (shortChapterRatio > 0.45) reviewReasons.push(REVIEW_REASON_TEXT.too_many_short);
-  if (continuityScore < 0.42) reviewReasons.push(REVIEW_REASON_TEXT.weak_continuity);
+  if (typeof continuityScore === 'number' && continuityScore < 0.42) {
+    reviewReasons.push(REVIEW_REASON_TEXT.weak_continuity);
+  }
   if (titleHitRate < 0.5) reviewReasons.push(REVIEW_REASON_TEXT.weak_title_match);
 
   const splitStatus: SplitStatus = confidenceLevel === 'low' ? 'needs_review' : 'ok';
@@ -489,9 +578,19 @@ function evaluateSplitQuality(chapters: ParsedChapter[], totalChars: number): Sp
   };
 }
 
-function buildSplitMeta(strategyId: SplitStrategyId, quality: SplitQuality, engineVersion: 'v1' | 'v2'): SplitMeta {
+function buildSplitMeta(
+  strategyId: SplitStrategyId,
+  quality: SplitQuality,
+  engineVersion: 'v1' | 'v2',
+  options?: { selectionMode?: SplitMeta['selectionMode']; winnerStrategyId?: WinnerStrategyId },
+): SplitMeta {
+  const selectionMode = options?.selectionMode || (strategyId === 'auto_v2' ? 'auto_v2' : 'manual');
+  const winnerStrategyId = options?.winnerStrategyId
+    || (strategyId !== 'auto_v2' && isWinnerStrategyId(strategyId) ? strategyId : undefined);
   return {
     strategyId,
+    selectionMode,
+    winnerStrategyId,
     chapterCount: quality.chapterCount,
     avgChapterChars: quality.avgChapterChars,
     maxChapterRatio: quality.maxChapterRatio,
@@ -560,6 +659,8 @@ async function autoSplitAsync(
     splitMeta: {
       ...best!.splitMeta,
       strategyId: 'auto_v2',
+      selectionMode: 'auto_v2',
+      winnerStrategyId: isWinnerStrategyId(best!.strategyId) ? best!.strategyId : undefined,
       engineVersion: 'v2',
       updatedAt: Date.now(),
     },
@@ -574,6 +675,11 @@ async function runSplitWithStrategy(
 ): Promise<SplitCandidate> {
   if (strategyId === 'custom') {
     const pattern = customRegex?.trim() ? customRegex : DEFAULT_CUSTOM_REGEX;
+    const regexValidationError = validateLineRegex(pattern);
+    if (regexValidationError) {
+      throw new Error(regexValidationError);
+    }
+    toLineRegex(pattern);
     return runSplitWithPattern(text, pattern, 'custom', 'v2');
   }
   if (strategyId === 'auto_v2') {
@@ -633,6 +739,7 @@ export default function NovelUploader() {
     error: 0,
     inFlight: 0,
   });
+  const [lastBatchSummary, setLastBatchSummary] = useState<BatchRunSummary | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const tabOwnerIdRef = useRef<string>(getOrCreateTabOwnerId());
@@ -659,8 +766,17 @@ export default function NovelUploader() {
   const activeSplitMeta = useMemo<SplitMeta | null>(() => {
     if (!activeNovel?.splitMeta) return null;
     const meta = activeNovel.splitMeta;
+    const strategyId = meta.strategyId || 'custom';
+    const selectionMode = meta.selectionMode === 'auto_v2'
+      ? 'auto_v2'
+      : (strategyId === 'auto_v2' ? 'auto_v2' : 'manual');
+    const winnerStrategyId = isWinnerStrategyId(meta.winnerStrategyId)
+      ? meta.winnerStrategyId
+      : (strategyId !== 'auto_v2' && isWinnerStrategyId(strategyId) ? strategyId : undefined);
     return {
-      strategyId: meta.strategyId,
+      strategyId,
+      selectionMode,
+      winnerStrategyId,
       chapterCount: typeof meta.chapterCount === 'number' ? meta.chapterCount : 0,
       avgChapterChars: typeof meta.avgChapterChars === 'number' ? meta.avgChapterChars : 0,
       maxChapterRatio: typeof meta.maxChapterRatio === 'number' ? meta.maxChapterRatio : 1,
@@ -668,11 +784,11 @@ export default function NovelUploader() {
       confidence: typeof meta.confidence === 'number' ? meta.confidence : 0.5,
       confidenceLevel: meta.confidenceLevel || (activeNovel.splitStatus === 'needs_review' ? 'low' : 'medium'),
       reviewReasons: meta.reviewReasons || [],
-      titleHitRate: typeof meta.titleHitRate === 'number' ? meta.titleHitRate : 0,
-      continuityScore: typeof meta.continuityScore === 'number' ? meta.continuityScore : 0,
-      distributionScore: typeof meta.distributionScore === 'number' ? meta.distributionScore : 0.5,
+      titleHitRate: typeof meta.titleHitRate === 'number' ? meta.titleHitRate : null,
+      continuityScore: typeof meta.continuityScore === 'number' ? meta.continuityScore : null,
+      distributionScore: typeof meta.distributionScore === 'number' ? meta.distributionScore : null,
       engineVersion: meta.engineVersion || 'v1',
-      updatedAt: meta.updatedAt,
+      updatedAt: typeof meta.updatedAt === 'number' ? meta.updatedAt : Date.now(),
     };
   }, [activeNovel]);
 
@@ -683,7 +799,9 @@ export default function NovelUploader() {
     return { chapterCount: chapters.length, avgChapterChars: totalWords / chapters.length };
   }, [chapters]);
 
-  const needsSmartRepair = activeSplitMeta?.confidenceLevel === 'low';
+  const needsSmartRepair = activeSplitMeta
+    ? (activeSplitMeta.confidenceLevel === 'low' || activeSplitMeta.reviewReasons.length > 0)
+    : false;
 
   const chapterStatusStats = useMemo(() => {
     const total = chapters.length;
@@ -698,14 +816,33 @@ export default function NovelUploader() {
     if (!batchRun.active) return null;
     const progress = batchRun.total > 0 ? Math.round((batchRun.done / batchRun.total) * 100) : 0;
     return {
+      mode: 'active' as const,
       total: batchRun.total,
       done: batchRun.done,
       parsing: batchRun.inFlight,
       error: batchRun.error,
       progress,
       paused: batchRun.paused,
+      cancelled: false,
     };
   }, [batchRun]);
+
+  const batchSummaryStats = useMemo(() => {
+    if (!lastBatchSummary || batchRun.active) return null;
+    const resolved = Math.min(lastBatchSummary.total, lastBatchSummary.done + lastBatchSummary.error);
+    return {
+      mode: 'summary' as const,
+      total: lastBatchSummary.total,
+      done: lastBatchSummary.done,
+      parsing: 0,
+      error: lastBatchSummary.error,
+      progress: lastBatchSummary.total > 0 ? Math.round((resolved / lastBatchSummary.total) * 100) : 100,
+      paused: false,
+      cancelled: lastBatchSummary.cancelled,
+    };
+  }, [lastBatchSummary, batchRun.active]);
+
+  const batchPanelStats = bulkStats || batchSummaryStats;
 
   // Retrieve selected chapter reactive entity for the drawer details
   const drawerChapter = useMemo(() => {
@@ -834,53 +971,111 @@ export default function NovelUploader() {
     e.target.value = '';
   };
 
+  const getEncodingLabel = (encoding: Encoding): string => {
+    if (encoding === 'UTF-8') return 'utf-8';
+    if (encoding === 'GB18030') return 'gb18030';
+    if (encoding === 'BIG5') return 'big5';
+    if (encoding === 'UTF-16LE') return 'utf-16le';
+    return 'utf-16be';
+  };
+
+  const detectBomEncoding = (sample: Uint8Array): Encoding | null => {
+    if (sample.length >= 3 && sample[0] === 0xef && sample[1] === 0xbb && sample[2] === 0xbf) {
+      return 'UTF-8';
+    }
+    if (sample.length >= 2 && sample[0] === 0xff && sample[1] === 0xfe) {
+      return 'UTF-16LE';
+    }
+    if (sample.length >= 2 && sample[0] === 0xfe && sample[1] === 0xff) {
+      return 'UTF-16BE';
+    }
+    return null;
+  };
+
+  const guessUtf16Endianness = (sample: Uint8Array): Encoding | null => {
+    const checkLength = Math.min(sample.length, 4000);
+    if (checkLength < 4) return null;
+    let zeroOnEven = 0;
+    let zeroOnOdd = 0;
+    for (let i = 0; i < checkLength; i++) {
+      if (sample[i] !== 0x00) continue;
+      if (i % 2 === 0) zeroOnEven += 1;
+      else zeroOnOdd += 1;
+    }
+    const zeroRatio = (zeroOnEven + zeroOnOdd) / checkLength;
+    if (zeroRatio < 0.18) return null;
+    if (zeroOnOdd > zeroOnEven * 1.35) return 'UTF-16LE';
+    if (zeroOnEven > zeroOnOdd * 1.35) return 'UTF-16BE';
+    return null;
+  };
+
+  const getReplacementRatio = (sample: Uint8Array, label: string): number => {
+    try {
+      const decoded = new TextDecoder(label, { fatal: false }).decode(sample);
+      if (!decoded) return 1;
+      const replacementCharCount = (decoded.match(/\ufffd/g) || []).length;
+      return replacementCharCount / decoded.length;
+    } catch {
+      return Number.POSITIVE_INFINITY;
+    }
+  };
+
+  const normalizeDetectedEncoding = (detected: string | undefined, sample: Uint8Array): Encoding | null => {
+    if (!detected) return null;
+    const normalized = detected.toUpperCase().replace(/[-_]/g, '');
+    if (normalized.includes('UTF8') || normalized.includes('ASCII')) return 'UTF-8';
+    if (normalized.includes('UTF16BE')) return 'UTF-16BE';
+    if (normalized.includes('UTF16LE')) return 'UTF-16LE';
+    if (normalized.includes('UTF16')) return guessUtf16Endianness(sample) || 'UTF-16LE';
+    if (normalized.includes('BIG5')) return 'BIG5';
+    if (
+      normalized.includes('GB2312')
+      || normalized.includes('GBK')
+      || normalized.includes('GB18030')
+      || normalized.includes('WINDOWS936')
+    ) {
+      return 'GB18030';
+    }
+    return null;
+  };
+
   const detectEncoding = async (file: File): Promise<Encoding> => {
     try {
       const detectLength = Math.min(file.size, 50000);
       const detectBuffer = new Uint8Array(await readBlobAsArrayBuffer(file.slice(0, detectLength)));
+      const bomEncoding = detectBomEncoding(detectBuffer);
+      if (bomEncoding) return bomEncoding;
+
       let binaryStr = '';
       for (let i = 0; i < detectBuffer.length; i++) {
         binaryStr += String.fromCharCode(detectBuffer[i]);
       }
 
-      let encoding = 'UTF-8';
+      let detectedEncoding: string | undefined;
       try {
         const result = jschardet.detect(binaryStr);
-        if (result?.encoding) {
-          encoding = result.encoding;
-        }
+        detectedEncoding = result?.encoding;
       } catch {
-        encoding = 'UTF-8';
+        detectedEncoding = undefined;
       }
 
-      let normalizedEncoding = encoding.toUpperCase();
-      if (
-        normalizedEncoding.includes('GB2312')
-        || normalizedEncoding.includes('GBK')
-        || normalizedEncoding.includes('GB18030')
-        || normalizedEncoding.includes('WINDOWS-936')
-      ) {
-        normalizedEncoding = 'GB18030';
-      } else if (normalizedEncoding.includes('UTF-8') || normalizedEncoding.includes('ASCII')) {
-        normalizedEncoding = 'UTF-8';
-      } else if (normalizedEncoding.includes('UTF-16')) {
-        normalizedEncoding = 'UTF-16LE';
-      } else {
-        normalizedEncoding = 'GB18030';
+      let normalizedEncoding = normalizeDetectedEncoding(detectedEncoding, detectBuffer);
+      if (!normalizedEncoding) {
+        normalizedEncoding = guessUtf16Endianness(detectBuffer) || 'GB18030';
       }
 
       if (normalizedEncoding === 'UTF-8') {
         const sampleLength = Math.min(file.size, 2 * 1024 * 1024);
         const sample = new Uint8Array(await readBlobAsArrayBuffer(file.slice(0, sampleLength)));
-        const sampleText = new TextDecoder('utf-8').decode(sample);
-        const replacementCharCount = (sampleText.match(/\ufffd/g) || []).length;
-        const replacementRatio = replacementCharCount / (sampleText.length || 1);
-        if (replacementRatio > 0.01) {
-          return 'GB18030';
+        const utf8Ratio = getReplacementRatio(sample, 'utf-8');
+        if (utf8Ratio > 0.01) {
+          const gbRatio = getReplacementRatio(sample, 'gb18030');
+          const big5Ratio = getReplacementRatio(sample, 'big5');
+          normalizedEncoding = (big5Ratio + 0.002 < gbRatio) ? 'BIG5' : 'GB18030';
         }
       }
 
-      return normalizedEncoding as Encoding;
+      return normalizedEncoding;
     } catch {
       throw new Error('编码失败：无法检测文本编码');
     }
@@ -897,8 +1092,8 @@ export default function NovelUploader() {
         }
         resolve(result);
       };
-      reader.onerror = () => reject(new Error('编码失败：文本解码失败'));
-      reader.readAsText(file, encoding);
+      reader.onerror = () => reject(new Error(`编码失败：无法按 ${encoding} 解码文本`));
+      reader.readAsText(file, getEncodingLabel(encoding));
     });
   };
 
@@ -930,7 +1125,7 @@ export default function NovelUploader() {
     setUploadStage('reading');
     setUploadStageText(`大文件模式：分块读取 (${formatSizeInMb(file.size)})`);
 
-    const decoder = new TextDecoder(encoding.toLowerCase());
+    const decoder = new TextDecoder(getEncodingLabel(encoding));
     const cleanedLines: string[] = [];
     let pendingFragment = '';
     let previousLineWasEmpty = false;
@@ -1089,6 +1284,13 @@ export default function NovelUploader() {
   const cancelBatchRun = async (message = '已取消批量解析任务。') => {
     const run = parseRunRef.current;
     if (!run) return;
+    const summary: BatchRunSummary = {
+      total: run.queue.length,
+      done: run.done.size,
+      error: run.error.size,
+      cancelled: true,
+      finishedAt: Date.now(),
+    };
 
     run.cancelled = true;
     run.paused = false;
@@ -1106,6 +1308,7 @@ export default function NovelUploader() {
 
     parseRunRef.current = null;
     refreshBatchSnapshot();
+    setLastBatchSummary(summary);
     pushToast(message, 'info');
   };
 
@@ -1134,6 +1337,7 @@ export default function NovelUploader() {
     }
 
     const runId = crypto.randomUUID();
+    setLastBatchSummary(null);
     parseRunRef.current = {
       id: runId,
       queue: targets,
@@ -1194,8 +1398,16 @@ export default function NovelUploader() {
     if (!run || run.id !== runId) return;
 
     const hasError = run.error.size > 0;
+    const summary: BatchRunSummary = {
+      total: run.queue.length,
+      done: run.done.size,
+      error: run.error.size,
+      cancelled: false,
+      finishedAt: Date.now(),
+    };
     parseRunRef.current = null;
     refreshBatchSnapshot();
+    setLastBatchSummary(summary);
     if (hasError) {
       pushToast(`批量解析结束：成功 ${run.done.size}，失败 ${run.error.size}。`, 'info');
     } else {
@@ -1400,10 +1612,21 @@ export default function NovelUploader() {
       }));
       const totalChars = parsed.reduce((s, c) => s + c.wordCount, 0);
       const quality = evaluateSplitQuality(parsed, totalChars);
+      const preservedStrategyId = activeNovel.splitMeta?.strategyId ?? 'custom';
+      const preservedSelectionMode = activeNovel.splitMeta?.selectionMode === 'auto_v2'
+        ? 'auto_v2'
+        : (preservedStrategyId === 'auto_v2' ? 'auto_v2' : 'manual');
+      const preservedWinnerStrategyId = isWinnerStrategyId(activeNovel.splitMeta?.winnerStrategyId)
+        ? activeNovel.splitMeta?.winnerStrategyId
+        : (preservedStrategyId !== 'auto_v2' && isWinnerStrategyId(preservedStrategyId) ? preservedStrategyId : undefined);
       const meta = buildSplitMeta(
-        activeNovel.splitMeta?.strategyId ?? 'auto_v2',
+        preservedStrategyId,
         quality,
-        'v2',
+        activeNovel.splitMeta?.engineVersion || 'v1',
+        {
+          selectionMode: preservedSelectionMode,
+          winnerStrategyId: preservedWinnerStrategyId,
+        },
       );
       await db.novels.update(activeNovel.id, {
         splitStatus: quality.splitStatus,
@@ -1426,8 +1649,10 @@ export default function NovelUploader() {
       danger: true,
       onConfirm: async () => {
         setConfirmDialog(null);
-        if (selectedNovelId === id && parseRunRef.current) {
-          await cancelBatchRun('已取消正在进行的批量解析。');
+        const run = parseRunRef.current;
+        const runTouchesNovel = !!run && run.queue.some((chapter) => chapter.novelId === id);
+        if (runTouchesNovel) {
+          await cancelBatchRun('已取消与该小说相关的批量解析任务。');
         }
         await db.transaction('rw', db.novels, db.chapters, async () => {
           await db.chapters.where('novelId').equals(id).delete();
@@ -1564,7 +1789,11 @@ export default function NovelUploader() {
                   </p>
                   {activeSplitMeta ? (
                     <p className="text-[11px] text-zinc-500 mt-1">
-                      引擎 {activeSplitMeta.engineVersion === 'v2' ? 'V2' : 'V1'} · 策略 {STRATEGY_LABELS[activeSplitMeta.strategyId]}
+                      引擎 {activeSplitMeta.engineVersion === 'v2' ? 'V2' : 'V1'}
+                      {' · '}
+                      选择方式 {activeSplitMeta.selectionMode === 'auto_v2' ? '自动智能(V2)' : '手动'}
+                      {' · '}
+                      命中策略 {activeSplitMeta.winnerStrategyId ? STRATEGY_LABELS[activeSplitMeta.winnerStrategyId] : '未知'}
                     </p>
                   ) : (
                     <p className="text-[11px] text-zinc-500 mt-1">历史导入 · 未评估</p>
@@ -1618,9 +1847,9 @@ export default function NovelUploader() {
                 <div className="mt-3 pt-3 border-t border-zinc-800 text-xs text-zinc-400 grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div>最大章占比 {(activeSplitMeta.maxChapterRatio * 100).toFixed(1)}%</div>
                   <div>短章占比 {(activeSplitMeta.shortChapterRatio * 100).toFixed(1)}%</div>
-                  <div>标题命中率 {(activeSplitMeta.titleHitRate * 100).toFixed(1)}%</div>
-                  <div>编号连续性 {(activeSplitMeta.continuityScore * 100).toFixed(1)}%</div>
-                  <div>分布得分 {(activeSplitMeta.distributionScore * 100).toFixed(1)}%</div>
+                  <div>标题命中率 {formatMetricPercent(activeSplitMeta.titleHitRate)}</div>
+                  <div>编号连续性 {formatMetricPercent(activeSplitMeta.continuityScore)}</div>
+                  <div>分布得分 {formatMetricPercent(activeSplitMeta.distributionScore)}</div>
                   <div>置信度 {(activeSplitMeta.confidence * 100).toFixed(1)}%</div>
                   {activeSplitMeta.reviewReasons.length > 0 && (
                     <div className="sm:col-span-2 text-amber-300/90">
@@ -1813,7 +2042,7 @@ export default function NovelUploader() {
             </div>
 
             {/* Bulk Progress Panel */}
-            {bulkStats && (
+            {batchPanelStats && (
               <div className="mt-4 p-4 rounded-xl border border-zinc-800/80 bg-zinc-950/60 backdrop-blur-md flex flex-col gap-3.5 relative overflow-hidden group">
                 {/* Flowing background shine */}
                 <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-violet-500/5 via-indigo-500/5 to-transparent animate-pulse pointer-events-none" />
@@ -1821,47 +2050,61 @@ export default function NovelUploader() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="flex h-2 w-2 relative">
-                      {!bulkStats.paused ? (
+                      {batchPanelStats.mode === 'active' && !batchPanelStats.paused ? (
                         <>
                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
                           <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
                         </>
-                      ) : (
+                      ) : batchPanelStats.mode === 'active' && batchPanelStats.paused ? (
                         <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-400"></span>
+                      ) : (
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
                       )}
                     </span>
                     <h4 className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
-                      {bulkStats.paused ? '批量解析已暂停' : '后台大模型结构化解析中'}
+                      {batchPanelStats.mode === 'active'
+                        ? (batchPanelStats.paused ? '批量解析已暂停' : '后台大模型结构化解析中')
+                        : (batchPanelStats.cancelled ? '批量解析已取消' : '批量解析已完成')}
                     </h4>
                   </div>
-                  <span className="text-[10px] text-zinc-400 font-mono font-medium">
-                    并发上限: {PARSE_CONCURRENCY_LIMIT}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-zinc-400 font-mono font-medium">
+                      {batchPanelStats.mode === 'active' ? `并发上限: ${PARSE_CONCURRENCY_LIMIT}` : '结果摘要'}
+                    </span>
+                    {batchPanelStats.mode === 'summary' && (
+                      <button
+                        onClick={() => setLastBatchSummary(null)}
+                        className="text-[10px] text-zinc-500 hover:text-zinc-300"
+                      >
+                        隐藏
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="space-y-1.5">
                   <div className="flex justify-between text-[11px]">
                     <span className="text-zinc-400 font-medium">
-                      解析进度：{bulkStats.done} / {bulkStats.total} 章 ({bulkStats.progress}%)
+                      解析进度：{batchPanelStats.done} / {batchPanelStats.total} 章 ({batchPanelStats.progress}%)
                     </span>
                     <span className="text-zinc-400 font-mono">
-                      {bulkStats.parsing} 个在途 · {bulkStats.error} 个失败
+                      {batchPanelStats.parsing} 个在途 · {batchPanelStats.error} 个失败
                     </span>
                   </div>
 
                   <div className="h-1.5 w-full bg-zinc-900 rounded-full overflow-hidden p-[1px]">
                     <div
                       className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full transition-all duration-500 ease-out shadow-[0_0_8px_rgba(99,102,241,0.4)]"
-                      style={{ width: `${bulkStats.progress}%` }}
+                      style={{ width: `${batchPanelStats.progress}%` }}
                     />
                   </div>
                 </div>
 
-                {bulkStats.error > 0 && (
+                {batchPanelStats.error > 0 && (
                   <div className="flex items-center justify-between pt-1 text-[10px] border-t border-zinc-900/60">
                     <span className="text-rose-400/90 flex items-center gap-1">
                       <AlertCircle className="w-3.5 h-3.5" />
-                      当前有 {bulkStats.error} 个章节解析失败，您可以点击重试
+                      当前有 {batchPanelStats.error} 个章节解析失败，您可以点击重试
                     </span>
                     <button
                       onClick={retryFailedChapters}
