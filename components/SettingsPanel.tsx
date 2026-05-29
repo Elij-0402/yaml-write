@@ -1,52 +1,117 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Eye, EyeOff, Loader2, X } from 'lucide-react';
 import { useAppStore } from '../app/store';
-import { Settings, Key, Globe, Cpu, Thermometer, CheckCircle2, XCircle, Loader2, X, Eye, EyeOff } from 'lucide-react';
+import { getProviderMeta, listProviderMetas } from '../app/llmProviders';
+import { postWithLlmConfig, readApiErrorMessage } from '../app/llmClient';
 
 interface SettingsPanelProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-const PROVIDERS = [
-  { id: 'openai', name: 'OpenAI', icon: '⚡' },
-  { id: 'deepseek', name: 'DeepSeek', icon: '🐳' },
-  { id: 'gemini', name: 'Google Gemini', icon: '✨' },
-  { id: 'siliconflow', name: '硅基流动', icon: '🌊' },
-  { id: 'ollama', name: 'Ollama 本地', icon: '🦙' },
-  { id: 'custom', name: '自定义中转', icon: '⚙️' },
-];
+interface TestResult {
+  success: boolean;
+  message: string;
+  latency?: number;
+}
 
-const PRESET_MODELS_MAP: Record<string, { label: string; value: string }[]> = {
-  openai: [
-    { label: 'GPT-4o', value: 'gpt-4o' },
-    { label: 'GPT-4o Mini', value: 'gpt-4o-mini' },
-  ],
-  deepseek: [
-    { label: 'DeepSeek Chat (V3)', value: 'deepseek-chat' },
-    { label: 'DeepSeek Reasoner (R1)', value: 'deepseek-reasoner' },
-  ],
-  gemini: [
-    { label: 'Gemini 2.5 Flash', value: 'gemini-2.5-flash' },
-    { label: 'Gemini 1.5 Flash', value: 'gemini-1.5-flash' },
-    { label: 'Gemini 1.5 Pro', value: 'gemini-1.5-pro' },
-  ],
-  siliconflow: [
-    { label: 'DeepSeek V3 (硅基)', value: 'deepseek-ai/DeepSeek-V3' },
-    { label: 'DeepSeek R1 (硅基)', value: 'deepseek-ai/DeepSeek-R1' },
-    { label: 'Qwen 2.5 72B', value: 'Qwen/Qwen2.5-72B-Instruct' },
-  ],
-  ollama: [
-    { label: 'Llama 3 (8B)', value: 'llama3' },
-    { label: 'Qwen 2.5 (7B)', value: 'qwen2.5' },
-  ],
-  custom: []
-};
+interface ListModelsResult {
+  models?: string[];
+  message?: string;
+}
 
 export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
-  const { llmConfig, setLlmConfig } = useAppStore();
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string; latency?: number } | null>(null);
+  const { llmConfig, setActiveProvider, updateActiveProviderProfile, setTemperature } = useAppStore();
+  const providerOptions = useMemo(() => listProviderMetas(), []);
+  const activeProvider = llmConfig.activeProvider;
+  const activeProviderMeta = getProviderMeta(activeProvider);
+  const activeProfile = llmConfig.providerProfiles[activeProvider];
+
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [showKey, setShowKey] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
+  const [discoveringModels, setDiscoveringModels] = useState(false);
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
+  const [discoverMessage, setDiscoverMessage] = useState<string | null>(null);
+
+  const modelOptions = useMemo(() => {
+    const values: string[] = [];
+    const pushUnique = (value: string) => {
+      const next = value.trim();
+      if (!next) return;
+      if (!values.includes(next)) values.push(next);
+    };
+    activeProviderMeta.modelPresets.forEach((item) => pushUnique(item.value));
+    discoveredModels.forEach((item) => pushUnique(item));
+    pushUnique(activeProfile.model);
+    return values;
+  }, [activeProfile.model, activeProviderMeta.modelPresets, discoveredModels]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setTestResult(null);
+    setDiscoveredModels([]);
+    setDiscoverMessage(null);
+  }, [isOpen, activeProvider]);
+
+  const discoverModels = useCallback(async (manual: boolean) => {
+    const apiKey = activeProfile.apiKey.trim();
+    const baseUrl = activeProfile.baseUrl.trim();
+    if (!baseUrl) {
+      setDiscoveredModels([]);
+      if (manual) setDiscoverMessage('请先填写 API Base URL。');
+      return;
+    }
+    if (activeProviderMeta.requiresApiKey && !apiKey) {
+      setDiscoveredModels([]);
+      if (manual) setDiscoverMessage('请先填写 API Key。');
+      return;
+    }
+
+    setDiscoveringModels(true);
+    if (manual) setDiscoverMessage(null);
+
+    try {
+      const response = await postWithLlmConfig('/api/py/list-models', {}, { includeTemperature: false });
+      if (!response.ok) {
+        throw new Error(await readApiErrorMessage(response, '模型列表拉取失败'));
+      }
+
+      const data = (await response.json()) as ListModelsResult;
+      const nextModels = Array.isArray(data.models)
+        ? data.models.filter((item) => typeof item === 'string' && item.trim().length > 0)
+        : [];
+      setDiscoveredModels(nextModels);
+      if (nextModels.length > 0) {
+        setDiscoverMessage(`已获取 ${nextModels.length} 个可用模型。`);
+      } else {
+        setDiscoverMessage('未返回模型列表，可继续使用预设或手动输入。');
+      }
+    } catch {
+      setDiscoveredModels([]);
+      setDiscoverMessage('无法自动拉取模型，可继续使用预设或手动输入。');
+    } finally {
+      setDiscoveringModels(false);
+    }
+  }, [activeProfile.apiKey, activeProfile.baseUrl, activeProviderMeta.requiresApiKey]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const apiKey = activeProfile.apiKey.trim();
+    const baseUrl = activeProfile.baseUrl.trim();
+    if (!baseUrl || (activeProviderMeta.requiresApiKey && !apiKey)) {
+      setDiscoveredModels([]);
+      setDiscoverMessage(null);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void discoverModels(false);
+    }, 550);
+
+    return () => window.clearTimeout(timer);
+  }, [isOpen, activeProvider, activeProfile.apiKey, activeProfile.baseUrl, activeProviderMeta.requiresApiKey, discoverModels]);
 
   if (!isOpen) return null;
 
@@ -54,262 +119,204 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
     setTesting(true);
     setTestResult(null);
     try {
-      const response = await fetch('/api/py/test-connection', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          apiKey: llmConfig.apiKey,
-          baseUrl: llmConfig.baseUrl,
-          model: llmConfig.model,
-        }),
-      });
-      const raw = await response.text();
-      const data = raw ? JSON.parse(raw) : {};
+      const response = await postWithLlmConfig('/api/py/test-connection', {}, { includeTemperature: false });
       if (!response.ok) {
-        throw new Error(data?.error?.message || `连接测试失败（HTTP ${response.status}）`);
+        throw new Error(await readApiErrorMessage(response, '连接测试失败'));
       }
+      const data = (await response.json()) as TestResult;
       setTestResult({
         success: Boolean(data.success),
         message: data.message || '连接测试完成。',
         latency: data.latency,
       });
-    } catch (err: any) {
+    } catch (error) {
       setTestResult({
         success: false,
-        message: err.message || '网络连接超时，请检查您的网络设置或 Base URL 是否有效。',
+        message: error instanceof Error ? error.message : '连接测试失败，请检查配置。',
       });
     } finally {
       setTesting(false);
     }
   };
 
+  const requiresApiKey = activeProviderMeta.requiresApiKey;
+  const modelNameLower = activeProfile.model.toLowerCase();
+  const showReasonerWarning = modelNameLower.includes('reasoner') || modelNameLower.includes('r1');
+  const keyReady = !requiresApiKey || activeProfile.apiKey.trim().length > 0;
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      {/* Backdrop */}
-      <div 
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
-        onClick={onClose}
-      />
+      <button type="button" className="absolute inset-0 bg-black/60" onClick={onClose} aria-label="关闭设置" />
 
-      {/* Drawer Body */}
-      <div className="relative w-full max-w-md h-full bg-zinc-900 border-l border-zinc-800 shadow-xl flex flex-col animate-slide-in">
-        
-        {/* Header */}
-        <div className="p-6 border-b border-zinc-800 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-300">
-              <Settings className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-zinc-100">
-                模型与密钥配置
-              </h2>
-              <p className="text-xs text-zinc-400">配置您的大模型 API 密钥与接口地址</p>
-            </div>
+      <aside className="relative h-full w-full max-w-md bg-zinc-950 border-l border-zinc-800 flex flex-col">
+        <header className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-zinc-100">模型与密钥配置</h2>
+            <p className="text-xs text-zinc-500 mt-1">全局配置，作用于全部流程</p>
           </div>
-          <button 
+          <button
             onClick={onClose}
-            className="p-1.5 rounded-lg border border-zinc-800 hover:border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-all"
+            className="h-8 w-8 inline-flex items-center justify-center rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
-        </div>
+        </header>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* 服务商选择 */}
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
-              服务商 (Provider)
-            </label>
-            <div className="grid grid-cols-3 gap-2">
-              {PROVIDERS.map((p) => {
-                const isActive = (llmConfig.provider || 'openai') === p.id;
-                return (
-                  <button
-                    key={p.id}
-                    onClick={() => setLlmConfig({ provider: p.id as any })}
-                    className={`p-3 rounded-xl border text-center transition-all flex flex-col items-center justify-center gap-1.5 ${
-                      isActive
-                        ? 'bg-zinc-800 border-zinc-500 text-white shadow-[0_0_12px_rgba(255,255,255,0.05)] scale-[1.02]'
-                        : 'bg-zinc-950/40 border-zinc-900 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/30'
-                    }`}
-                  >
-                    <span className="text-lg">{p.icon}</span>
-                    <span className="text-[10px] font-medium truncate w-full">{p.name}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+          <section className="space-y-2">
+            <label className="text-xs text-zinc-400">服务商</label>
+            <select
+              value={activeProvider}
+              onChange={(event) => setActiveProvider(event.target.value as typeof activeProvider)}
+              className="w-full h-10 px-3 bg-zinc-950 border border-zinc-700 rounded text-sm text-zinc-100 focus:outline-none focus:border-zinc-500"
+            >
+              {providerOptions.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.name}
+                </option>
+              ))}
+            </select>
+          </section>
 
-          {/* Base URL */}
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
-              <Globe className="w-4 h-4 text-zinc-400" />
-              API Base URL
-            </label>
-            <input 
-              type="text"
-              value={llmConfig.baseUrl}
-              onChange={(e) => setLlmConfig({ baseUrl: e.target.value })}
-              onBlur={(e) => setLlmConfig({ baseUrl: e.target.value.trim() })}
-              placeholder="https://api.openai.com/v1"
-              className="w-full px-4 py-3 rounded-xl bg-zinc-950 border border-zinc-800 text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-700 transition-all font-mono text-sm"
-            />
-            <p className="text-xs text-zinc-500">兼容 OpenAI 规范的 API 地址。例如本地 Ollama 或自建中转</p>
-          </div>
-
-          {/* API Key */}
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
-              <Key className="w-4 h-4 text-zinc-400" />
-              API Key (密钥)
-            </label>
-            <div className="relative flex items-center">
-              <input 
-                type={showKey ? "text" : "password"}
-                value={llmConfig.apiKey}
-                onChange={(e) => setLlmConfig({ apiKey: e.target.value })}
-                onBlur={(e) => setLlmConfig({ apiKey: e.target.value.trim() })}
-                placeholder="sk-..."
-                className="w-full px-4 py-3 pr-10 rounded-xl bg-zinc-950 border border-zinc-800 text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-700 transition-all font-mono text-sm"
+          <section className="space-y-2">
+            <label className="text-xs text-zinc-400">API Key</label>
+            <div className="relative">
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={activeProfile.apiKey}
+                onChange={(event) => updateActiveProviderProfile({ apiKey: event.target.value })}
+                onBlur={(event) => updateActiveProviderProfile({ apiKey: event.target.value.trim() })}
+                placeholder={requiresApiKey ? 'sk-...' : '本地服务可留空'}
+                className="w-full h-10 px-3 pr-10 bg-zinc-950 border border-zinc-700 rounded text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
               />
               <button
                 type="button"
-                onClick={() => setShowKey(!showKey)}
-                className="absolute right-3 text-zinc-500 hover:text-zinc-300 transition-colors"
+                onClick={() => setShowKey((value) => !value)}
+                className="absolute right-2 top-2 h-6 w-6 inline-flex items-center justify-center text-zinc-500 hover:text-zinc-300"
+                aria-label={showKey ? '隐藏密钥' : '显示密钥'}
               >
                 {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
-            <p className="text-xs text-zinc-500">密钥仅安全保存在您浏览器本地 LocalStorage 中，不会泄露给第三方</p>
-          </div>
+          </section>
 
-          {/* Model Selection */}
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
-              <Cpu className="w-4 h-4 text-zinc-400" />
-              大模型名称
-            </label>
-            <input 
-              type="text"
-              value={llmConfig.model}
-              onChange={(e) => setLlmConfig({ model: e.target.value })}
-              onBlur={(e) => setLlmConfig({ model: e.target.value.trim() })}
-              placeholder="选择或手动输入模型名称"
-              className="w-full px-4 py-3 rounded-xl bg-zinc-950 border border-zinc-800 text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-700 transition-all font-mono text-sm"
-            />
-            
-            {/* Presets Grid */}
-            {PRESET_MODELS_MAP[llmConfig.provider || 'openai']?.length > 0 && (
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                {PRESET_MODELS_MAP[llmConfig.provider || 'openai'].map((model) => (
-                  <button
-                    key={model.value}
-                    onClick={() => setLlmConfig({ model: model.value })}
-                    className={`px-3 py-2 rounded-lg text-xs font-mono border transition-all text-left truncate ${
-                      llmConfig.model === model.value
-                        ? 'bg-zinc-800 border-zinc-600 text-zinc-100 shadow-sm'
-                        : 'bg-zinc-950/20 border-zinc-900 hover:border-zinc-800 text-zinc-400 hover:text-zinc-200'
-                    }`}
-                  >
-                    {model.label}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Compatibility Warning Banner */}
-            {(llmConfig.model.toLowerCase().includes('reasoner') || 
-              llmConfig.model.toLowerCase().includes('r1')) && (
-              <div className="mt-3 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5 text-[11px] text-amber-400 leading-relaxed animate-fade-in">
-                ⚠️ <b>兼容性提示：</b>当前选择的“推理模型”在某些 API 聚合渠道中可能不支持系统在第 1 步所需的“章节分析结构化解析（Tool Call）”功能。建议在分析时切换为普通的 Chat 模型，而用此模型生成大纲及正文。
-              </div>
-            )}
-          </div>
-
-          {/* Temperature */}
-          <div className="space-y-2">
-            <div className="flex justify-between items-center text-sm font-semibold text-zinc-300">
-              <label className="flex items-center gap-2">
-                <Thermometer className="w-4 h-4 text-zinc-400" />
-                随机温度 (Temperature)
-              </label>
-              <span className="font-mono text-zinc-300">{llmConfig.temperature}</span>
+          <section className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs text-zinc-400">模型</label>
+              <button
+                type="button"
+                onClick={() => void discoverModels(true)}
+                disabled={discoveringModels}
+                className="text-xs text-zinc-400 hover:text-zinc-200 disabled:opacity-50"
+              >
+                {discoveringModels ? '拉取中...' : '刷新模型列表'}
+              </button>
             </div>
-            <input 
-              type="range"
-              min="0.0"
-              max="1.5"
-              step="0.1"
-              value={llmConfig.temperature}
-              onChange={(e) => setLlmConfig({ temperature: parseFloat(e.target.value) })}
-              className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-zinc-300 focus:outline-none"
-            />
-            <div className="flex justify-between text-[10px] text-zinc-500 font-mono">
-              <span>0.0 (严肃精确)</span>
-              <span>1.0 (平衡默认)</span>
-              <span>1.5 (极富创意)</span>
-            </div>
-          </div>
 
-          {/* Test Connection Result */}
-          {testResult && (
-            <div className={`p-4 rounded-xl border animate-fade-in ${
-              testResult.success 
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-sm' 
-                : 'bg-rose-500/10 border-rose-500/30 text-rose-400 shadow-sm'
-            }`}>
-              <div className="flex items-start gap-3">
-                {testResult.success ? (
-                  <CheckCircle2 className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                ) : (
-                  <XCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                )}
-                <div className="text-sm flex-1">
-                  <div className="flex justify-between items-center font-semibold">
-                    <span>{testResult.success ? '连接成功' : '连接失败'}</span>
-                    {testResult.latency !== undefined && (
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
-                        testResult.latency < 250 
-                          ? 'bg-emerald-500/20 text-emerald-300' 
-                          : testResult.latency < 600 
-                          ? 'bg-amber-500/20 text-amber-300' 
-                          : 'bg-rose-500/20 text-rose-300'
-                      }`}>
-                        延迟: {testResult.latency}ms
-                      </span>
-                    )}
+            <select
+              value={activeProfile.model}
+              onChange={(event) => updateActiveProviderProfile({ model: event.target.value })}
+              className="w-full h-10 px-3 bg-zinc-950 border border-zinc-700 rounded text-sm text-zinc-100 focus:outline-none focus:border-zinc-500"
+            >
+              {modelOptions.length === 0 ? (
+                <option value="">未发现模型，请先配置或手动输入</option>
+              ) : (
+                modelOptions.map((model) => (
+                  <option key={model} value={model}>
+                    {model}
+                  </option>
+                ))
+              )}
+            </select>
+
+            {discoverMessage && <p className="text-xs text-zinc-500">{discoverMessage}</p>}
+            {showReasonerWarning && (
+              <p className="text-xs text-amber-400">当前模型可能不支持结构化章节解析，建议解析时改用普通 Chat 模型。</p>
+            )}
+          </section>
+
+          <section className="border border-zinc-800 rounded">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((value) => !value)}
+              className="w-full h-10 px-3 text-left text-xs text-zinc-300 hover:bg-zinc-900"
+            >
+              {showAdvanced ? '收起高级设置' : '高级设置'}
+            </button>
+            {showAdvanced && (
+              <div className="px-3 pb-3 space-y-3 border-t border-zinc-800">
+                <div className="space-y-2 pt-3">
+                  <label className="text-xs text-zinc-400">API Base URL</label>
+                  <input
+                    type="text"
+                    value={activeProfile.baseUrl}
+                    onChange={(event) => updateActiveProviderProfile({ baseUrl: event.target.value })}
+                    onBlur={(event) => updateActiveProviderProfile({ baseUrl: event.target.value.trim() })}
+                    placeholder="https://api.openai.com/v1"
+                    className="w-full h-10 px-3 bg-zinc-950 border border-zinc-700 rounded text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs text-zinc-400">手动模型名称</label>
+                  <input
+                    type="text"
+                    value={activeProfile.model}
+                    onChange={(event) => updateActiveProviderProfile({ model: event.target.value })}
+                    onBlur={(event) => updateActiveProviderProfile({ model: event.target.value.trim() })}
+                    placeholder="例如：gpt-4o"
+                    className="w-full h-10 px-3 bg-zinc-950 border border-zinc-700 rounded text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-zinc-400">Temperature</label>
+                    <span className="text-xs text-zinc-400">{llmConfig.temperature.toFixed(1)}</span>
                   </div>
-                  <p className="text-xs text-zinc-400 mt-1.5 leading-relaxed break-all">{testResult.message}</p>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1.5"
+                    step="0.1"
+                    value={llmConfig.temperature}
+                    onChange={(event) => setTemperature(parseFloat(event.target.value))}
+                    className="w-full"
+                  />
                 </div>
               </div>
-            </div>
+            )}
+          </section>
+
+          {testResult && (
+            <section
+              className={`border rounded px-3 py-2 text-xs ${
+                testResult.success ? 'border-emerald-700 text-emerald-300' : 'border-rose-700 text-rose-300'
+              }`}
+            >
+              <p>{testResult.message}</p>
+              {typeof testResult.latency === 'number' && <p className="mt-1 text-zinc-400">延迟 {testResult.latency} ms</p>}
+            </section>
           )}
         </div>
 
-        {/* Footer */}
-        <div className="p-6 border-t border-zinc-800 bg-zinc-950/40 flex gap-3">
-          <button 
+        <footer className="px-5 py-4 border-t border-zinc-800">
+          <button
             onClick={handleTestConnection}
-            disabled={testing || (llmConfig.provider !== 'ollama' && !llmConfig.apiKey)}
-            className="flex-1 py-3 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-900 font-semibold shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
+            disabled={testing || !keyReady}
+            className="w-full h-10 rounded border border-zinc-600 bg-zinc-100 text-zinc-900 text-sm font-medium hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {testing ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" />
-                测试连通性...
-              </>
+              <span className="inline-flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                测试连接
+              </span>
             ) : (
               '测试 API 连接'
             )}
           </button>
-        </div>
-
-      </div>
+        </footer>
+      </aside>
     </div>
   );
 }

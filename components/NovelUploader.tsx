@@ -4,6 +4,7 @@ import { db, type Chapter, type Novel, type SplitConfidenceLevel, type SplitMeta
 import { useAppStore } from '../app/store';
 import { AlertCircle, AlertTriangle, BookOpen, CheckCircle2, Cpu, Loader2, Pause, Play, Trash2, Upload, X, Eye, Sparkles, ChevronRight, FileText, RefreshCw, Layers, HelpCircle, Square, CircleX } from 'lucide-react';
 import jschardet from 'jschardet';
+import { ensureLlmConfigReady, postWithLlmConfig, readApiErrorMessage } from '../app/llmClient';
 
 const MAX_UPLOAD_SIZE_MB = 50;
 const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
@@ -17,14 +18,6 @@ const TAB_PARSE_OWNER_KEY = 'novel-fusion-parse-owner-id';
 const MAX_CUSTOM_REGEX_LENGTH = 300;
 const SPLIT_MATCH_LIMIT = 20000;
 const SPLIT_TIME_BUDGET_MS = 2000;
-
-interface ApiErrorBody {
-  error?: {
-    code?: string;
-    message?: string;
-  };
-  detail?: string;
-}
 
 interface ToastState {
   message: string;
@@ -707,7 +700,7 @@ function toConfidenceLabel(level: SplitConfidenceLevel): string {
 }
 
 export default function NovelUploader() {
-  const { llmConfig, selectedNovelId, setSelectedNovelId, selectedChapterId, setSelectedChapterId } = useAppStore();
+  const { selectedNovelId, setSelectedNovelId, selectedChapterId, setSelectedChapterId } = useAppStore();
 
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -888,9 +881,10 @@ export default function NovelUploader() {
     });
   };
 
-  const ensureApiKeyReady = () => {
-    if (llmConfig.apiKey.trim()) return true;
-    pushToast('请先配置 API Key。已为你打开设置面板。', 'error');
+  const ensureLlmReady = () => {
+    const readiness = ensureLlmConfigReady();
+    if (readiness.ok) return true;
+    pushToast(readiness.message || '请先完成模型配置。', 'error');
     openSettingsPanel();
     return false;
   };
@@ -1191,24 +1185,11 @@ export default function NovelUploader() {
     return cleanText(text);
   };
 
-  const readParseApiError = async (response: Response): Promise<string> => {
-    const prefix = `HTTP ${response.status}`;
-    const raw = await response.text();
-    try {
-      const parsed = JSON.parse(raw) as ApiErrorBody;
-      return parsed.error?.message || parsed.detail || `${prefix} 解析失败`;
-    } catch {
-      const trimmed = raw.trim();
-      if (!trimmed) return `${prefix} 解析失败`;
-      return `${prefix} ${trimmed.slice(0, 120)}`;
-    }
-  };
-
   const parseChapter = async (
     chapter: Chapter,
     options?: { signal?: AbortSignal; runId?: string; suppressToast?: boolean },
   ): Promise<'done' | 'error' | 'cancelled'> => {
-    if (!ensureApiKeyReady()) return 'error';
+    if (!ensureLlmReady()) return 'error';
     const contentChars = chapter.content.length;
     if (contentChars > MAX_CHAPTER_CONTENT_CHARS) {
       const tooLargeMessage = `章节「${chapter.name}」过长（${contentChars} 字），超过上限 ${MAX_CHAPTER_CONTENT_CHARS} 字。`;
@@ -1230,24 +1211,15 @@ export default function NovelUploader() {
     });
 
     try {
-      const response = await fetch('/api/py/parse-chapter', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+      const response = await postWithLlmConfig('/api/py/parse-chapter', {
+        title: chapter.name,
+        content: chapter.content,
+      }, {
         signal: options?.signal,
-        body: JSON.stringify({
-          title: chapter.name,
-          content: chapter.content,
-          apiKey: llmConfig.apiKey,
-          baseUrl: llmConfig.baseUrl,
-          model: llmConfig.model,
-          temperature: llmConfig.temperature,
-        }),
       });
 
       if (!response.ok) {
-        throw new Error(await readParseApiError(response));
+        throw new Error(await readApiErrorMessage(response, '解析失败'));
       }
 
       const analysis = await response.json();
@@ -1330,7 +1302,7 @@ export default function NovelUploader() {
 
   const runBatchParsing = async (targets: Chapter[]) => {
     if (targets.length === 0) return;
-    if (!ensureApiKeyReady()) return;
+    if (!ensureLlmReady()) return;
     if (parseRunRef.current) {
       pushToast('已有批量解析任务在运行。', 'info');
       return;

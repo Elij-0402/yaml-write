@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Chapter, type Novel } from '../app/db';
-import { useAppStore } from '../app/store';
 import { Sparkles, PenTool, FileDown, Copy, Check, RotateCcw, HelpCircle, Loader2, ArrowRight, BookOpen } from 'lucide-react';
+import { ensureLlmConfigReady, postWithLlmConfig, readApiErrorMessage } from '../app/llmClient';
 
 interface CharacterBinding {
   sourceChar: string;
@@ -49,22 +49,7 @@ function parseSseBuffer(buffer: string): { events: ParsedSseEvent[]; rest: strin
   return { events, rest };
 }
 
-async function readApiErrorMessage(response: Response): Promise<string> {
-  const statusText = `HTTP ${response.status}`;
-  const raw = await response.text();
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed?.error?.message || parsed?.detail || `${statusText} 接口请求失败`;
-  } catch {
-    const trimmed = raw.trim();
-    if (!trimmed) return `${statusText} 接口请求失败`;
-    return `${statusText} ${trimmed.slice(0, 120)}`;
-  }
-}
-
 export default function FusionEditor() {
-  const { llmConfig } = useAppStore();
-  
   // States
   const [selectedChapterIds, setSelectedChapterIds] = useState<string[]>([]);
   const [fusionPrompt, setFusionPrompt] = useState<string>('');
@@ -126,8 +111,10 @@ export default function FusionEditor() {
   };
 
   const handleGenerateOutline = async () => {
-    if (!llmConfig.apiKey) {
-      alert('请先配置大模型 API Key！');
+    const readiness = ensureLlmConfigReady();
+    if (!readiness.ok) {
+      alert(readiness.message || '请先完成大模型配置。');
+      window.dispatchEvent(new Event('open-settings-panel'));
       return;
     }
     if (selectedChapterIds.length === 0) {
@@ -152,20 +139,10 @@ export default function FusionEditor() {
         })
       );
 
-      const response = await fetch('/api/py/generate-outline', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      const response = await postWithLlmConfig('/api/py/generate-outline', {
           selectedChapters: selectedChaptersData,
-          fusionPrompt: fusionPrompt,
-          apiKey: llmConfig.apiKey,
-          baseUrl: llmConfig.baseUrl,
-          model: llmConfig.model,
-          temperature: llmConfig.temperature,
-          characterBindings: characterBindings,
-        }),
+          fusionPrompt,
+          characterBindings,
       });
 
       if (!response.ok) {
@@ -216,8 +193,10 @@ export default function FusionEditor() {
   };
 
   const handleGenerateText = async () => {
-    if (!llmConfig.apiKey) {
-      alert('请先配置大模型 API Key！');
+    const readiness = ensureLlmConfigReady();
+    if (!readiness.ok) {
+      alert(readiness.message || '请先完成大模型配置。');
+      window.dispatchEvent(new Event('open-settings-panel'));
       return;
     }
     if (!outline.trim()) {
@@ -230,19 +209,9 @@ export default function FusionEditor() {
     setStep(3); // Auto proceed to step 3 text view
 
     try {
-      const response = await fetch('/api/py/generate-text', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          outline: outline,
-          fusionPrompt: fusionPrompt,
-          apiKey: llmConfig.apiKey,
-          baseUrl: llmConfig.baseUrl,
-          model: llmConfig.model,
-          temperature: llmConfig.temperature,
-        }),
+      const response = await postWithLlmConfig('/api/py/generate-text', {
+        outline,
+        fusionPrompt,
       });
 
       if (!response.ok) {

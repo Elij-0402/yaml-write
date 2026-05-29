@@ -1,28 +1,25 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import {
+  createDefaultProviderProfiles,
+  isProviderId,
+  type ProviderId,
+  type ProviderProfile,
+} from './llmProviders';
 
-export interface ProviderConfig {
-  apiKey: string;
-  baseUrl: string;
-  model: string;
-}
+const STORE_VERSION = 2;
+const DEFAULT_TEMPERATURE = 0.7;
 
 export interface LLMConfig {
-  provider: 'openai' | 'deepseek' | 'gemini' | 'siliconflow' | 'ollama' | 'custom';
-  apiKey: string;
-  baseUrl: string;
-  model: string;
+  activeProvider: ProviderId;
+  providerProfiles: Record<ProviderId, ProviderProfile>;
   temperature: number;
-  providers: Record<string, ProviderConfig>;
 }
 
-const DEFAULT_PROVIDERS: Record<string, ProviderConfig> = {
-  openai: { apiKey: '', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o' },
-  deepseek: { apiKey: '', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-  gemini: { apiKey: '', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash' },
-  siliconflow: { apiKey: '', baseUrl: 'https://api.siliconflow.cn/v1', model: 'deepseek-ai/DeepSeek-V3' },
-  ollama: { apiKey: '', baseUrl: 'http://localhost:11434/v1', model: 'llama3' },
-  custom: { apiKey: '', baseUrl: '', model: '' },
+const DEFAULT_LLM_CONFIG: LLMConfig = {
+  activeProvider: 'openai',
+  providerProfiles: createDefaultProviderProfiles(),
+  temperature: DEFAULT_TEMPERATURE,
 };
 
 interface AppState {
@@ -30,57 +27,150 @@ interface AppState {
   activeTab: string; // 'upload' | 'contrast' | 'fusion'
   selectedNovelId: string | null;
   selectedChapterId: string | null;
-  setLlmConfig: (config: Partial<LLMConfig>) => void;
+  setActiveProvider: (provider: ProviderId) => void;
+  updateActiveProviderProfile: (patch: Partial<ProviderProfile>) => void;
+  setTemperature: (temperature: number) => void;
   setActiveTab: (tab: string) => void;
   setSelectedNovelId: (id: string | null) => void;
   setSelectedChapterId: (id: string | null) => void;
 }
 
+function clampTemperature(value: unknown): number {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(numeric)) return DEFAULT_TEMPERATURE;
+  return Math.max(0, Math.min(1.5, numeric));
+}
+
+function normalizeProviderProfiles(rawProfiles: unknown): Record<ProviderId, ProviderProfile> {
+  const defaults = createDefaultProviderProfiles();
+  if (!rawProfiles || typeof rawProfiles !== 'object') {
+    return defaults;
+  }
+
+  const candidate = rawProfiles as Record<string, unknown>;
+  const normalized = { ...defaults };
+  (Object.keys(defaults) as ProviderId[]).forEach((provider) => {
+    const raw = candidate[provider];
+    if (!raw || typeof raw !== 'object') return;
+    const current = raw as Partial<ProviderProfile>;
+
+    normalized[provider] = {
+      apiKey: typeof current.apiKey === 'string' ? current.apiKey : defaults[provider].apiKey,
+      baseUrl:
+        typeof current.baseUrl === 'string' && current.baseUrl.trim().length > 0
+          ? current.baseUrl
+          : defaults[provider].baseUrl,
+      model:
+        typeof current.model === 'string' && current.model.trim().length > 0
+          ? current.model
+          : defaults[provider].model,
+    };
+  });
+
+  return normalized;
+}
+
+function normalizeLLMConfig(raw: unknown): LLMConfig {
+  const defaults = createDefaultProviderProfiles();
+  if (!raw || typeof raw !== 'object') {
+    return { ...DEFAULT_LLM_CONFIG, providerProfiles: defaults };
+  }
+
+  const llmRaw = raw as Record<string, unknown>;
+  const hasNewShape = 'activeProvider' in llmRaw && 'providerProfiles' in llmRaw;
+  if (hasNewShape) {
+    return {
+      activeProvider: isProviderId(llmRaw.activeProvider) ? llmRaw.activeProvider : 'openai',
+      providerProfiles: normalizeProviderProfiles(llmRaw.providerProfiles),
+      temperature: clampTemperature(llmRaw.temperature),
+    };
+  }
+
+  // Legacy shape migration: provider + apiKey/baseUrl/model + providers cache.
+  const activeProvider = isProviderId(llmRaw.provider) ? llmRaw.provider : 'openai';
+  const providerProfiles = normalizeProviderProfiles(llmRaw.providers);
+  providerProfiles[activeProvider] = {
+    apiKey: typeof llmRaw.apiKey === 'string' ? llmRaw.apiKey : providerProfiles[activeProvider].apiKey,
+    baseUrl:
+      typeof llmRaw.baseUrl === 'string' && llmRaw.baseUrl.trim().length > 0
+        ? llmRaw.baseUrl
+        : providerProfiles[activeProvider].baseUrl,
+    model:
+      typeof llmRaw.model === 'string' && llmRaw.model.trim().length > 0
+        ? llmRaw.model
+        : providerProfiles[activeProvider].model,
+  };
+
+  return {
+    activeProvider,
+    providerProfiles,
+    temperature: clampTemperature(llmRaw.temperature),
+  };
+}
+
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
-      llmConfig: {
-        provider: 'openai',
-        apiKey: '',
-        baseUrl: 'https://api.openai.com/v1',
-        model: 'gpt-4o',
-        temperature: 0.7,
-        providers: DEFAULT_PROVIDERS,
-      },
+      llmConfig: DEFAULT_LLM_CONFIG,
       activeTab: 'upload', // 'upload' | 'contrast' | 'fusion'
       selectedNovelId: null,
       selectedChapterId: null,
-      setLlmConfig: (config) =>
+      setActiveProvider: (provider) =>
         set((state) => {
-          const updatedConfig = { ...state.llmConfig, ...config };
-
-          // 如果切换了提供商，则自动载入目标提供商的配置
-          if (config.provider && config.provider !== state.llmConfig.provider) {
-            const nextProv = updatedConfig.providers[config.provider] || { apiKey: '', baseUrl: '', model: '' };
-            updatedConfig.apiKey = nextProv.apiKey;
-            updatedConfig.baseUrl = nextProv.baseUrl;
-            updatedConfig.model = nextProv.model;
-          } else {
-            // 如果是编辑当前配置字段，则静默同步回当前提供商的缓存
-            const curProv = updatedConfig.provider || 'custom';
-            updatedConfig.providers = {
-              ...updatedConfig.providers,
-              [curProv]: {
-                apiKey: updatedConfig.apiKey,
-                baseUrl: updatedConfig.baseUrl,
-                model: updatedConfig.model,
-              },
-            };
-          }
-
-          return { llmConfig: updatedConfig };
+          if (provider === state.llmConfig.activeProvider) return state;
+          return {
+            llmConfig: {
+              ...state.llmConfig,
+              activeProvider: provider,
+            },
+          };
         }),
+      updateActiveProviderProfile: (patch) =>
+        set((state) => {
+          const provider = state.llmConfig.activeProvider;
+          const prevProfile = state.llmConfig.providerProfiles[provider];
+          const nextProfile: ProviderProfile = {
+            apiKey: typeof patch.apiKey === 'string' ? patch.apiKey : prevProfile.apiKey,
+            baseUrl: typeof patch.baseUrl === 'string' ? patch.baseUrl : prevProfile.baseUrl,
+            model: typeof patch.model === 'string' ? patch.model : prevProfile.model,
+          };
+          return {
+            llmConfig: {
+              ...state.llmConfig,
+              providerProfiles: {
+                ...state.llmConfig.providerProfiles,
+                [provider]: nextProfile,
+              },
+            },
+          };
+        }),
+      setTemperature: (temperature) =>
+        set((state) => ({
+          llmConfig: {
+            ...state.llmConfig,
+            temperature: clampTemperature(temperature),
+          },
+        })),
       setActiveTab: (tab) => set({ activeTab: tab }),
       setSelectedNovelId: (id) => set({ selectedNovelId: id, selectedChapterId: null }),
       setSelectedChapterId: (id) => set({ selectedChapterId: id }),
     }),
     {
       name: 'novel-fusion-store', // name of the item in the storage (must be unique)
+      version: STORE_VERSION,
+      migrate: (persistedState) => {
+        if (!persistedState || typeof persistedState !== 'object') return persistedState;
+        const state = persistedState as {
+          llmConfig?: unknown;
+          activeTab?: unknown;
+          selectedNovelId?: unknown;
+          selectedChapterId?: unknown;
+        };
+        return {
+          ...persistedState,
+          llmConfig: normalizeLLMConfig(state.llmConfig),
+        };
+      },
     }
   )
 );

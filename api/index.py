@@ -42,6 +42,7 @@ MAX_OUTLINE_INPUT_CHARS = 100000
 MAX_GENERATION_INPUT_CHARS = 120000
 RATE_LIMIT_RULES = {
     "/api/py/test-connection": (60, 20),
+    "/api/py/list-models": (60, 20),
     "/api/py/parse-chapter": (60, 30),
     "/api/py/generate-outline": (60, 12),
     "/api/py/generate-text": (60, 12),
@@ -84,6 +85,11 @@ class ParseChapterInput(BaseModel):
     baseUrl: str = Field(..., min_length=1, max_length=512)
     model: str = Field(..., min_length=1, max_length=200)
     temperature: float = Field(default=0.7, ge=0.0, le=1.5)
+
+
+class ListModelsInput(BaseModel):
+    apiKey: str = Field(default="", max_length=512)
+    baseUrl: str = Field(..., min_length=1, max_length=512)
 
 
 def error_payload(code: str, message: str) -> dict:
@@ -292,6 +298,32 @@ async def test_connection(data: TestConnectionInput, request: Request):
         status_code, _, friendly_msg = classify_openai_error(exc)
         latency = int((time.time() - start_time) * 1000)
         return {"success": False, "message": friendly_msg, "latency": latency, "statusCode": status_code}
+
+
+@app.post("/api/py/list-models")
+async def list_models(data: ListModelsInput, request: Request):
+    await ensure_rate_limit(request, "/api/py/list-models")
+    normalized_base_url = validate_base_url(data.baseUrl)
+    api_key = sanitize_text(data.apiKey) or "local-llm"
+    logger.info("list_models ip=%s base_url=%s", get_client_ip(request), normalized_base_url)
+
+    try:
+        client = build_openai_client(api_key, normalized_base_url, timeout=10.0)
+        models_page = await client.models.list()
+        model_ids: list[str] = []
+        for item in getattr(models_page, "data", []) or []:
+            model_id = getattr(item, "id", None)
+            if isinstance(model_id, str):
+                cleaned = model_id.strip()
+                if cleaned:
+                    model_ids.append(cleaned)
+        deduped = sorted(set(model_ids))
+        return {"models": deduped, "message": "ok"}
+    except Exception as exc:
+        status_code, code, message = classify_openai_error(exc)
+        if code in {"model_or_endpoint_not_found", "bad_request"}:
+            message = "当前服务暂不支持自动拉取模型列表，请手动输入模型名称。"
+        raise ApiError(status_code=status_code, code=code, message=message) from exc
 
 
 @app.post("/api/py/parse-chapter")
