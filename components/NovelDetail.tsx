@@ -117,9 +117,9 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
       </div>
 
       {/* Right: DNA board */}
-      <div className="flex-1 min-w-0 overflow-y-auto">
+      <div className="flex-1 min-w-0 overflow-y-auto flex flex-col min-h-0">
         {!dnaReady ? (
-          <div className="h-full flex items-center justify-center p-6">
+          <div className="flex-1 flex items-center justify-center p-6 min-h-0">
             <div className="dna-breathe linear-card rounded-xl p-8 max-w-xl text-center flex flex-col items-center gap-5">
               <div className="p-3 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400">
                 <Sparkles className="w-6 h-6" />

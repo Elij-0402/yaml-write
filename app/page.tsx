@@ -69,7 +69,7 @@ export default function Home() {
     : '导入新书';
 
   return (
-    <main className="min-h-screen bg-[#0c0c0e] text-zinc-100 flex font-sans overflow-hidden">
+    <main className="h-screen bg-[#0c0c0e] text-zinc-100 flex font-sans overflow-hidden">
       {/* Sidebar */}
       <aside className="w-[260px] bg-[#08080a] linear-border-r flex flex-col z-30 select-none">
         <div className="h-[60px] linear-border-b px-4 flex items-center gap-2.5">
@@ -168,7 +168,7 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto min-h-0 p-6 md:p-8 flex flex-col">
+        <div className="flex-1 overflow-hidden p-6 md:p-8 flex flex-col">
           <div className="flex-1 flex flex-col w-full max-w-[1500px] mx-auto min-h-0">
             {workshopOpen ? (
               <FusionWorkshop />
