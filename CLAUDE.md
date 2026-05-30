@@ -42,7 +42,13 @@ The store also holds view state: `selectedNovelId`, `workshopOpen` (show `Fusion
 ### Backend hardening (`api/index.py`)
 
 Because the backend proxies user-supplied keys to arbitrary base URLs, it is deliberately defensive — keep these when editing:
-- **Per-IP rate limiting** (`ensure_rate_limit` + `RATE_LIMIT_RULES`) with sliding windows per endpoint.
+- **Per-IP rate limiting** (`ensure_rate_limit` + `RATE_LIMIT_RULES`) with sliding windows (60s) per endpoint based on IP address extracted from `x-forwarded-for` (primary) or client host:
+  - `/api/py/extract-chapter-map`: 120 requests / 60s
+  - `/api/py/extract-book-reduce`: 10 requests / 60s
+  - `/api/py/generate-fusion-directions`: 8 requests / 60s
+  - `/api/py/tweak-fusion-blocks`: 20 requests / 60s
+  - `/api/py/generate-storyboard`: 12 requests / 60s
+  - `/api/py/stream-scene-text`: 12 requests / 60s
 - **SSRF guard** (`normalize_base_url` / `validate_base_url` + `DEFAULT_ALLOWED_BASE_URLS`): base URL must be in the allowlist (extendable via `ALLOWED_LLM_BASE_URLS` env), HTTP is only allowed for loopback, private/link-local/etc. IPs are blocked, local hosts only on whitelisted ports (Ollama 11434).
 - **Structured errors**: `classify_openai_error` maps OpenAI SDK exceptions to friendly Chinese `ApiError`s; all responses use `{error: {code, message}}`. Don't leak raw upstream errors.
 
@@ -55,10 +61,17 @@ The DNA/fusion data shapes live on both sides and **must match field-for-field (
 All splitting happens in the browser in `components/NovelUploader.tsx` — the backend never sees raw novels.
 
 - **Strategies** (`STRATEGY_REGEX` + `auto_v2`/`custom`): `zh_strict`, `zh_extended`, `mixed`, `en_basic`, `custom`. All regexes match a **single-line** chapter title (`m` flag, no cross-line). `auto_v2` (default on upload) runs every base strategy plus `V2_EXTRA_REGEX`, scores each candidate, and picks the best via `selectBetterCandidate` (confidence → chapter count → max-chapter ratio → short-chapter ratio).
-- **Quality scoring** (`evaluateSplitQuality`): `titleHitRate`, `continuityScore` (chapter-number monotonicity via `parseChineseNumber`/`extractChapterNumber`), and `distributionScore` combine into `confidence` (0–1) → `confidenceLevel` → `splitStatus` becomes `'needs_review'` when low. This scoring is **internal only** — it drives the `auto_v2` winner pick and the `needs_review` flag. It is **not** surfaced in the UI: the readiness banner shows just chapter count + avg chars, and (when `splitStatus === 'needs_review'`) a "建议重新切分" hint. The full `splitMeta` (confidence/metrics/reviewReasons) is still persisted on the novel but not displayed.
+- **Quality scoring** (`evaluateSplitQuality`): Computes multiple distinct metrics for candidate evaluation:
+  - `titleHitRate`: Fraction of chapters whose titles contain a parseable, well-formed chapter number (matched via `extractChapterNumber` / `parseChineseNumber`).
+  - `continuityScore`: Monotonicity score of parsed chapter numbers. Consecutive increases of 1 get `1.0` weight, gaps of 2–3 get `0.6` weight, duplicates get `0.2` weight, and other jumps or failures get `0.0`. Returns `null` if no pairs exist.
+  - `distributionScore`: Evaluates chapter lengths and counts. Optimal average size is 300–9000 characters. Incorporates penalty scores for excessive maximum size ratios and high ratios of short chapters (<300 characters).
+  - `confidence`: Weighted average of the above scores: `distributionScore` (45%), `titleHitRate` (25%), and `continuityScore` (30%, if available; if not, weights adjust to distribution 64% / title 36%).
+  - `confidenceLevel`: Resolves to `'high'` (`>= 0.8`), `'medium'` (`>= 0.58`), or `'low'` (`< 0.58`).
+  - `splitStatus`: Becomes `'needs_review'` if `confidenceLevel === 'low'`, else `'ok'`.
+  This scoring is **internal only** — it drives the `auto_v2` winner pick and the `needs_review` flag. It is **not** surfaced in the UI: the readiness banner shows just chapter count + avg chars, and (when `splitStatus === 'needs_review'`) a "建议重新切分" hint. The full `splitMeta` (confidence/metrics/reviewReasons) is still persisted on the novel but not displayed.
 - **Re-split / repair** (`runResplit`, the 一键智能重切 / 高级修复 UI): re-split with `auto_v2`, another strategy, or a custom regex. **This reuses the persisted `sourceTextCleaned` and deletes every chapter plus its analysis** before rebuilding — so always populate `sourceTextCleaned` on upload. Custom regexes are validated to be single-line (`validateLineRegex`) and have `g`/`y` flags stripped.
 - **Cleaning** (`cleanText`/`cleanLine`): strips piracy-site watermarks, ad URLs, and HTML entities *before* splitting; the removed-char count surfaces as `purifiedCount`.
-- **Encoding** (`detectEncoding`): `jschardet` on the first 50KB; GBK/GB2312/Windows-936 normalize to GB18030, UTF-16 to UTF-16LE. If UTF-8 decoding yields >1% replacement chars (`�`), it retries as GB18030. Chinese novels in the wild are frequently GBK — do not assume UTF-8.
+- **Encoding** (`detectEncoding`): `jschardet` on the first 50KB; GBK/GB2312/Windows-936 normalize to GB18030, UTF-16 to UTF-16LE. If UTF-8 decoding yields >1% replacement chars (``), it retries as GB18030. Chinese novels in the wild are frequently GBK — do not assume UTF-8.
 - **Large files**: max upload 50MB; files >20MB are read in 512KB chunks with a streaming `TextDecoder`; `ensureStorageCapacity` pre-checks `navigator.storage.estimate()`.
 
 ### Book-level DNA: Map-Reduce endpoints + resumable runner
@@ -86,7 +99,22 @@ Reasoning models (DeepSeek R1 / `*reasoner*`) may not support the tool-call/stru
 
 ### Local persistence — Dexie / IndexedDB (versioned)
 
-`app/db.ts` defines `NovelFusionDB` with `novels` and `chapters` tables, currently at **schema version 5** (with `.upgrade()` migrations). Any change to the `Novel`/`Chapter` shape requires a new `this.version(n).stores(...).upgrade(...)` block — don't mutate existing version definitions. v5 added the book-level DNA fields: `Novel.analysisStatus` / `mapProgress` / `dnaCard` and `Chapter.mapStatus` / `mapSummary` (both the DNA data and the deprecated `analysis` are stored **inline** on their rows, not in a separate table). There is no server-side database. Components read reactively via `useLiveQuery` (`dexie-react-hooks`); mutations through `db.chapters.update(...)` propagate to all live queries automatically.
+`app/db.ts` defines `NovelFusionDB` with versioned schemas and sequential `.upgrade()` migrations:
+- **`version(1)`**: Defines initial schema.
+  - `novels`: `'id, name, createdAt'`
+  - `chapters`: `'id, novelId, chapterIndex, status'`
+- **`version(2)`**: Adds `splitStatus` to `novels` (defaults to `'ok'`) and initializes `sourceTextCleaned` to empty string if missing.
+  - `novels`: `'id, name, createdAt, splitStatus'`
+- **`version(3)`**: Ensures `splitMeta` sub-fields (confidence, confidenceLevel, reviewReasons, selectionMode, winnerStrategyId, engineVersion) are populated and well-typed.
+- **`version(4)`**: Normalizes legacy synthetic `splitMeta` structures and sets a valid numeric timestamp in `updatedAt`.
+- **`version(5)`**: Introduces book-level Map-Reduce DNA fields.
+  - `novels` table schema includes `analysisStatus` (indexable, defaults to `'idle'`), `mapProgress` (`{total, current}`), and `dnaCard` (`NovelDNACard | null`).
+  - `chapters` table schema includes `mapStatus` (indexable, defaults to `'pending'`) and `mapSummary` (`ChapterMapSummary`).
+  - Schema registry updated to:
+    - `novels`: `'id, name, createdAt, splitStatus, analysisStatus'`
+    - `chapters`: `'id, novelId, chapterIndex, status, mapStatus'`
+
+Any change to the `Novel`/`Chapter` shape requires a new `this.version(n).stores(...).upgrade(...)` block — don't mutate existing version definitions. There is no server-side database. Components read reactively via `useLiveQuery` (`dexie-react-hooks`); mutations through `db.chapters.update(...)` propagate to all live queries automatically.
 
 ## Navigation & components
 
