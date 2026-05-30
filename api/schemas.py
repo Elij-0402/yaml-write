@@ -1,37 +1,153 @@
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional, Dict
 
-class Character(BaseModel):
-    name: str = Field(..., description="角色的姓名")
-    personality: str = Field(..., description="角色的性格特征、脾气秉性")
-    appearance: str = Field(..., description="角色的外貌、穿着、体型等特征")
-    coreConflict: str = Field(..., description="角色的核心矛盾冲突、内在驱动力")
-    chapters: str = Field(..., description="角色主要出场的章节")
+MAX_CHAPTER_CONTENT_CHARS = 30000
 
-class Relationship(BaseModel):
-    roleA: str = Field(..., description="角色A姓名")
-    roleB: str = Field(..., description="角色B姓名")
-    description: str = Field(..., description="角色A与角色B之间的关系描述（如：师徒、情侣、劲敌）")
+# ============================================================
+# 阶段一：单章 Map 提取
+# ============================================================
+class ChapterMapSummaryResponse(BaseModel):
+    worldviewUpdates: str = Field(..., description="本章新展现的底层设定规则、地图、力量体系变化。若无，请写'无'。")
+    keyPlotTurns: str = Field(..., description="本章发生的重大情节转折、核心矛盾进展（两句话以内）。")
+    characterDevelopments: str = Field(..., description="本章涉及角色的内心变化、新动机或新关系（极简白描）。")
+    styleObservations: str = Field(..., description="本章独特的遣词造句或叙事语调特征。")
 
-class ChapterAnalysis(BaseModel):
-    worldview: str = Field(..., description="本章展现或补充的世界观设定、背景设定、特殊规则")
-    plotSkeleton: str = Field(..., description="本章的核心剧情走向、骨架、转折点")
-    characters: List[Character] = Field(..., description="本章出场的角色及其详细设定列表")
-    relationships: List[Relationship] = Field(..., description="本章中体现或发生变化的角色关系网络")
-    style: str = Field(..., description="本章展现出的叙事风格、语言特色、基调（如：冷峻、幽默、热血）")
 
-class OutlineInput(BaseModel):
-    selectedChapters: List[dict] = Field(..., description="选中的多章解析结构列表")
-    fusionPrompt: str = Field(..., description="用户的融合指令/要求")
-    apiKey: str = Field(..., description="大模型 API 密钥")
-    baseUrl: str = Field(..., description="大模型 API Base URL")
-    model: str = Field(..., description="所选的模型名称")
-    temperature: float = Field(0.7, ge=0.0, le=1.5, description="采样温度")
+class ChapterMapInput(BaseModel):
+    title: str = Field(..., min_length=1, max_length=300)
+    content: str = Field(..., min_length=1, max_length=MAX_CHAPTER_CONTENT_CHARS)
+    apiKey: str = Field(..., min_length=1, max_length=512)
+    baseUrl: str = Field(..., min_length=1, max_length=512)
+    model: str = Field(..., min_length=1, max_length=200)
+    temperature: float = Field(0.7, ge=0.0, le=1.5)
 
-class GenerationInput(BaseModel):
-    outline: str = Field(..., description="微调后的融合大纲")
-    fusionPrompt: str = Field(..., description="用户的融合指令/要求")
-    apiKey: str = Field(..., description="大模型 API 密钥")
-    baseUrl: str = Field(..., description="大模型 API Base URL")
-    model: str = Field(..., description="所选的模型名称")
-    temperature: float = Field(0.7, ge=0.0, le=1.5, description="采样温度")
+
+# ============================================================
+# 阶段二：全书 DNA 卡片 (Reduce)
+# ============================================================
+class NovelDNACardResponse(BaseModel):
+    theme: str = Field(..., description="底层母题与核心冲突（充满张力与文学隐喻的表述）")
+    worldview: str = Field(..., description="世界观底层运行规则与代价体系（逻辑自洽且深刻）")
+    characters: str = Field(..., description="核心角色灵魂原型（刻画其矛盾性与致命缺陷）")
+    narrativeStyle: str = Field(..., description="叙事结构特征与视角排布规律")
+    styleFingerprint: str = Field(..., description="文字指纹（如：语言颗粒度、冷白描特征、意象风格）")
+
+
+class ChapterMapItem(BaseModel):
+    worldviewUpdates: str = ""
+    keyPlotTurns: str = ""
+    characterDevelopments: str = ""
+    styleObservations: str = ""
+
+
+class BookReduceInput(BaseModel):
+    novelName: str = Field("", max_length=300)
+    mapSummaries: List[ChapterMapItem] = Field(..., min_length=1)
+    apiKey: str = Field(..., min_length=1, max_length=512)
+    baseUrl: str = Field(..., min_length=1, max_length=512)
+    model: str = Field(..., min_length=1, max_length=200)
+    temperature: float = Field(0.7, ge=0.0, le=1.5)
+
+
+# ============================================================
+# 阶段三：创意融合方向（3 个绝对不同的原创方向）
+# ============================================================
+class FusionDirection(BaseModel):
+    title: str = Field(..., description="变体创意方向标题")
+    concept: str = Field(..., description="核心变体创意理念（一句话震撼人心的冲突描述）")
+    catalyst: str = Field(..., description="注入的催化变量及其产生的质变")
+    worldviewBlock: str = Field(..., description="融合与重塑后的世界观设定")
+    protagonistBlock: str = Field(..., description="融合与重塑后的主角设定")
+    antagonistBlock: str = Field(..., description="融合与重塑后的对手/阻碍设定")
+    narrativeTone: str = Field(..., description="全新的文本风格基调建议")
+
+
+class FusionDirectionsResponse(BaseModel):
+    directions: List[FusionDirection] = Field(..., min_length=3, max_length=3)
+
+
+class DNACardItem(BaseModel):
+    novelName: str = ""
+    theme: str = ""
+    worldview: str = ""
+    characters: str = ""
+    narrativeStyle: str = ""
+    styleFingerprint: str = ""
+
+
+class FusionDirectionsInput(BaseModel):
+    dnaCards: List[DNACardItem] = Field(..., min_length=1)
+    userCustomPrompt: Optional[str] = Field(None, max_length=2000)
+    adversarialRules: Optional[str] = Field(None, max_length=2000)
+    apiKey: str = Field(..., min_length=1, max_length=512)
+    baseUrl: str = Field(..., min_length=1, max_length=512)
+    model: str = Field(..., min_length=1, max_length=200)
+    temperature: float = Field(0.7, ge=0.0, le=1.5)
+
+
+# ============================================================
+# 阶段三点五：全局 Command 调整（仅返回被修改的积木）
+# ============================================================
+class TweakBlocksResponse(BaseModel):
+    modifiedBlocks: List[str] = Field(..., description="发生修改的积木 ID：worldviewBlock/protagonistBlock/antagonistBlock/narrativeTone")
+    worldviewBlock: Optional[str] = None
+    protagonistBlock: Optional[str] = None
+    antagonistBlock: Optional[str] = None
+    narrativeTone: Optional[str] = None
+
+
+class TweakBlocksInput(BaseModel):
+    worldviewBlock: str = ""
+    protagonistBlock: str = ""
+    antagonistBlock: str = ""
+    narrativeTone: str = ""
+    userInstruction: str = Field(..., min_length=1, max_length=2000)
+    adversarialRules: Optional[str] = Field(None, max_length=2000)
+    apiKey: str = Field(..., min_length=1, max_length=512)
+    baseUrl: str = Field(..., min_length=1, max_length=512)
+    model: str = Field(..., min_length=1, max_length=200)
+    temperature: float = Field(0.7, ge=0.0, le=1.5)
+
+
+# ============================================================
+# 阶段四 & 五：分镜故事板 / 分镜正文
+# ============================================================
+class SelectedDirection(BaseModel):
+    title: str = ""
+    worldviewBlock: str = ""
+    protagonistBlock: str = ""
+    antagonistBlock: str = ""
+    narrativeTone: str = ""
+
+
+class StoryboardScene(BaseModel):
+    sceneNumber: int = Field(..., description="场景序号")
+    sceneTitle: str = Field(..., description="场景标题")
+    plotOutline: str = Field(..., description="本场景核心情节走向及爽点/爆点")
+    tensionLevel: str = Field(..., description="张力曲线（如：低开高走、情绪爆发、悬疑冷场）")
+    visualCues: str = Field(..., description="画面感与环境意象指示")
+
+
+class StoryboardResponse(BaseModel):
+    scenes: List[StoryboardScene] = Field(...)
+
+
+class StoryboardInput(BaseModel):
+    selectedDirection: SelectedDirection
+    sceneCount: int = Field(3, ge=1, le=8)
+    adversarialRules: Optional[str] = Field(None, max_length=2000)
+    apiKey: str = Field(..., min_length=1, max_length=512)
+    baseUrl: str = Field(..., min_length=1, max_length=512)
+    model: str = Field(..., min_length=1, max_length=200)
+    temperature: float = Field(0.7, ge=0.0, le=1.5)
+
+
+class SceneTextInput(BaseModel):
+    selectedDirection: SelectedDirection
+    currentScene: StoryboardScene
+    precedingTexts: Dict[int, str] = Field(default_factory=dict)
+    adversarialRules: Optional[str] = Field(None, max_length=2000)
+    apiKey: str = Field(..., min_length=1, max_length=512)
+    baseUrl: str = Field(..., min_length=1, max_length=512)
+    model: str = Field(..., min_length=1, max_length=200)
+    temperature: float = Field(0.7, ge=0.0, le=1.5)

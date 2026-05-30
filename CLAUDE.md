@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-A Chinese-language novel parsing and creative-fusion tool ("小说解析与创意融合助手"). Pipeline: users upload `.txt` novels → the **client** splits them into chapters → an LLM extracts structured per-chapter analysis (worldview, plot skeleton, characters, relationships, style) → results persist in the browser → users compare chapters side-by-side and fuse multiple parsed chapters into a new outline and full prose.
+A Chinese-language novel **creative-DNA & fusion** tool ("创作 DNA 工坊"). Pipeline: users upload `.txt` novels → the **client** splits them into chapters → a book-level **Map-Reduce** extracts each chapter's creative mutations (Map) and folds them into one whole-book creative-DNA card (Reduce) → users collide 1+ DNA-ready novels into 3 original fusion directions → tweak the 4 setting blocks through a command bar → generate a storyboard → stream chained scene prose. Everything persists in the browser (IndexedDB).
 
 The whole UI is in Chinese. The app lives in `yaml-write/` (the Next.js root holding `package.json`, `app/`, `api/`, `components/`).
 
@@ -37,7 +37,7 @@ Interactive API docs (dev): `http://localhost:3000/api/py/docs` or `http://local
 
 `llmConfig` shape: `activeProvider` (a `ProviderId`) + `providerProfiles` — a `Record<ProviderId, {apiKey, baseUrl, model}>` for `openai`/`deepseek`/`gemini`/`siliconflow`/`ollama`/`custom` (see `app/llmProviders.ts`) — plus a flat `temperature`. Two setters: `setActiveProvider(id)` switches the active provider; `updateActiveProviderProfile(patch)` patches the **active** provider's profile. The active provider's profile is the source of truth sent to the backend; `app/llmClient.ts` (`withLlmPayload` / `postWithLlmConfig` / `ensureLlmConfigReady` / `readApiErrorMessage`) is the single network helper — route new LLM calls through it. API keys for *all* configured providers persist in LocalStorage. (`temperature` is sent and clamped to 0–1.5 but currently has no UI control; it stays at the 0.7 default.)
 
-The store also holds cross-component selection state: `activeTab` (`'upload'|'contrast'|'fusion'`), `selectedNovelId`, `selectedChapterId` (setting a novel clears the chapter), and `fusionSeedChapterIds` — a **one-shot handoff**: ContrastBoard writes the compared chapters into it and switches to the fusion tab; FusionEditor consumes it on mount (pre-selects those chapters) and immediately clears it.
+The store also holds view state: `selectedNovelId`, `workshopOpen` (show `FusionWorkshop`), and `manageMode` (show `NovelUploader`'s chapter list + re-split for the selected novel). `setSelectedNovelId` resets both flags. There are **no tabs** and no cross-component chapter handoff — the right pane is chosen entirely from these three flags in `app/page.tsx` (see Navigation & components).
 
 ### Backend hardening (`api/index.py`)
 
@@ -46,9 +46,9 @@ Because the backend proxies user-supplied keys to arbitrary base URLs, it is del
 - **SSRF guard** (`normalize_base_url` / `validate_base_url` + `DEFAULT_ALLOWED_BASE_URLS`): base URL must be in the allowlist (extendable via `ALLOWED_LLM_BASE_URLS` env), HTTP is only allowed for loopback, private/link-local/etc. IPs are blocked, local hosts only on whitelisted ports (Ollama 11434).
 - **Structured errors**: `classify_openai_error` maps OpenAI SDK exceptions to friendly Chinese `ApiError`s; all responses use `{error: {code, message}}`. Don't leak raw upstream errors.
 
-### Two duplicated schema definitions — keep in sync
+### Duplicated schema definitions — keep in sync
 
-**`ChapterAnalysis` (+ `Character`, `Relationship`)** is defined twice: `api/schemas.py` (Pydantic, drives `instructor` extraction) **and** `app/db.ts` (TypeScript, drives storage + UI). Field names must match exactly across both.
+The DNA/fusion data shapes live on both sides and **must match field-for-field (all camelCase)**: `api/schemas.py` (Pydantic, drives `instructor` extraction) ↔ `app/db.ts` + `components/FusionWorkshop.tsx` (TypeScript, drives storage + UI). Synced shapes: `ChapterMapSummary`, `NovelDNACard`, and the fusion `FusionDirection` / `StoryboardScene` / tweak-block shapes. Legacy **`ChapterAnalysis` (+ `Character`, `Relationship`)** now lives **only** in `app/db.ts` as a deprecated, retained field (`Chapter.analysis?`, kept for zero data loss) — the backend no longer has a matching model.
 
 ### Client-side chapter-splitting engine (V2)
 
@@ -61,28 +61,43 @@ All splitting happens in the browser in `components/NovelUploader.tsx` — the b
 - **Encoding** (`detectEncoding`): `jschardet` on the first 50KB; GBK/GB2312/Windows-936 normalize to GB18030, UTF-16 to UTF-16LE. If UTF-8 decoding yields >1% replacement chars (`�`), it retries as GB18030. Chinese novels in the wild are frequently GBK — do not assume UTF-8.
 - **Large files**: max upload 50MB; files >20MB are read in 512KB chunks with a streaming `TextDecoder`; `ensureStorageCapacity` pre-checks `navigator.storage.estimate()`.
 
-### Structured LLM extraction + server-side retry
+### Book-level DNA: Map-Reduce endpoints + resumable runner
 
-`api/index.py` `/parse-chapter` uses `instructor.from_openai(...)` with `response_model=ChapterAnalysis` to coerce output into Pydantic. It retries up to `MAX_PARSE_RETRIES` (2) times (3 attempts) with exponential backoff on transient errors (429/502/503/504); other errors become a friendly `ApiError`. Reasoning models (DeepSeek R1 / `*reasoner*`) may not support the tool-call/structured output this needs.
+The whole-book DNA and the fusion workshop are served by **6** `/api/py/` endpoints. Five are structured (they share `run_structured` → `instructor.from_openai` + transient retry: up to `MAX_PARSE_RETRIES` (2) extra attempts with exponential backoff on 429/502/503/504, then a friendly `ApiError`); one streams.
 
-`parseChaptersInParallel` in `NovelUploader.tsx` runs `PARSE_CONCURRENCY_LIMIT` (3) client-side concurrent workers pulling from a shared index (the backend has no client-side throttle — change concurrency here). Chapters over `MAX_CHAPTER_CONTENT_CHARS` (30000) are **rejected** before sending (and the backend enforces the same cap via Pydantic `max_length`) — they are *not* truncated; the user must re-split. On mount, chapters left in `status:'parsing'` from an interrupted session are reset to `'error'`.
+| Endpoint | Mode | response_model |
+|---|---|---|
+| `extract-chapter-map` | structured | `ChapterMapSummaryResponse` |
+| `extract-book-reduce` | structured | `NovelDNACardResponse` |
+| `generate-fusion-directions` | structured (one mega-prompt → 3 directions) | `FusionDirectionsResponse` |
+| `tweak-fusion-blocks` | structured (rewrites only the blocks the instruction hits) | `TweakBlocksResponse` |
+| `generate-storyboard` | structured | `StoryboardResponse` |
+| `stream-scene-text` | **SSE** | — |
 
-### Streaming endpoints (real SSE)
+Reasoning models (DeepSeek R1 / `*reasoner*`) may not support the tool-call/structured output `instructor` needs. The creation prompts share `ANTI_SLOP_CONSTRAINT` (a hard anti-cliché rule block), and callers may append free-text `adversarialRules`.
 
-`/generate-outline` and `/generate-text` return `StreamingResponse(..., media_type="text/event-stream")` and emit proper SSE frames via `sse_event(...)`: `event: delta|done|error` + `data: {json}`. The frontend (`FusionEditor.tsx`) consumes them with `response.body.getReader()` + `TextDecoder` and parses frames with `parseSseBuffer` (handles `event:`/`data:` lines, JSON payloads). Keep both sides in sync. Streaming also dodges Vercel's 10s serverless timeout on long generations — keep it for any new long-running LLM endpoint.
+`app/dnaEngine.ts` (`runDnaExtraction(novelId, {limit, signal})`) is the **resumable** Map-Reduce runner: `MAP_CONCURRENCY` (3) workers call `extract-chapter-map` per chapter and persist `mapStatus:'done'` + `mapSummary` immediately (so a refresh/crash never loses progress; re-running skips chapters already `done`). Once every chapter is mapped it folds the summaries into one `NovelDNACard` via `extract-book-reduce`. Progress lives on the novel (`analysisStatus`, `mapProgress`). `NovelDetail.tsx` drives it with an `AbortController` (暂停 = abort → `analysisStatus:'idle'`), exposing 全速提取（前100章）(`limit:100`) vs 深度全量提取 (`limit:undefined`).
+
+> **Vercel 10s note**: `extract-book-reduce` / `generate-fusion-directions` are single large non-streaming calls that can exceed the 10s serverless ceiling on slow models — run heavy extraction under `npm run dev` (local FastAPI, no timeout) or a non-Vercel deploy.
+
+### Streaming endpoint (real SSE)
+
+`stream-scene-text` returns `StreamingResponse(..., media_type="text/event-stream")` and emits SSE frames via `sse_event(...)`: `event: delta|done|error` + `data: {json}`. The frontend consumes it through the shared `streamSse(endpoint, payload, {onDelta, signal})` helper in `app/llmClient.ts` (its `parseSseBuffer` handles `event:`/`data:` framing + JSON payloads); `FusionWorkshop.tsx` uses it to stream each scene's prose, passing `precedingTexts` (the prior 1–2 generated scenes) for continuity. Route any new long-running LLM endpoint through SSE + `streamSse` — it also dodges Vercel's 10s serverless timeout.
 
 ### Local persistence — Dexie / IndexedDB (versioned)
 
-`app/db.ts` defines `NovelFusionDB` with `novels` and `chapters` tables, currently at **schema version 4** (with `.upgrade()` migrations). Any change to the `Novel`/`Chapter` shape requires a new `this.version(n).stores(...).upgrade(...)` block — don't mutate existing version definitions. Parsed `ChapterAnalysis` is stored **inline** on the `Chapter` row, not in a separate table. There is no server-side database. Components read reactively via `useLiveQuery` (`dexie-react-hooks`); mutations through `db.chapters.update(...)` propagate to all live queries automatically.
+`app/db.ts` defines `NovelFusionDB` with `novels` and `chapters` tables, currently at **schema version 5** (with `.upgrade()` migrations). Any change to the `Novel`/`Chapter` shape requires a new `this.version(n).stores(...).upgrade(...)` block — don't mutate existing version definitions. v5 added the book-level DNA fields: `Novel.analysisStatus` / `mapProgress` / `dnaCard` and `Chapter.mapStatus` / `mapSummary` (both the DNA data and the deprecated `analysis` are stored **inline** on their rows, not in a separate table). There is no server-side database. Components read reactively via `useLiveQuery` (`dexie-react-hooks`); mutations through `db.chapters.update(...)` propagate to all live queries automatically.
 
-## Tabs & components
+## Navigation & components
 
-`app/page.tsx` is `'use client'` and switches between three tabs by `activeTab` (Zustand) — no Next sub-routes, SSR is not meaningfully exercised. The sidebar nav is numbered `1 · 导入与解析库` / `2 · 横向对比面板` / `3 · 创意融合工坊` to signal the workflow order. `SettingsPanel` is a slide-over drawer.
+`app/page.tsx` is `'use client'` with **no tabs and no Next sub-routes** (SSR is not meaningfully exercised). The sidebar is the novel library (each row shows a DNA-status badge via `dnaBadge`); the right pane is chosen from three Zustand flags: `workshopOpen` → `<FusionWorkshop/>`; else `selectedNovelId && !manageMode` → `<NovelDetail/>`; else `<NovelUploader/>`. `SettingsPanel` is a slide-over drawer opened via the `open-settings-panel` window event.
 
-- **NovelUploader** — upload, clean, split (engine above), bulk/parallel LLM parsing, search + status-filter + pagination, and the re-split repair panel.
-- **ContrastBoard** — A/B side-by-side chapter comparison with **inline-editable** analysis (worldview/plot/style + add/delete characters & relationships), writing back to Dexie (edit dispatch keyed by strings like `char-0-personality` / `rel-1-description`). A top **「送入创意融合工坊」** button writes the loaded, parsed chapters into `fusionSeedChapterIds` and switches to the fusion tab.
-- **FusionEditor** — 3-step wizard: select parsed chapters (pre-seeded from ContrastBoard) + fusion prompt → edit the streamed outline → stream final prose (copy / download as TXT).
+- **NovelUploader** — upload, clean, split (engine above), the re-split repair panel, and a read-only searchable/paginated chapter list. It is both the landing page (no novel selected) and the manage view (`manageMode`). **Makes no LLM calls** — purely the splitting front-end.
+- **NovelDetail** — the selected novel's book-DNA board. Left: chapter list with `mapStatus` dots (pending/done/error + a spinner while mapping) and a 重切 button (`setManageMode(true)`). Right: either the DNA-extraction CTA (全速提取（前100章） / 深度全量提取 + a progress bar with 暂停) or, once `analysisStatus==='done'`, the 5 inline-editable DNA cards. Runs `runDnaExtraction` from `app/dnaEngine.ts`.
+- **FusionWorkshop** — the 3-step fusion funnel: 引力室 (pick 1+ DNA-ready novels + optional 自定义大方向 / 反套路红队约束 → `generate-fusion-directions`) → three direction cards → creator (the 4 setting blocks + a command bar `tweak-fusion-blocks`, cyan-pulsing the changed blocks → `generate-storyboard` → per-scene streamed prose with copy / save-as-TXT).
 - **SettingsPanel** — minimal slide-over: provider dropdown, API key (show/hide), Base URL, model (with `<datalist>` preset suggestions). Nothing else.
+
+(`ContrastBoard` and `FusionEditor` were removed in the DNA-workshop refactor.)
 
 ## Conventions
 

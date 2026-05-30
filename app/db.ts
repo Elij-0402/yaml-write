@@ -22,6 +22,25 @@ export interface ChapterAnalysis {
   style: string;
 }
 
+// === Book-level DNA (v5 Map-Reduce) — mirrors api/schemas.py (camelCase) ===
+export interface ChapterMapSummary {
+  worldviewUpdates: string;
+  keyPlotTurns: string;
+  characterDevelopments: string;
+  styleObservations: string;
+}
+
+export interface NovelDNACard {
+  theme: string;
+  worldview: string;
+  characters: string;
+  narrativeStyle: string;
+  styleFingerprint: string;
+}
+
+export type AnalysisStatus = 'idle' | 'mapping' | 'reducing' | 'done' | 'error';
+export type MapStatus = 'pending' | 'mapping' | 'done' | 'error';
+
 export type SplitStatus = 'ok' | 'needs_review';
 
 export type SplitStrategyId = 'auto_v2' | 'zh_strict' | 'zh_extended' | 'mixed' | 'en_basic' | 'custom';
@@ -65,6 +84,10 @@ export interface Novel {
   sourceTextCleaned: string;
   splitStatus: SplitStatus;
   splitMeta?: SplitMeta;
+  // v5 book-level DNA (Map-Reduce)
+  analysisStatus: AnalysisStatus;
+  mapProgress?: { total: number; current: number };
+  dnaCard?: NovelDNACard | null;
 }
 
 export interface Chapter {
@@ -75,10 +98,13 @@ export interface Chapter {
   wordCount: number;
   content: string;
   status: 'unparsed' | 'parsing' | 'done' | 'error';
-  analysis?: ChapterAnalysis;
+  analysis?: ChapterAnalysis; // deprecated since v5 — replaced by mapSummary
   errorMsg?: string;
   parsingSessionId?: string;
   parsingOwnerId?: string;
+  // v5 Map phase
+  mapStatus: MapStatus;
+  mapSummary?: ChapterMapSummary;
 }
 
 class NovelFusionDB extends Dexie {
@@ -191,6 +217,23 @@ class NovelFusionDB extends Dexie {
             engineVersion: meta.engineVersion || 'v1',
             updatedAt: typeof meta.updatedAt === 'number' ? meta.updatedAt : Date.now(),
           } as SplitMeta;
+        });
+      });
+    this.version(5)
+      .stores({
+        novels: 'id, name, createdAt, splitStatus, analysisStatus',
+        chapters: 'id, novelId, chapterIndex, status, mapStatus',
+      })
+      .upgrade(async (tx) => {
+        await tx.table('novels').toCollection().modify((novel: Partial<Novel>) => {
+          novel.analysisStatus = novel.analysisStatus || 'idle';
+          novel.mapProgress = novel.mapProgress || { total: 0, current: 0 };
+          if (novel.dnaCard === undefined) {
+            novel.dnaCard = null;
+          }
+        });
+        await tx.table('chapters').toCollection().modify((chapter: Partial<Chapter>) => {
+          chapter.mapStatus = chapter.mapStatus || 'pending';
         });
       });
   }

@@ -105,3 +105,21 @@
 .transition-linear {
   transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
+
+/* DNA extraction CTA — subtle breathing glow */
+@keyframes dnaBreathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); border-color: var(--border-dim); }
+  50% { box-shadow: 0 0 24px 0 rgba(245, 158, 11, 0.10); border-color: rgba(245, 158, 11, 0.25); }
+}
+.dna-breathe {
+  animation: dnaBreathe 3.2s ease-in-out infinite;
+}
+
+/* Fusion block updated — cyan pulse */
+@keyframes pulseCyan {
+  0% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.45); }
+  100% { box-shadow: 0 0 0 10px rgba(34, 211, 238, 0); }
+}
+.pulse-cyan {
+  animation: pulseCyan 1s cubic-bezier(0.16, 1, 0.3, 1);
+}

@@ -119,3 +119,92 @@ export async function readApiErrorMessage(response: Response, fallback = '接口
     return `${statusText} ${trimmed.slice(0, 120)}`;
   }
 }
+
+// === Shared SSE streaming consumer (event: delta|done|error frames from sse_event) ===
+interface SseEventPayload {
+  text?: string;
+  code?: string;
+  message?: string;
+}
+
+function parseSseBuffer(buffer: string): { events: { event: string; payload: SseEventPayload }[]; rest: string } {
+  const chunks = buffer.split('\n\n');
+  const rest = chunks.pop() ?? '';
+  const events: { event: string; payload: SseEventPayload }[] = [];
+
+  for (const rawChunk of chunks) {
+    const lines = rawChunk.split('\n');
+    let event = 'message';
+    let dataLine = '';
+    for (const line of lines) {
+      if (line.startsWith('event:')) {
+        event = line.slice(6).trim();
+      } else if (line.startsWith('data:')) {
+        dataLine += line.slice(5).trim();
+      }
+    }
+    if (!dataLine) continue;
+    try {
+      events.push({ event, payload: JSON.parse(dataLine) as SseEventPayload });
+    } catch {
+      events.push({ event: 'error', payload: { code: 'invalid_stream_payload', message: '流式返回格式异常。' } });
+    }
+  }
+
+  return { events, rest };
+}
+
+export interface StreamSseHandlers {
+  onDelta: (text: string) => void;
+  signal?: AbortSignal;
+}
+
+/**
+ * POST to a streaming endpoint and dispatch each `delta` text chunk to onDelta.
+ * Throws on a non-ok response, an `error` frame, or a stream that ends with no output.
+ */
+export async function streamSse<T extends Record<string, unknown>>(
+  endpoint: string,
+  payload: T,
+  handlers: StreamSseHandlers
+): Promise<void> {
+  const response = await postWithLlmConfig(endpoint, payload, { signal: handlers.signal });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error('未获取到流读取器');
+  }
+
+  const decoder = new TextDecoder('utf-8');
+  let done = false;
+  let buffer = '';
+  let gotDoneEvent = false;
+  let receivedDelta = false;
+
+  while (!done) {
+    const { value, done: readerDone } = await reader.read();
+    done = readerDone;
+    if (!value) continue;
+
+    buffer += decoder.decode(value, { stream: !done });
+    const parsed = parseSseBuffer(buffer);
+    buffer = parsed.rest;
+
+    for (const event of parsed.events) {
+      if (event.event === 'delta' && event.payload.text) {
+        receivedDelta = true;
+        handlers.onDelta(event.payload.text);
+      } else if (event.event === 'error') {
+        throw new Error(event.payload.message || '流式生成失败');
+      } else if (event.event === 'done') {
+        gotDoneEvent = true;
+      }
+    }
+  }
+
+  if (!gotDoneEvent && !receivedDelta) {
+    throw new Error('生成提前结束，请重试。');
+  }
+}

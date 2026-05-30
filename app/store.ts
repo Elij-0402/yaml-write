@@ -7,7 +7,7 @@ import {
   type ProviderProfile,
 } from './llmProviders';
 
-const STORE_VERSION = 2;
+const STORE_VERSION = 3;
 const DEFAULT_TEMPERATURE = 0.7;
 
 export interface LLMConfig {
@@ -24,16 +24,14 @@ const DEFAULT_LLM_CONFIG: LLMConfig = {
 
 interface AppState {
   llmConfig: LLMConfig;
-  activeTab: string; // 'upload' | 'contrast' | 'fusion'
   selectedNovelId: string | null;
-  selectedChapterId: string | null;
-  fusionSeedChapterIds: string[]; // one-shot handoff: chapters sent from ContrastBoard to FusionEditor
+  workshopOpen: boolean; // creative fusion workshop view
+  manageMode: boolean; // show NovelUploader (chapters + re-split) for the selected novel
   setActiveProvider: (provider: ProviderId) => void;
   updateActiveProviderProfile: (patch: Partial<ProviderProfile>) => void;
-  setActiveTab: (tab: string) => void;
   setSelectedNovelId: (id: string | null) => void;
-  setSelectedChapterId: (id: string | null) => void;
-  setFusionSeedChapterIds: (ids: string[]) => void;
+  setWorkshopOpen: (open: boolean) => void;
+  setManageMode: (on: boolean) => void;
 }
 
 function clampTemperature(value: unknown): number {
@@ -113,10 +111,9 @@ export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
       llmConfig: DEFAULT_LLM_CONFIG,
-      activeTab: 'upload', // 'upload' | 'contrast' | 'fusion'
       selectedNovelId: null,
-      selectedChapterId: null,
-      fusionSeedChapterIds: [],
+      workshopOpen: false,
+      manageMode: false,
       setActiveProvider: (provider) =>
         set((state) => {
           if (provider === state.llmConfig.activeProvider) return state;
@@ -146,25 +143,21 @@ export const useAppStore = create<AppState>()(
             },
           };
         }),
-      setActiveTab: (tab) => set({ activeTab: tab }),
-      setSelectedNovelId: (id) => set({ selectedNovelId: id, selectedChapterId: null }),
-      setSelectedChapterId: (id) => set({ selectedChapterId: id }),
-      setFusionSeedChapterIds: (ids) => set({ fusionSeedChapterIds: ids }),
+      setSelectedNovelId: (id) => set({ selectedNovelId: id, workshopOpen: false, manageMode: false }),
+      setWorkshopOpen: (open) => set({ workshopOpen: open }),
+      setManageMode: (on) => set({ manageMode: on }),
     }),
     {
       name: 'novel-fusion-store', // name of the item in the storage (must be unique)
       version: STORE_VERSION,
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState;
-        const state = persistedState as {
-          llmConfig?: unknown;
-          activeTab?: unknown;
-          selectedNovelId?: unknown;
-          selectedChapterId?: unknown;
-        };
+        const state = persistedState as Record<string, unknown>;
         return {
-          ...persistedState,
           llmConfig: normalizeLLMConfig(state.llmConfig),
+          selectedNovelId: typeof state.selectedNovelId === 'string' ? state.selectedNovelId : null,
+          workshopOpen: false,
+          manageMode: false,
         };
       },
     }

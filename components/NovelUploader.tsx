@@ -2,9 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Chapter, type Novel, type SplitConfidenceLevel, type SplitMeta, type SplitStatus, type SplitStrategyId, type WinnerStrategyId } from '../app/db';
 import { useAppStore } from '../app/store';
-import { AlertCircle, AlertTriangle, BookOpen, CheckCircle2, Cpu, Loader2, Pause, Play, Trash2, Upload, X, Eye, Sparkles, ChevronRight, FileText, RefreshCw, Layers, HelpCircle, Square, CircleX } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, CircleX, Loader2, Upload } from 'lucide-react';
 import jschardet from 'jschardet';
-import { ensureLlmConfigReady, postWithLlmConfig, readApiErrorMessage } from '../app/llmClient';
 
 const MAX_UPLOAD_SIZE_MB = 50;
 const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
@@ -12,9 +11,6 @@ const LARGE_FILE_THRESHOLD_BYTES = 20 * 1024 * 1024;
 const READ_CHUNK_SIZE_BYTES = 512 * 1024;
 const SHORT_CHAPTER_CHAR_LIMIT = 120;
 const DEFAULT_CUSTOM_REGEX = '^\\s*(第\\s*[零〇一二三四五六七八九十百千万两\\d]+\\s*[章节回卷篇幕节].*?)$';
-const MAX_CHAPTER_CONTENT_CHARS = 30000;
-const PARSE_CONCURRENCY_LIMIT = 3;
-const TAB_PARSE_OWNER_KEY = 'novel-fusion-parse-owner-id';
 const MAX_CUSTOM_REGEX_LENGTH = 300;
 const SPLIT_MATCH_LIMIT = 20000;
 const SPLIT_TIME_BUDGET_MS = 2000;
@@ -30,32 +26,6 @@ interface ConfirmDialogState {
   confirmText: string;
   danger?: boolean;
   onConfirm: () => Promise<void> | void;
-}
-
-interface BatchRunSnapshot {
-  active: boolean;
-  paused: boolean;
-  total: number;
-  done: number;
-  error: number;
-  inFlight: number;
-}
-
-interface BatchRunSummary {
-  total: number;
-  done: number;
-  error: number;
-  cancelled: boolean;
-  finishedAt: number;
-}
-
-function getOrCreateTabOwnerId(): string {
-  if (typeof window === 'undefined') return crypto.randomUUID();
-  const existing = sessionStorage.getItem(TAB_PARSE_OWNER_KEY);
-  if (existing) return existing;
-  const created = crypto.randomUUID();
-  sessionStorage.setItem(TAB_PARSE_OWNER_KEY, created);
-  return created;
 }
 
 type BaseStrategyId = Exclude<SplitStrategyId, 'custom' | 'auto_v2'>;
@@ -674,11 +644,12 @@ function chaptersToDbRows(novelId: string, parsedChapters: ParsedChapter[]): Cha
     wordCount: chapter.wordCount,
     content: chapter.content,
     status: 'unparsed',
+    mapStatus: 'pending',
   }));
 }
 
 export default function NovelUploader() {
-  const { selectedNovelId, setSelectedNovelId, selectedChapterId, setSelectedChapterId } = useAppStore();
+  const { selectedNovelId, setSelectedNovelId } = useAppStore();
 
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -689,7 +660,6 @@ export default function NovelUploader() {
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'unparsed' | 'parsing' | 'done' | 'error'>('all');
   const [currentPage, setCurrentPage] = useState(1);
 
   const [advancedRepairOpen, setAdvancedRepairOpen] = useState(false);
@@ -697,32 +667,7 @@ export default function NovelUploader() {
   const [repairRegex, setRepairRegex] = useState(DEFAULT_CUSTOM_REGEX);
   const [repairing, setRepairing] = useState(false);
 
-  // New states for slide-out Chapter Detail review drawer
-  const [activeDrawerChapterId, setActiveDrawerChapterId] = useState<string | null>(null);
-  const [drawerTab, setDrawerTab] = useState<'text' | 'analysis' | 'error'>('text');
-  const [batchRun, setBatchRun] = useState<BatchRunSnapshot>({
-    active: false,
-    paused: false,
-    total: 0,
-    done: 0,
-    error: 0,
-    inFlight: 0,
-  });
-  const [lastBatchSummary, setLastBatchSummary] = useState<BatchRunSummary | null>(null);
-
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const tabOwnerIdRef = useRef<string>(getOrCreateTabOwnerId());
-  const parseRunRef = useRef<{
-    id: string;
-    queue: Chapter[];
-    index: number;
-    paused: boolean;
-    cancelled: boolean;
-    inFlight: Set<string>;
-    done: Set<string>;
-    error: Set<string>;
-    controllers: Map<string, AbortController>;
-  } | null>(null);
 
   const novels = useLiveQuery<Novel[]>(() => db.novels.reverse().toArray(), []) || [];
   const chapters = useLiveQuery<Chapter[]>(() => {
@@ -741,53 +686,6 @@ export default function NovelUploader() {
 
   const needsSmartRepair = activeNovel?.splitStatus === 'needs_review';
 
-  const chapterStatusStats = useMemo(() => {
-    const total = chapters.length;
-    const done = chapters.filter((c) => c.status === 'done').length;
-    const parsing = chapters.filter((c) => c.status === 'parsing').length;
-    const error = chapters.filter((c) => c.status === 'error').length;
-    const unparsed = chapters.filter((c) => c.status === 'unparsed').length;
-    return { total, done, parsing, error, unparsed };
-  }, [chapters]);
-
-  const bulkStats = useMemo(() => {
-    if (!batchRun.active) return null;
-    const progress = batchRun.total > 0 ? Math.round((batchRun.done / batchRun.total) * 100) : 0;
-    return {
-      mode: 'active' as const,
-      total: batchRun.total,
-      done: batchRun.done,
-      parsing: batchRun.inFlight,
-      error: batchRun.error,
-      progress,
-      paused: batchRun.paused,
-      cancelled: false,
-    };
-  }, [batchRun]);
-
-  const batchSummaryStats = useMemo(() => {
-    if (!lastBatchSummary || batchRun.active) return null;
-    const resolved = Math.min(lastBatchSummary.total, lastBatchSummary.done + lastBatchSummary.error);
-    return {
-      mode: 'summary' as const,
-      total: lastBatchSummary.total,
-      done: lastBatchSummary.done,
-      parsing: 0,
-      error: lastBatchSummary.error,
-      progress: lastBatchSummary.total > 0 ? Math.round((resolved / lastBatchSummary.total) * 100) : 100,
-      paused: false,
-      cancelled: lastBatchSummary.cancelled,
-    };
-  }, [lastBatchSummary, batchRun.active]);
-
-  const batchPanelStats = bulkStats || batchSummaryStats;
-
-  // Retrieve selected chapter reactive entity for the drawer details
-  const drawerChapter = useMemo(() => {
-    if (!activeDrawerChapterId) return null;
-    return chapters.find((c) => c.id === activeDrawerChapterId) || null;
-  }, [chapters, activeDrawerChapterId]);
-
   const pushToast = (message: string, tone: ToastState['tone'] = 'info') => {
     setToast({ message, tone });
   };
@@ -795,43 +693,6 @@ export default function NovelUploader() {
   const resetChapterListView = () => {
     setCurrentPage(1);
     setSearchQuery('');
-    setStatusFilter('all');
-  };
-
-  const openSettingsPanel = () => {
-    window.dispatchEvent(new Event('open-settings-panel'));
-  };
-
-  const refreshBatchSnapshot = () => {
-    const run = parseRunRef.current;
-    if (!run) {
-      setBatchRun({
-        active: false,
-        paused: false,
-        total: 0,
-        done: 0,
-        error: 0,
-        inFlight: 0,
-      });
-      return;
-    }
-    const active = !run.cancelled && (run.index < run.queue.length || run.inFlight.size > 0);
-    setBatchRun({
-      active,
-      paused: run.paused && active,
-      total: run.queue.length,
-      done: run.done.size,
-      error: run.error.size,
-      inFlight: run.inFlight.size,
-    });
-  };
-
-  const ensureLlmReady = () => {
-    const readiness = ensureLlmConfigReady();
-    if (readiness.ok) return true;
-    pushToast(readiness.message || '请先完成模型配置。', 'error');
-    openSettingsPanel();
-    return false;
   };
 
   useEffect(() => {
@@ -839,42 +700,6 @@ export default function NovelUploader() {
     const timer = window.setTimeout(() => setToast(null), 2600);
     return () => window.clearTimeout(timer);
   }, [toast]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setActiveDrawerChapterId(null);
-      }
-    };
-    if (activeDrawerChapterId) {
-      window.addEventListener('keydown', onKeyDown);
-    }
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeDrawerChapterId]);
-
-  useEffect(() => {
-    const ownerId = tabOwnerIdRef.current;
-    const recoverStaleParsing = async () => {
-      const staleChapters = await db.chapters.where('status').equals('parsing').toArray();
-      const owned = staleChapters.filter((chapter) => chapter.parsingOwnerId === ownerId);
-      if (owned.length === 0) return;
-      await Promise.all(owned.map((chapter) => db.chapters.update(chapter.id, {
-        status: 'unparsed',
-        errorMsg: '上次解析任务中断，已回退为待解析。',
-        parsingSessionId: undefined,
-        parsingOwnerId: undefined,
-      })));
-    };
-    void recoverStaleParsing();
-
-    return () => {
-      const run = parseRunRef.current;
-      if (!run) return;
-      run.cancelled = true;
-      run.controllers.forEach((controller) => controller.abort());
-      parseRunRef.current = null;
-    };
-  }, []);
 
   const stageLabelMap: Record<UploadStage, string> = {
     idle: '待开始',
@@ -1130,244 +955,6 @@ export default function NovelUploader() {
     return cleanText(text);
   };
 
-  const parseChapter = async (
-    chapter: Chapter,
-    options?: { signal?: AbortSignal; runId?: string; suppressToast?: boolean },
-  ): Promise<'done' | 'error' | 'cancelled'> => {
-    if (!ensureLlmReady()) return 'error';
-    const contentChars = chapter.content.length;
-    if (contentChars > MAX_CHAPTER_CONTENT_CHARS) {
-      const tooLargeMessage = `章节「${chapter.name}」过长（${contentChars} 字），超过上限 ${MAX_CHAPTER_CONTENT_CHARS} 字。`;
-      await db.chapters.update(chapter.id, {
-        status: 'error',
-        errorMsg: tooLargeMessage,
-        parsingSessionId: undefined,
-        parsingOwnerId: undefined,
-      });
-      if (!options?.suppressToast) pushToast(tooLargeMessage, 'error');
-      return 'error';
-    }
-
-    await db.chapters.update(chapter.id, {
-      status: 'parsing',
-      errorMsg: undefined,
-      parsingSessionId: options?.runId,
-      parsingOwnerId: tabOwnerIdRef.current,
-    });
-
-    try {
-      const response = await postWithLlmConfig('/api/py/parse-chapter', {
-        title: chapter.name,
-        content: chapter.content,
-      }, {
-        signal: options?.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(await readApiErrorMessage(response, '解析失败'));
-      }
-
-      const analysis = await response.json();
-      await db.chapters.update(chapter.id, {
-        status: 'done',
-        analysis,
-        errorMsg: undefined,
-        parsingSessionId: undefined,
-        parsingOwnerId: undefined,
-      });
-      return 'done';
-    } catch (err: any) {
-      const aborted = options?.signal?.aborted || err?.name === 'AbortError';
-      if (aborted) {
-        await db.chapters.update(chapter.id, {
-          status: 'unparsed',
-          errorMsg: '已取消解析。',
-          parsingSessionId: undefined,
-          parsingOwnerId: undefined,
-        });
-        return 'cancelled';
-      }
-
-      await db.chapters.update(chapter.id, {
-        status: 'error',
-        errorMsg: err?.message || '大模型解析出错',
-        parsingSessionId: undefined,
-        parsingOwnerId: undefined,
-      });
-      return 'error';
-    }
-  };
-
-  const cancelBatchRun = async (message = '已取消批量解析任务。') => {
-    const run = parseRunRef.current;
-    if (!run) return;
-    const summary: BatchRunSummary = {
-      total: run.queue.length,
-      done: run.done.size,
-      error: run.error.size,
-      cancelled: true,
-      finishedAt: Date.now(),
-    };
-
-    run.cancelled = true;
-    run.paused = false;
-    run.controllers.forEach((controller) => controller.abort());
-
-    const parsingIds = Array.from(run.inFlight);
-    if (parsingIds.length > 0) {
-      await Promise.all(parsingIds.map((id) => db.chapters.update(id, {
-        status: 'unparsed',
-        errorMsg: '已取消解析。',
-        parsingSessionId: undefined,
-        parsingOwnerId: undefined,
-      })));
-    }
-
-    parseRunRef.current = null;
-    refreshBatchSnapshot();
-    setLastBatchSummary(summary);
-    pushToast(message, 'info');
-  };
-
-  const pauseBatchRun = () => {
-    const run = parseRunRef.current;
-    if (!run || run.cancelled) return;
-    run.paused = true;
-    refreshBatchSnapshot();
-    pushToast('已暂停批量解析。', 'info');
-  };
-
-  const resumeBatchRun = () => {
-    const run = parseRunRef.current;
-    if (!run || run.cancelled) return;
-    run.paused = false;
-    refreshBatchSnapshot();
-    pushToast('继续批量解析。', 'success');
-  };
-
-  const runBatchParsing = async (targets: Chapter[]) => {
-    if (targets.length === 0) return;
-    if (!ensureLlmReady()) return;
-    if (parseRunRef.current) {
-      pushToast('已有批量解析任务在运行。', 'info');
-      return;
-    }
-
-    const runId = crypto.randomUUID();
-    setLastBatchSummary(null);
-    parseRunRef.current = {
-      id: runId,
-      queue: targets,
-      index: 0,
-      paused: false,
-      cancelled: false,
-      inFlight: new Set<string>(),
-      done: new Set<string>(),
-      error: new Set<string>(),
-      controllers: new Map<string, AbortController>(),
-    };
-    refreshBatchSnapshot();
-
-    const worker = async () => {
-      while (true) {
-        const run = parseRunRef.current;
-        if (!run || run.id !== runId || run.cancelled) return;
-
-        while (run.paused && !run.cancelled) {
-          await new Promise((resolve) => setTimeout(resolve, 120));
-        }
-        if (run.cancelled) return;
-
-        const idx = run.index;
-        if (idx >= run.queue.length) return;
-        run.index += 1;
-
-        const chapter = run.queue[idx];
-        const controller = new AbortController();
-        run.controllers.set(chapter.id, controller);
-        run.inFlight.add(chapter.id);
-        refreshBatchSnapshot();
-
-        const result = await parseChapter(chapter, {
-          signal: controller.signal,
-          runId,
-          suppressToast: true,
-        });
-
-        run.controllers.delete(chapter.id);
-        run.inFlight.delete(chapter.id);
-        if (result === 'done') {
-          run.done.add(chapter.id);
-        } else if (result === 'error') {
-          run.error.add(chapter.id);
-        }
-        refreshBatchSnapshot();
-      }
-    };
-
-    const workers: Promise<void>[] = [];
-    for (let i = 0; i < Math.min(PARSE_CONCURRENCY_LIMIT, targets.length); i++) {
-      workers.push(worker());
-    }
-
-    await Promise.all(workers);
-    const run = parseRunRef.current;
-    if (!run || run.id !== runId) return;
-
-    const hasError = run.error.size > 0;
-    const summary: BatchRunSummary = {
-      total: run.queue.length,
-      done: run.done.size,
-      error: run.error.size,
-      cancelled: false,
-      finishedAt: Date.now(),
-    };
-    parseRunRef.current = null;
-    refreshBatchSnapshot();
-    setLastBatchSummary(summary);
-    if (hasError) {
-      pushToast(`批量解析结束：成功 ${run.done.size}，失败 ${run.error.size}。`, 'info');
-    } else {
-      pushToast(`批量解析完成，共 ${run.done.size} 章。`, 'success');
-    }
-  };
-
-  const parseAllChapters = async () => {
-    const targets = chapters.filter((chapter) => chapter.status === 'unparsed' || chapter.status === 'error');
-    if (targets.length === 0) {
-      pushToast('没有可解析章节（待解析/失败章节为空）。', 'info');
-      return;
-    }
-
-    setConfirmDialog({
-      title: '开始批量解析',
-      description: `准备解析 ${targets.length} 章。过程中可暂停或取消。`,
-      confirmText: '开始解析',
-      onConfirm: async () => {
-        setConfirmDialog(null);
-        await runBatchParsing(targets);
-      },
-    });
-  };
-
-  const retryFailedChapters = async () => {
-    const failedChapters = chapters.filter((chapter) => chapter.status === 'error');
-    if (failedChapters.length === 0) {
-      pushToast('当前没有解析失败章节。', 'info');
-      return;
-    }
-
-    setConfirmDialog({
-      title: '重试失败章节',
-      description: `准备重试 ${failedChapters.length} 个失败章节。`,
-      confirmText: '开始重试',
-      onConfirm: async () => {
-        setConfirmDialog(null);
-        await runBatchParsing(failedChapters);
-      },
-    });
-  };
-
   const persistSplitResult = async (novelId: string, splitResult: SplitCandidate) => {
     const chaptersToSave = chaptersToDbRows(novelId, splitResult.chapters);
     const totalWords = splitResult.chapters.reduce((sum, chapter) => sum + chapter.wordCount, 0);
@@ -1379,12 +966,11 @@ export default function NovelUploader() {
         wordCount: totalWords,
         splitStatus: splitResult.splitStatus,
         splitMeta: splitResult.splitMeta,
+        analysisStatus: 'idle',
+        mapProgress: { total: 0, current: 0 },
+        dnaCard: null,
       });
     });
-
-    if (chaptersToSave[0]) {
-      setSelectedChapterId(chaptersToSave[0].id);
-    }
   };
 
   const processFile = async (file: File) => {
@@ -1434,16 +1020,15 @@ export default function NovelUploader() {
           sourceTextCleaned: cleanedText,
           splitStatus: splitResult.splitStatus,
           splitMeta: splitResult.splitMeta,
+          analysisStatus: 'idle',
+          mapProgress: { total: 0, current: 0 },
+          dnaCard: null,
         });
         await db.chapters.bulkAdd(chaptersToSave);
       });
 
       setSelectedNovelId(novelId);
       resetChapterListView();
-      if (chaptersToSave[0]) {
-        setSelectedChapterId(chaptersToSave[0].id);
-        setActiveDrawerChapterId(chaptersToSave[0].id);
-      }
     } catch (err: any) {
       setErrorMsg(err?.message || '文件解析入库失败');
     } finally {
@@ -1514,42 +1099,9 @@ export default function NovelUploader() {
     });
   };
 
-  const deleteNovel = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const chapterCount = await db.chapters.where('novelId').equals(id).count();
-    setConfirmDialog({
-      title: '删除小说',
-      description: `将删除该小说及 ${chapterCount} 章解析结果。此操作不可撤销。`,
-      confirmText: '确认删除',
-      danger: true,
-      onConfirm: async () => {
-        setConfirmDialog(null);
-        const run = parseRunRef.current;
-        const runTouchesNovel = !!run && run.queue.some((chapter) => chapter.novelId === id);
-        if (runTouchesNovel) {
-          await cancelBatchRun('已取消与该小说相关的批量解析任务。');
-        }
-        await db.transaction('rw', db.novels, db.chapters, async () => {
-          await db.chapters.where('novelId').equals(id).delete();
-          await db.novels.delete(id);
-        });
-
-        if (selectedNovelId === id) {
-          setSelectedNovelId(null);
-          setSelectedChapterId(null);
-          setActiveDrawerChapterId(null);
-          resetChapterListView();
-        }
-        pushToast('小说已删除。', 'success');
-      },
-    });
-  };
-
-  const filteredChapters = chapters.filter((chapter) => {
-    const matchesSearch = chapter.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || chapter.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const filteredChapters = chapters.filter((chapter) =>
+    chapter.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   const pageSize = 12;
   const totalPages = Math.ceil(filteredChapters.length / pageSize) || 1;
@@ -1598,63 +1150,6 @@ export default function NovelUploader() {
               <span className="leading-snug break-all">{errorMsg}</span>
             </div>
           )}
-        </div>
-
-        {/* Novels List */}
-        <div className="bg-[#121214] border border-[#1f1f23] rounded p-4 flex flex-col flex-1 min-h-0">
-          <div className="flex items-center justify-between mb-3">
-            <h4 className="text-xs uppercase font-mono tracking-wider text-zinc-500">小说库 ({novels.length})</h4>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto space-y-1.5 custom-scrollbar pr-0.5">
-            {novels.length === 0 ? (
-              <div className="text-center py-8 text-zinc-600 text-xs font-sans">
-                无小说，请先导入文件
-              </div>
-            ) : (
-              novels.map((novel) => {
-                const isSelected = selectedNovelId === novel.id;
-                return (
-                  <div
-                    key={novel.id}
-                    onClick={() => {
-                      setSelectedNovelId(novel.id);
-                      resetChapterListView();
-                      setActiveDrawerChapterId(null);
-                    }}
-                    className={`group p-2.5 rounded border transition-linear cursor-pointer flex items-center justify-between relative ${
-                      isSelected
-                        ? 'bg-zinc-900 border-zinc-800 text-zinc-105'
-                        : 'bg-transparent border-transparent text-zinc-450 hover:bg-zinc-900/40 hover:text-zinc-250'
-                    }`}
-                  >
-                    {/* Active Indicator Left Accent line */}
-                    {isSelected && (
-                      <div className="absolute left-0 top-1/4 bottom-1/4 w-0.5 bg-amber-500" />
-                    )}
-                    
-                    <div className="flex items-center gap-2 min-w-0">
-                      <BookOpen className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-amber-500' : 'text-zinc-500'}`} />
-                      <div className="min-w-0">
-                        <p className="font-medium text-xs truncate leading-normal">{novel.name}</p>
-                        <p className="text-[10px] text-zinc-500 font-mono mt-0.5">
-                          {novel.wordCount >= 10000 ? (novel.wordCount / 10000).toFixed(1) + '万字' : novel.wordCount + '字'}
-                        </p>
-                      </div>
-                    </div>
-                    
-                    <button
-                      onClick={(e) => deleteNovel(novel.id, e)}
-                      className="opacity-0 group-hover:opacity-100 p-1 text-zinc-500 hover:text-rose-450 hover:bg-rose-950/20 rounded transition-linear shrink-0"
-                      title="删除小说"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </div>
-                );
-              })
-            )}
-          </div>
         </div>
       </div>
 
@@ -1785,310 +1280,54 @@ export default function NovelUploader() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-semibold text-zinc-250">章节管理库</h2>
-                  <p className="text-[11px] text-zinc-500 mt-0.5">当前共 {chapters.length} 章节，点击可查看正文及解析细节</p>
+                  <p className="text-[11px] text-zinc-500 mt-0.5">当前共 {chapters.length} 章节</p>
                 </div>
-                
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={retryFailedChapters}
-                    disabled={batchRun.active}
-                    className="py-1.5 px-3 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 text-xs rounded transition-linear active-press disabled:opacity-50"
-                  >
-                    重试失败章节
-                  </button>
-                  <button
-                    onClick={parseAllChapters}
-                    disabled={batchRun.active}
-                    className="py-1.5 px-3 bg-zinc-100 hover:bg-zinc-200 text-zinc-950 font-semibold text-xs rounded transition-linear active-press flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                  >
-                    <Cpu className="w-3.5 h-3.5" />
-                    解析全部章节
-                  </button>
-                  
-                  {batchRun.active && (
-                    <>
-                      <button
-                        onClick={() => (batchRun.paused ? resumeBatchRun() : pauseBatchRun())}
-                        className="py-1.5 px-2.5 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 text-xs rounded transition-linear active-press flex items-center gap-1"
-                      >
-                        {batchRun.paused ? <Play className="w-3 h-3 text-amber-500" /> : <Pause className="w-3 h-3 text-amber-500" />}
-                        {batchRun.paused ? '继续' : '暂停'}
-                      </button>
-                      <button
-                        onClick={() => void cancelBatchRun()}
-                        className="py-1.5 px-2.5 bg-rose-950/20 border border-rose-900/30 hover:bg-rose-900/40 text-rose-350 text-xs rounded transition-linear active-press flex items-center gap-1"
-                      >
-                        <Square className="w-3 h-3" />
-                        取消
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
+              </div>
 
           <div className="flex flex-col md:flex-row gap-3 items-center justify-between">
             {/* Search Input */}
-            <div className="relative w-full md:w-64">
-              <input
-                type="text"
-                placeholder="搜索章节..."
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setCurrentPage(1);
-                }}
-                className="w-full pl-3 pr-8 py-1.5 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-250 text-xs focus:outline-none focus:border-zinc-600 focus:ring-0 placeholder-zinc-650 transition-linear"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => {
-                    setSearchQuery('');
-                    setCurrentPage(1);
-                  }}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 text-xs font-bold font-sans"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-
-            {/* Filter Buttons */}
-            <div className="flex items-center gap-1 overflow-x-auto w-full md:w-auto pb-1 md:pb-0 scrollbar-none">
-              {(['all', 'unparsed', 'parsing', 'done', 'error'] as const).map((status) => {
-                const count = status === 'all'
-                  ? chapterStatusStats.total
-                  : status === 'unparsed'
-                    ? chapterStatusStats.unparsed
-                    : status === 'parsing'
-                      ? chapterStatusStats.parsing
-                      : status === 'done'
-                        ? chapterStatusStats.done
-                        : chapterStatusStats.error;
-                
-                const label = status === 'all'
-                  ? '全部'
-                  : status === 'unparsed'
-                    ? '待解析'
-                    : status === 'parsing'
-                      ? '解析中'
-                      : status === 'done'
-                        ? '已解析'
-                        : '失败';
-                
-                const active = statusFilter === status;
-                
-                return (
-                  <button
-                    key={status}
-                    onClick={() => {
-                      setStatusFilter(status);
-                      setCurrentPage(1);
-                    }}
-                    className={`px-2.5 py-1.5 rounded text-[11px] whitespace-nowrap border transition-linear ${
-                      active
-                        ? 'bg-zinc-800 border-zinc-750 text-zinc-100 font-semibold'
-                        : 'bg-transparent border-transparent text-zinc-550 hover:text-zinc-300'
-                    }`}
-                  >
-                    {label} <span className="font-mono text-[9px] opacity-70">({count})</span>
-                  </button>
-                );
-              })}
-            </div>
           </div>
         </div>
 
-        {/* 4. Bulk Process Panel */}
-        {batchPanelStats && (
-          <div className="mb-4 p-3.5 rounded border border-zinc-850 bg-zinc-950/40 flex flex-col gap-2.5 relative overflow-hidden">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="flex h-2 w-2 relative">
-                  {batchPanelStats.mode === 'active' && !batchPanelStats.paused ? (
-                    <>
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                    </>
-                  ) : batchPanelStats.mode === 'active' && batchPanelStats.paused ? (
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-zinc-500"></span>
-                  ) : (
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  )}
-                </span>
-                <span className="text-xs font-semibold text-zinc-300">
-                  {batchPanelStats.mode === 'active'
-                    ? (batchPanelStats.paused ? '批量解析已暂停' : '智能结构化解析中')
-                    : (batchPanelStats.cancelled ? '批量任务已取消' : '批量任务已完成')}
-                </span>
-              </div>
-              
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-zinc-550 font-mono">
-                  {batchPanelStats.mode === 'active' ? `并发: ${PARSE_CONCURRENCY_LIMIT}` : '运行摘要'}
-                </span>
-                {batchPanelStats.mode === 'summary' && (
-                  <button
-                    onClick={() => setLastBatchSummary(null)}
-                    className="text-[10px] text-zinc-500 hover:text-zinc-300 font-medium"
-                  >
-                    清除记录
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex justify-between text-[11px] font-mono text-zinc-400">
-                <span>进度: {batchPanelStats.done} / {batchPanelStats.total} 章 ({batchPanelStats.progress}%)</span>
-                <span>{batchPanelStats.parsing} 解析中 · {batchPanelStats.error} 失败</span>
-              </div>
-
-              <div className="h-1 w-full bg-zinc-900 rounded overflow-hidden">
-                <div
-                  className="h-full bg-amber-500 rounded transition-all duration-300 ease-out"
-                  style={{ width: `${batchPanelStats.progress}%` }}
-                />
-              </div>
-            </div>
-
-            {batchPanelStats.error > 0 && (
-              <div className="flex items-center justify-between pt-2 border-t border-zinc-900/60 text-[10px]">
-                <span className="text-rose-450 flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" />
-                  当前有 {batchPanelStats.error} 个章节解析失败，可重试
-                </span>
-                <button
-                  onClick={retryFailedChapters}
-                  disabled={batchRun.active}
-                  className="text-zinc-300 hover:text-zinc-100 font-semibold transition-linear flex items-center gap-1"
-                >
-                  <RefreshCw className="w-2.5 h-2.5" />
-                  立即重试失败章节
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* 5. Notion-style Chapters Database List */}
+        {/* Notion-style Chapters Database List */}
         <div className="flex-1 overflow-y-auto custom-scrollbar pr-0.5 min-h-0">
           {paginatedChapters.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center py-16 text-zinc-600 bg-zinc-950/10 border border-dashed border-zinc-850 rounded">
               <p className="text-xs font-semibold">未找到匹配章节</p>
-              <p className="text-[11px] text-zinc-500 mt-1">请尝试修改搜索词或更改过滤器状态</p>
+              <p className="text-[11px] text-zinc-500 mt-1">请尝试修改搜索词</p>
             </div>
           ) : (
             <div className="border border-zinc-850 rounded bg-zinc-950/10 overflow-hidden">
               {/* Table Header */}
               <div className="grid grid-cols-12 gap-3 px-4 py-2 bg-zinc-900/40 border-b border-zinc-850 text-[10px] font-mono uppercase tracking-wider text-zinc-500 font-bold">
-                <div className="col-span-1">序号</div>
-                <div className="col-span-4">章节名称</div>
-                <div className="col-span-2 text-right">字数</div>
-                <div className="col-span-2 text-center">状态</div>
-                <div className="col-span-3">解析摘要 / 错误提示</div>
+                <div className="col-span-2">序号</div>
+                <div className="col-span-7">章节名称</div>
+                <div className="col-span-3 text-right">字数</div>
               </div>
 
               {/* Table Rows */}
               <div className="divide-y divide-zinc-850/80 bg-[#121214]">
-                {paginatedChapters.map((chapter) => {
-                  const isParsing = chapter.status === 'parsing';
-                  const isSelected = selectedChapterId === chapter.id || activeDrawerChapterId === chapter.id;
-
-                  return (
-                    <div
-                      key={chapter.id}
-                      onClick={() => {
-                        setSelectedChapterId(chapter.id);
-                        setActiveDrawerChapterId(chapter.id);
-                        if (chapter.status === 'error') {
-                          setDrawerTab('error');
-                        } else if (chapter.status === 'done') {
-                          setDrawerTab('analysis');
-                        } else {
-                          setDrawerTab('text');
-                        }
-                      }}
-                      className={`grid grid-cols-12 gap-3 px-4 py-3 items-center text-xs cursor-pointer transition-linear hover:bg-zinc-900/60 ${
-                        isSelected
-                          ? 'bg-zinc-900/45 text-zinc-100 font-medium border-l border-amber-500 pl-[15px]'
-                          : 'text-zinc-400'
-                      }`}
-                    >
-                      {/* 1. Index */}
-                      <div className="col-span-1 font-mono text-zinc-500">
-                        #{chapter.chapterIndex.toString().padStart(2, '0')}
-                      </div>
-
-                      {/* 2. Name */}
-                      <div className="col-span-4 truncate font-medium text-zinc-200" title={chapter.name}>
-                        {chapter.name}
-                      </div>
-
-                      {/* 3. Wordcount */}
-                      <div className="col-span-2 text-right font-mono text-zinc-400">
-                        {chapter.wordCount.toLocaleString()} 字
-                      </div>
-
-                      {/* 4. Status Badge */}
-                      <div className="col-span-2 flex justify-center">
-                        {chapter.status === 'done' && (
-                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/20 border border-emerald-900/30 text-emerald-400 font-medium">
-                            <CheckCircle2 className="w-2.5 h-2.5" />
-                            已解析
-                          </span>
-                        )}
-                        {chapter.status === 'unparsed' && (
-                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-450">
-                            待解析
-                          </span>
-                        )}
-                        {isParsing && (
-                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-950/20 border border-amber-900/30 text-amber-500">
-                            <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                            解析中
-                          </span>
-                        )}
-                        {chapter.status === 'error' && (
-                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-rose-950/20 border border-rose-900/30 text-rose-400">
-                            <AlertCircle className="w-2.5 h-2.5" />
-                            失败
-                          </span>
-                        )}
-                      </div>
-
-                      {/* 5. Summary & Action */}
-                      <div className="col-span-3 flex items-center justify-between gap-2 min-w-0">
-                        <div className="truncate flex-1 text-[11px] text-zinc-500">
-                          {chapter.status === 'error' ? (
-                            <span className="text-rose-400 truncate" title={chapter.errorMsg || '解析出错'}>
-                              {chapter.errorMsg || '解析出错'}
-                            </span>
-                          ) : chapter.status === 'done' ? (
-                            <span>
-                              {chapter.analysis?.characters?.length ?? 0} 角色 · {chapter.analysis?.relationships?.length ?? 0} 关系
-                            </span>
-                          ) : (
-                            <span className="text-zinc-650">待解析提取</span>
-                          )}
-                        </div>
-
-                        {/* Inline Run Button */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void parseChapter(chapter);
-                          }}
-                          disabled={isParsing || batchRun.active}
-                          className="shrink-0 py-1 px-2 border border-zinc-800 hover:border-zinc-700 bg-zinc-900 text-zinc-300 text-[10px] font-semibold rounded active-press transition-linear flex items-center gap-1 disabled:opacity-40"
-                          title={chapter.status === 'done' ? '重新解析' : '开始解析'}
-                        >
-                          <Play className="w-2.5 h-2.5" />
-                          {chapter.status === 'done' ? '重试' : '解析'}
-                        </button>
-                      </div>
+                {paginatedChapters.map((chapter) => (
+                  <div
+                    key={chapter.id}
+                    className="grid grid-cols-12 gap-3 px-4 py-3 items-center text-xs text-zinc-400 transition-linear hover:bg-zinc-900/40"
+                  >
+                    {/* 1. Index */}
+                    <div className="col-span-2 font-mono text-zinc-500">
+                      #{chapter.chapterIndex.toString().padStart(2, '0')}
                     </div>
-                  );
-                })}
+
+                    {/* 2. Name */}
+                    <div className="col-span-7 truncate font-medium text-zinc-200" title={chapter.name}>
+                      {chapter.name}
+                    </div>
+
+                    {/* 3. Wordcount */}
+                    <div className="col-span-3 text-right font-mono text-zinc-400">
+                      {chapter.wordCount.toLocaleString()} 字
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -2172,136 +1411,8 @@ export default function NovelUploader() {
     </div>
   )}
 
-  {/* Right slide-out detail Drawer (Notion-style) */}
-  {activeDrawerChapterId && (
-    <div className="fixed inset-0 z-[60] flex justify-end">
-      {/* Drawer Overlay */}
-      <button
-        type="button"
-        aria-label="Close chapter details drawer"
-        className="absolute inset-0 bg-black/60 backdrop-blur-xs cursor-default"
-        onClick={() => setActiveDrawerChapterId(null)}
-      />
-      
-      {/* Drawer Container */}
-      <aside className="relative h-full w-full max-w-2xl bg-[#08080a] border-l border-[#1f1f23] shadow-2xl flex flex-col z-10 select-text animate-slide-in">
-        {/* Drawer Header */}
-        <div className="p-4.5 border-b border-zinc-850 flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <span className="text-[10px] uppercase font-mono tracking-widest text-zinc-500">章节审校提取</span>
-            <h3 className="text-sm font-semibold text-zinc-100 truncate mt-1">
-              {drawerChapter ? drawerChapter.name : '章节数据错误'}
-            </h3>
-            {drawerChapter && (
-              <p className="text-[11px] text-zinc-500 font-mono mt-1">
-                第 {drawerChapter.chapterIndex} 章 · {drawerChapter.wordCount.toLocaleString()} 字 · 状态: {drawerChapter.status === 'done' ? '已解析' : drawerChapter.status === 'parsing' ? '解析中' : drawerChapter.status === 'error' ? '失败' : '未解析'}
-              </p>
-            )}
-          </div>
-          <button
-            onClick={() => setActiveDrawerChapterId(null)}
-            className="p-1.5 rounded border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-zinc-100 transition-linear active-press"
-            aria-label="Close drawer"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
+  {/* Right slide-out detail Drawer removed — manage view is a read-only chapter list */}
 
-        {/* Drawer Tab Options */}
-        <div className="px-4.5 pt-2 flex items-center gap-1.5 border-b border-zinc-850 bg-zinc-950/20 shrink-0">
-          {([
-            { id: 'text', label: '章节原正文', icon: FileText },
-            { id: 'analysis', label: '大模型结构化结果', icon: Eye },
-            { id: 'error', label: '错误追踪日志', icon: AlertCircle },
-          ] as const).map((tab) => {
-            const active = drawerTab === tab.id;
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setDrawerTab(tab.id)}
-                className={`px-3 py-2 rounded-t text-xs font-semibold flex items-center gap-1.5 border border-b-0 transition-linear ${
-                  active
-                    ? 'bg-[#08080a] border-zinc-850 text-zinc-100'
-                    : 'bg-transparent border-transparent text-zinc-500 hover:text-zinc-300'
-                }`}
-              >
-                <Icon className="w-3.5 h-3.5 text-zinc-450" />
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Drawer Scrollable Content */}
-        <div className="p-5 overflow-y-auto flex-1 custom-scrollbar bg-zinc-950/10">
-          {!drawerChapter ? (
-            <p className="text-xs text-zinc-500 font-sans">未找到有效的章节实体，可能已被从数据库清除。</p>
-          ) : drawerTab === 'text' ? (
-            <pre className="whitespace-pre-wrap text-xs leading-relaxed text-zinc-300 font-sans pr-1 select-text">
-              {drawerChapter.content}
-            </pre>
-          ) : drawerTab === 'analysis' ? (
-            drawerChapter.status === 'done' && drawerChapter.analysis ? (
-              <div className="space-y-5 text-xs select-text">
-                <section className="bg-zinc-900/30 border border-zinc-850 p-3.5 rounded flex flex-col gap-1.5">
-                  <h4 className="text-zinc-150 font-bold uppercase font-mono tracking-wider text-[10px]">① 宏观世界观</h4>
-                  <p className="text-zinc-300 leading-relaxed font-sans">{drawerChapter.analysis.worldview || '无'}</p>
-                </section>
-                
-                <section className="bg-zinc-900/30 border border-zinc-850 p-3.5 rounded flex flex-col gap-1.5">
-                  <h4 className="text-zinc-150 font-bold uppercase font-mono tracking-wider text-[10px]">② 核心骨架情节</h4>
-                  <p className="text-zinc-300 leading-relaxed font-sans">{drawerChapter.analysis.plotSkeleton || '无'}</p>
-                </section>
-                
-                <section className="flex flex-col gap-2">
-                  <h4 className="text-zinc-150 font-bold uppercase font-mono tracking-wider text-[10px] px-1">③ 章节登场角色 ({drawerChapter.analysis.characters.length})</h4>
-                  <div className="space-y-2">
-                    {drawerChapter.analysis.characters.map((char, idx) => (
-                      <div key={`${char.name}-${idx}`} className="p-3 rounded border border-zinc-850 bg-zinc-900/20">
-                        <p className="text-amber-500 font-semibold text-xs">{char.name}</p>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2 text-[11px] text-zinc-400 font-sans leading-normal">
-                          <div><span className="text-zinc-500 font-mono">性格:</span> {char.personality || '无'}</div>
-                          <div><span className="text-zinc-500 font-mono">外貌特征:</span> {char.appearance || '无'}</div>
-                          <div><span className="text-zinc-500 font-mono">核心冲突:</span> {char.coreConflict || '无'}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-                
-                <section className="flex flex-col gap-2">
-                  <h4 className="text-zinc-150 font-bold uppercase font-mono tracking-wider text-[10px] px-1">④ 登场角色人物关系网 ({drawerChapter.analysis.relationships.length})</h4>
-                  <div className="space-y-2">
-                    {drawerChapter.analysis.relationships.map((rel, idx) => (
-                      <div key={`${rel.roleA}-${rel.roleB}-${idx}`} className="p-2.5 rounded border border-zinc-850 bg-zinc-900/20 text-zinc-300 font-sans">
-                        <span className="text-zinc-100 font-semibold">{rel.roleA}</span>
-                        <span className="text-zinc-500 font-mono mx-2">↔</span>
-                        <span className="text-zinc-100 font-semibold">{rel.roleB}</span>
-                        <span className="text-zinc-500 font-mono mx-2">:</span>
-                        <span className="text-zinc-300">{rel.description || '无'}</span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-                
-                <section className="bg-zinc-900/30 border border-zinc-850 p-3.5 rounded flex flex-col gap-1.5">
-                  <h4 className="text-zinc-150 font-bold uppercase font-mono tracking-wider text-[10px]">⑤ 叙事行文风格评语</h4>
-                  <p className="text-zinc-300 leading-relaxed font-sans">{drawerChapter.analysis.style || '无'}</p>
-                </section>
-              </div>
-            ) : (
-              <p className="text-xs text-zinc-500 font-sans">该章节尚未通过大模型提取结构化数据，请在列表中点击「解析」运行。</p>
-            )
-          ) : (
-            <div className="rounded border border-rose-900/40 bg-rose-950/20 p-3.5 text-xs text-rose-300 whitespace-pre-wrap font-mono">
-              {drawerChapter.errorMsg || '暂无错误堆栈日志。'}
-            </div>
-          )}
-        </div>
-      </aside>
-    </div>
-  )}
 </div>
   );
 }

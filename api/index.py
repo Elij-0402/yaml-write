@@ -24,9 +24,19 @@ from openai import (
     PermissionDeniedError,
     RateLimitError,
 )
-from pydantic import BaseModel, Field
-
-from api.schemas import ChapterAnalysis, GenerationInput, OutlineInput
+from api.schemas import (
+    BookReduceInput,
+    ChapterMapInput,
+    ChapterMapSummaryResponse,
+    FusionDirectionsInput,
+    FusionDirectionsResponse,
+    NovelDNACardResponse,
+    SceneTextInput,
+    StoryboardInput,
+    StoryboardResponse,
+    TweakBlocksInput,
+    TweakBlocksResponse,
+)
 
 logger = logging.getLogger("novel_fusion_api")
 if not logger.handlers:
@@ -38,13 +48,25 @@ REQUEST_TIMEOUT_SECONDS = 25.0
 STREAM_TIMEOUT_SECONDS = 60.0
 MAX_PARSE_RETRIES = 2
 MAX_CHAPTER_CONTENT_CHARS = 30000
-MAX_OUTLINE_INPUT_CHARS = 100000
-MAX_GENERATION_INPUT_CHARS = 120000
+MAX_REDUCE_INPUT_CHARS = 200000
+MAX_SCENE_CONTEXT_CHARS = 24000
 RATE_LIMIT_RULES = {
-    "/api/py/parse-chapter": (60, 30),
-    "/api/py/generate-outline": (60, 12),
-    "/api/py/generate-text": (60, 12),
+    "/api/py/extract-chapter-map": (60, 120),
+    "/api/py/extract-book-reduce": (60, 10),
+    "/api/py/generate-fusion-directions": (60, 8),
+    "/api/py/tweak-fusion-blocks": (60, 20),
+    "/api/py/generate-storyboard": (60, 12),
+    "/api/py/stream-scene-text": (60, 12),
 }
+
+# 反 AI 套路硬约束（各创作 prompt 复用）
+ANTI_SLOP_CONSTRAINT = (
+    "【反 AI 套路硬约束】严禁出现陈词滥调与空洞煽情，包括但不限于："
+    "“命运的齿轮”“那一刻”“逆天改命”“眼神变得坚定”“嘴角勾起一抹弧度”“仿佛整个世界都安静了”"
+    "“空气仿佛凝固”“心中一紧”“缓缓睁开眼”“不知为何”等。"
+    "禁止宏大空泛的抒情与解释性旁白；改用冰冷、具象、高信息密度的物理细节与克制白描，"
+    "让冲突通过动作、环境与器物呈现，而非作者直接告知。文字要有颗粒度与刺痛感。"
+)
 
 DEFAULT_ALLOWED_BASE_URLS = [
     "https://api.openai.com/v1",
@@ -68,15 +90,6 @@ class ApiError(Exception):
         self.status_code = status_code
         self.code = code
         self.message = message
-
-
-class ParseChapterInput(BaseModel):
-    title: str = Field(..., min_length=1, max_length=300)
-    content: str = Field(..., min_length=1, max_length=MAX_CHAPTER_CONTENT_CHARS)
-    apiKey: str = Field(..., min_length=1, max_length=512)
-    baseUrl: str = Field(..., min_length=1, max_length=512)
-    model: str = Field(..., min_length=1, max_length=200)
-    temperature: float = Field(default=0.7, ge=0.0, le=1.5)
 
 
 def error_payload(code: str, message: str) -> dict:
@@ -141,28 +154,13 @@ def validate_base_url(base_url: str) -> str:
     return normalized
 
 
-def validate_generation_input(data: OutlineInput | GenerationInput) -> None:
-    if not data.apiKey.strip():
+def validate_llm_creds(api_key: str, model: str, temperature: float) -> None:
+    if not api_key.strip():
         raise ApiError(status_code=400, code="invalid_request", message="API Key 不能为空。")
-    if not data.model.strip():
+    if not model.strip():
         raise ApiError(status_code=400, code="invalid_request", message="模型名称不能为空。")
-    if not (0 <= data.temperature <= 1.5):
+    if not (0 <= temperature <= 1.5):
         raise ApiError(status_code=400, code="invalid_temperature", message="temperature 必须在 0 到 1.5 之间。")
-
-    if isinstance(data, OutlineInput):
-        if not data.fusionPrompt.strip():
-            raise ApiError(status_code=400, code="invalid_request", message="融合指令不能为空。")
-        if len(data.selectedChapters) == 0:
-            raise ApiError(status_code=400, code="invalid_request", message="至少需要一个已解析章节。")
-        if len(str(data.selectedChapters)) > MAX_OUTLINE_INPUT_CHARS:
-            raise ApiError(status_code=413, code="input_too_large", message="章节分析输入过大，请减少样本后重试。")
-    else:
-        if not data.fusionPrompt.strip():
-            raise ApiError(status_code=400, code="invalid_request", message="融合指令不能为空。")
-        if not data.outline.strip():
-            raise ApiError(status_code=400, code="invalid_request", message="大纲不能为空。")
-        if len(data.outline) > MAX_GENERATION_INPUT_CHARS:
-            raise ApiError(status_code=413, code="input_too_large", message="大纲输入过大，请精简后重试。")
 
 
 def classify_openai_error(exc: Exception) -> tuple[int, str, str]:
@@ -239,6 +237,45 @@ def build_openai_client(api_key: str, base_url: str, timeout: float) -> AsyncOpe
     )
 
 
+async def run_structured(
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+    response_model,
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float,
+    request: Request,
+    label: str,
+    instructor_retries: int = 0,
+):
+    """Shared structured-extraction call: instructor + transient retry + friendly errors."""
+    client = instructor.from_openai(
+        build_openai_client(api_key, base_url, timeout=REQUEST_TIMEOUT_SECONDS)
+    )
+    for attempt in range(MAX_PARSE_RETRIES + 1):
+        try:
+            return await client.chat.completions.create(
+                model=model,
+                response_model=response_model,
+                temperature=temperature,
+                max_retries=instructor_retries,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+        except Exception as exc:
+            status_code, code, message = classify_openai_error(exc)
+            should_retry = status_code in {429, 502, 503, 504} and attempt < MAX_PARSE_RETRIES
+            if should_retry:
+                await asyncio.sleep((2 ** attempt) + random.uniform(0.1, 0.4))
+                continue
+            logger.warning("%s failed ip=%s model=%s err=%s", label, get_client_ip(request), model, exc.__class__.__name__)
+            raise ApiError(status_code=status_code, code=code, message=message) from exc
+
+
 @app.exception_handler(ApiError)
 async def api_error_handler(_: Request, exc: ApiError):
     return JSONResponse(status_code=exc.status_code, content=error_payload(exc.code, exc.message))
@@ -258,158 +295,227 @@ async def unhandled_error_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content=error_payload("internal_error", "服务暂时不可用，请稍后重试。"))
 
 
-@app.post("/api/py/parse-chapter")
-async def parse_chapter(data: ParseChapterInput, request: Request):
-    await ensure_rate_limit(request, "/api/py/parse-chapter")
+@app.post("/api/py/extract-chapter-map")
+async def extract_chapter_map(data: ChapterMapInput, request: Request):
+    await ensure_rate_limit(request, "/api/py/extract-chapter-map")
     title = sanitize_text(data.title)
     content = sanitize_text(data.content)
     model = sanitize_text(data.model)
     api_key = sanitize_text(data.apiKey)
-
-    if not title:
-        raise ApiError(status_code=400, code="invalid_request", message="章节标题不能为空。")
-    if not content:
-        raise ApiError(status_code=400, code="invalid_request", message="章节内容不能为空。")
+    if not title or not content:
+        raise ApiError(status_code=400, code="invalid_request", message="章节标题与内容不能为空。")
     if len(content) > MAX_CHAPTER_CONTENT_CHARS:
         raise ApiError(
             status_code=413,
             code="content_too_large",
-            message=f"章节内容超长（上限 {MAX_CHAPTER_CONTENT_CHARS} 字符），请先切分后再解析。",
+            message=f"章节内容超长（上限 {MAX_CHAPTER_CONTENT_CHARS} 字符），请先切分。",
         )
-    if not model:
-        raise ApiError(status_code=400, code="invalid_request", message="模型名称不能为空。")
-    if not api_key:
-        raise ApiError(status_code=400, code="invalid_request", message="API Key 不能为空。")
-
-    client = instructor.from_openai(
-        build_openai_client(api_key, data.baseUrl, timeout=REQUEST_TIMEOUT_SECONDS)
-    )
-    logger.info("parse_chapter ip=%s model=%s content_chars=%s", get_client_ip(request), model, len(content))
+    validate_llm_creds(api_key, model, data.temperature)
+    logger.info("extract_chapter_map ip=%s model=%s content_chars=%s", get_client_ip(request), model, len(content))
 
     system_prompt = (
-        "你是一个专业的小说分析助手。请分析给定的章节标题与内容，提取出世界观设定、出场角色列表、人物关系网络、核心故事骨架以及叙事风格与基调。\n"
-        "对于出场角色，必须提取出详细的名字、性格、外貌特征、核心矛盾冲突以及出场章节。\n"
-        "对于人物关系，必须提取出角色A、角色B以及关系描述。"
+        "你是一个极其挑剔的文学分析编辑。请对给定章节标题与内容进行降维提炼，"
+        "过滤掉一切对话、抒情、战斗招式细节等冗余文本，只关注实质性的'DNA 突变点'：\n"
+        "1. 出现了哪些前所未有的设定、地图或规则？\n"
+        "2. 主角的情感底线、核心动机或人际关系发生了什么不可逆变化？\n"
+        "3. 本章最核心的情节推力是什么？\n"
+        "4. 本章独特的遣词造句或叙事语调特征？\n"
+        "请用极度精炼、非情绪化的骨架语言回答，每一项控制在 100 字内；某项无内容则填'无'。"
     )
     user_prompt = f"章节标题: {title}\n\n章节内容:\n{content}"
-
-    for attempt in range(MAX_PARSE_RETRIES + 1):
-        try:
-            response = await client.chat.completions.create(
-                model=model,
-                response_model=ChapterAnalysis,
-                temperature=data.temperature,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-            )
-            return response
-        except Exception as exc:
-            status_code, code, message = classify_openai_error(exc)
-            should_retry = status_code in {429, 502, 503, 504} and attempt < MAX_PARSE_RETRIES
-            if should_retry:
-                delay = (2 ** attempt) + random.uniform(0.1, 0.4)
-                await asyncio.sleep(delay)
-                continue
-            logger.warning("parse_chapter failed ip=%s model=%s err=%s", get_client_ip(request), model, exc.__class__.__name__)
-            raise ApiError(status_code=status_code, code=code, message=message) from exc
+    return await run_structured(
+        api_key=api_key, base_url=data.baseUrl, model=model,
+        response_model=ChapterMapSummaryResponse,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        temperature=data.temperature, request=request, label="extract_chapter_map",
+    )
 
 
-@app.post("/api/py/generate-outline")
-async def generate_outline(data: OutlineInput, request: Request):
-    await ensure_rate_limit(request, "/api/py/generate-outline")
-    validate_generation_input(data)
-    client = build_openai_client(data.apiKey, data.baseUrl, timeout=STREAM_TIMEOUT_SECONDS)
-    model = data.model.strip()
-    logger.info("generate_outline ip=%s model=%s chapters=%s", get_client_ip(request), model, len(data.selectedChapters))
+@app.post("/api/py/extract-book-reduce")
+async def extract_book_reduce(data: BookReduceInput, request: Request):
+    await ensure_rate_limit(request, "/api/py/extract-book-reduce")
+    model = sanitize_text(data.model)
+    api_key = sanitize_text(data.apiKey)
+    validate_llm_creds(api_key, model, data.temperature)
+
+    lines = []
+    for idx, m in enumerate(data.mapSummaries):
+        lines.append(
+            f"第 {idx + 1} 章 | 设定:{m.worldviewUpdates} | 情节:{m.keyPlotTurns} | "
+            f"角色:{m.characterDevelopments} | 风格:{m.styleObservations}"
+        )
+    timeline = "\n".join(lines)
+    if len(timeline) > MAX_REDUCE_INPUT_CHARS:
+        timeline = timeline[:MAX_REDUCE_INPUT_CHARS]
+    logger.info("extract_book_reduce ip=%s model=%s chapters=%s", get_client_ip(request), model, len(data.mapSummaries))
 
     system_prompt = (
-        "你是一个顶尖的网文作家和小说创意架构师。你擅长将不同的故事设定、角色和剧情线进行完美、有机的融合，创造出令人惊叹的新创意大纲。\n"
-        "你的任务是根据用户提供的多部小说/章节解析信息以及融合指令，生成一份极具创意、条理清晰的【融合小说新大纲】。\n"
-        "新大纲必须采用 Markdown 格式，且包含以下内容：\n"
-        "1. 新小说的核心世界观与设定（融合两者的闪光点）\n"
-        "2. 融合后的主要角色表及核心人物关系\n"
-        "3. 全新的核心冲突与故事主线\n"
-        "4. 细化到具体前几章的分章剧情大纲与爆点设计\n\n"
-        "请确保生成的内容充满想象力，逻辑自洽，节奏感极佳，直接输出 Markdown 文本，不要有任何无关的前言或后记。"
+        "你是一个顶级的小说架构大师。下面是这本小说所有章节提炼出的 Map 摘要序列（按时间线排列）。"
+        "请通过长上下文推理，提炼出这本小说最深层的'创作 DNA 结构'：\n"
+        "1. 母题与冲突：作者潜意识反复探讨的底层命题（如：秩序与失控的拉扯、技术与人性的自我拆解）。\n"
+        "2. 世界观运行规则与代价：世界如何流转？获取力量或地位的底层代价是什么？\n"
+        "3. 角色灵魂原型：主角与主要角色的深层冲突、认知缺陷与救赎轨迹。\n"
+        "4. 叙事结构特征与视角排布规律。\n"
+        "5. 风格指纹：全书语言特色的高频意象与笔触质感。\n"
+        "请以精炼、充满洞察力的结构返回。"
+    )
+    user_prompt = f"小说名：{data.novelName or '（未命名）'}\n\n章节 Map 摘要序列：\n{timeline}"
+    return await run_structured(
+        api_key=api_key, base_url=data.baseUrl, model=model,
+        response_model=NovelDNACardResponse,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        temperature=data.temperature, request=request, label="extract_book_reduce",
     )
 
-    chapters_context = ""
-    for idx, chap in enumerate(data.selectedChapters):
-        chapters_context += f"--- 章节样本 {idx + 1} ---\n"
-        chapters_context += f"世界观: {chap.get('worldview', '')}\n"
-        chapters_context += f"核心骨架: {chap.get('plotSkeleton', '')}\n"
-        chapters_context += f"风格: {chap.get('style', '')}\n"
-        chapters_context += "出场角色:\n"
-        for char in chap.get("characters", []):
-            chapters_context += f"- {char.get('name')}: 性格={char.get('personality')}, 外貌={char.get('appearance')}, 冲突={char.get('coreConflict')}\n"
-        chapters_context += "角色关系:\n"
-        for rel in chap.get("relationships", []):
-            chapters_context += f"- {rel.get('roleA')} 与 {rel.get('roleB')}: {rel.get('description')}\n"
-        chapters_context += "\n"
 
-    user_prompt = (
-        f"下面是供你融合的现有小说章节结构化解析信息：\n\n"
-        f"{chapters_context}\n"
-        f"作家的融合指令/要求如下：\n"
-        f"【{data.fusionPrompt}】\n\n"
-        f"请根据上述信息，为我生成精美的融合大纲。"
-    )
+@app.post("/api/py/generate-fusion-directions")
+async def generate_fusion_directions(data: FusionDirectionsInput, request: Request):
+    await ensure_rate_limit(request, "/api/py/generate-fusion-directions")
+    model = sanitize_text(data.model)
+    api_key = sanitize_text(data.apiKey)
+    validate_llm_creds(api_key, model, data.temperature)
+    logger.info("generate_fusion_directions ip=%s model=%s books=%s", get_client_ip(request), model, len(data.dnaCards))
 
-    async def event_generator():
-        try:
-            stream = await client.chat.completions.create(
-                model=model,
-                temperature=data.temperature,
-                max_tokens=2200,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                stream=True,
-            )
-
-            async for chunk in stream:
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                content = delta.content if delta else None
-                if content:
-                    yield sse_event("delta", {"text": content})
-
-            yield sse_event("done", {"ok": True})
-        except Exception as exc:
-            logger.warning("generate_outline failed ip=%s model=%s err=%s", get_client_ip(request), model, exc.__class__.__name__)
-            _, code, message = classify_openai_error(exc)
-            yield sse_event("error", {"code": code, "message": message})
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
-
-
-@app.post("/api/py/generate-text")
-async def generate_text(data: GenerationInput, request: Request):
-    await ensure_rate_limit(request, "/api/py/generate-text")
-    validate_generation_input(data)
-    client = build_openai_client(data.apiKey, data.baseUrl, timeout=STREAM_TIMEOUT_SECONDS)
-    model = data.model.strip()
-    logger.info("generate_text ip=%s model=%s outline_chars=%s", get_client_ip(request), model, len(data.outline))
+    cards = []
+    for idx, c in enumerate(data.dnaCards):
+        cards.append(
+            f"=== 小说 {idx + 1}：{c.novelName or '（未命名）'} ===\n"
+            f"母题与冲突：{c.theme}\n世界观规则与代价：{c.worldview}\n"
+            f"角色灵魂原型：{c.characters}\n叙事特征：{c.narrativeStyle}\n风格指纹：{c.styleFingerprint}"
+        )
+    dna_block = "\n\n".join(cards)
+    extra = ""
+    if data.userCustomPrompt and data.userCustomPrompt.strip():
+        extra += f"\n\n【用户自定义大方向】：{data.userCustomPrompt.strip()}"
+    if data.adversarialRules and data.adversarialRules.strip():
+        extra += f"\n\n【用户红队对抗规则（最高优先级，违反即重写）】：{data.adversarialRules.strip()}"
 
     system_prompt = (
-        "你是一个拥有十余年网文写作经验的白金作家，擅长细腻的心理描写、宏大的战斗场面、精妙的对话以及让人欲罢不能的爽点设计。\n"
-        "你的任务是根据作家微调后的【融合新大纲】和【融合指令】，开始创作小说正文的第一章（或全新独立章节）。\n"
-        "写作要求：\n"
-        "1. 字数尽量丰满（建议生成 2000-3000 字左右的高水准正文），展开细节，描写画面感要强，避免平铺直叙地解释设定。\n"
-        "2. 将大纲中的核心冲突、性格张力通过对话、行动和场景氛围真实表现出来。\n"
-        "3. 直接输出小说的正式正文内容，不要有任何多余的开场白或自我介绍。"
+        "你是一个由三位顶尖创作大脑组成的'创世圆桌'，并内置一名冷面红队审查官。"
+        "你的任务：基于输入的多本小说'创作 DNA'，碰撞出 3 个完全独立、互不雷同、具备高维原创性的融合变体方向。\n"
+        "请在内部（不外显推演过程）完成以下步骤后，只输出最终 3 个方向：\n"
+        "第一步·摩擦力诊断：计算这些 DNA 之间最尖锐的偏离与矛盾点（例：'追求自然天道'撞上'极致资本科技'→ "
+        "天道修行能否被资本化、义体化），以核心摩擦点作为变体的引爆原点，而非表面元素拼贴。\n"
+        "第二步·三编剧圆桌辩论：\n"
+        "· 先锋导演（催化剂）：打破常规，提出最极致的世界观反转与最具冲击力的'催化变量'。坚决反对'把飞剑染成霓虹色'式肤浅拼凑，"
+        "主张本质级重构（如'灵气本是重度致幻的工业废料，跨国集团垄断净化核心，散修须将身体改造成气脉过滤器才能活命'）。\n"
+        "· 现实主义社会学者（法则构建师）：为激进幻想搭建严密的社会经济与代价体系（如'修行层级晋升＝持股量增多，天劫＝集团强制清算重组'），确保逻辑自洽。\n"
+        "· 反套路批评家（红队）：清扫一切宏大空泛叙事与煽情辞藻，强制冷白描与高信息密度物理细节。\n"
+        "第三步·红队自查：逐条核对每个方向——是否只是名字替换式的机械缝合？是否违反用户红队规则？是否含黑名单陈词滥调？不合格者就地重写直至通过。\n"
+        "3 个方向之间必须在母题与机制上显著不同，禁止换皮。\n"
+        + ANTI_SLOP_CONSTRAINT
+    )
+    user_prompt = f"以下是参与碰撞的小说创作 DNA：\n\n{dna_block}{extra}\n\n请输出 3 个深度融合的原创变体方向。"
+    return await run_structured(
+        api_key=api_key, base_url=data.baseUrl, model=model,
+        response_model=FusionDirectionsResponse,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        temperature=data.temperature, request=request, label="generate_fusion_directions",
+        instructor_retries=2,
     )
 
+
+@app.post("/api/py/tweak-fusion-blocks")
+async def tweak_fusion_blocks(data: TweakBlocksInput, request: Request):
+    await ensure_rate_limit(request, "/api/py/tweak-fusion-blocks")
+    model = sanitize_text(data.model)
+    api_key = sanitize_text(data.apiKey)
+    instruction = sanitize_text(data.userInstruction)
+    if not instruction:
+        raise ApiError(status_code=400, code="invalid_request", message="修改指令不能为空。")
+    validate_llm_creds(api_key, model, data.temperature)
+    logger.info("tweak_fusion_blocks ip=%s model=%s", get_client_ip(request), model)
+
+    adv = ""
+    if data.adversarialRules and data.adversarialRules.strip():
+        adv = f"\n【用户红队对抗规则（必须遵守）】：{data.adversarialRules.strip()}"
+    system_prompt = (
+        "你是创世台的'积木调度官'。当前有 4 块设定积木：worldviewBlock(世界观)、protagonistBlock(主角)、"
+        "antagonistBlock(对手)、narrativeTone(叙事色调)。用户会给出一句修改指令。\n"
+        "请判断该指令意图修改哪些积木（可一个或多个），仅重写被影响的积木，未受影响的积木在返回中保持为 null。"
+        "重写时必须与其余积木保持设定自洽，绝不能引入唯心套路或廉价拼贴。"
+        "modifiedBlocks 必须准确列出你实际修改的积木 ID。\n"
+        + ANTI_SLOP_CONSTRAINT
+    )
     user_prompt = (
-        f"微调后的融合新大纲如下：\n\n"
-        f"{data.outline}\n\n"
-        f"当初的融合指令/要求：\n"
-        f"【{data.fusionPrompt}】\n\n"
-        f"请开始动笔创作这篇融合小说的第一章（或核心章节）正文。"
+        f"【当前积木】\nworldviewBlock：{data.worldviewBlock}\nprotagonistBlock：{data.protagonistBlock}\n"
+        f"antagonistBlock：{data.antagonistBlock}\nnarrativeTone：{data.narrativeTone}\n\n"
+        f"【用户修改指令】：{instruction}{adv}"
+    )
+    return await run_structured(
+        api_key=api_key, base_url=data.baseUrl, model=model,
+        response_model=TweakBlocksResponse,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        temperature=data.temperature, request=request, label="tweak_fusion_blocks",
+        instructor_retries=1,
+    )
+
+
+@app.post("/api/py/generate-storyboard")
+async def generate_storyboard(data: StoryboardInput, request: Request):
+    await ensure_rate_limit(request, "/api/py/generate-storyboard")
+    model = sanitize_text(data.model)
+    api_key = sanitize_text(data.apiKey)
+    validate_llm_creds(api_key, model, data.temperature)
+    d = data.selectedDirection
+    logger.info("generate_storyboard ip=%s model=%s scenes=%s", get_client_ip(request), model, data.sceneCount)
+
+    adv = ""
+    if data.adversarialRules and data.adversarialRules.strip():
+        adv = f"\n【用户红队对抗规则（必须遵守）】：{data.adversarialRules.strip()}"
+    system_prompt = (
+        f"你是顶尖的小说分镜编剧。基于给定的融合设定，设计 {data.sceneCount} 个连贯递进的开篇故事板分镜。"
+        "每个分镜给出：序号(sceneNumber)、标题(sceneTitle)、核心情节走向与爽点/爆点(plotOutline)、"
+        "张力曲线(tensionLevel)、画面感与环境意象指示(visualCues)。"
+        "分镜之间要有清晰的张力递进与因果勾连，为后续正文铺好骨架。\n"
+        + ANTI_SLOP_CONSTRAINT
+    )
+    user_prompt = (
+        f"【融合设定】\n方向：{d.title}\n世界观：{d.worldviewBlock}\n主角：{d.protagonistBlock}\n"
+        f"对手：{d.antagonistBlock}\n叙事色调：{d.narrativeTone}{adv}\n\n请输出 {data.sceneCount} 个分镜。"
+    )
+    return await run_structured(
+        api_key=api_key, base_url=data.baseUrl, model=model,
+        response_model=StoryboardResponse,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        temperature=data.temperature, request=request, label="generate_storyboard",
+    )
+
+
+@app.post("/api/py/stream-scene-text")
+async def stream_scene_text(data: SceneTextInput, request: Request):
+    await ensure_rate_limit(request, "/api/py/stream-scene-text")
+    model = sanitize_text(data.model)
+    api_key = sanitize_text(data.apiKey)
+    validate_llm_creds(api_key, model, data.temperature)
+    client = build_openai_client(api_key, data.baseUrl, timeout=STREAM_TIMEOUT_SECONDS)
+    d = data.selectedDirection
+    scene = data.currentScene
+    logger.info("stream_scene_text ip=%s model=%s scene=%s", get_client_ip(request), model, scene.sceneNumber)
+
+    ordered = sorted(data.precedingTexts.items())
+    preceding = "\n\n".join(text for _, text in ordered if text and text.strip())
+    if len(preceding) > MAX_SCENE_CONTEXT_CHARS:
+        preceding = preceding[-MAX_SCENE_CONTEXT_CHARS:]
+    preceding_block = preceding if preceding.strip() else "（这是开篇第一个分镜，无前文。）"
+
+    adv = ANTI_SLOP_CONSTRAINT
+    if data.adversarialRules and data.adversarialRules.strip():
+        adv += f"\n【用户红队对抗规则（必须遵守）】：{data.adversarialRules.strip()}"
+
+    system_prompt = (
+        "你是一位文字极具颗粒度的小说家。请根据给定的设定积木与当前分镜大纲创作小说正文。\n"
+        + adv
+        + "\n直接输出正文，不要任何前言、标题或解释。"
+    )
+    user_prompt = (
+        f"【角色设定与世界观积木】\n世界观：{d.worldviewBlock}\n主角：{d.protagonistBlock}\n"
+        f"对手：{d.antagonistBlock}\n叙事色调：{d.narrativeTone}\n\n"
+        f"【当前要写作的分镜】\n标题：{scene.sceneTitle}\n情节走向：{scene.plotOutline}\n"
+        f"张力：{scene.tensionLevel}\n画面意象：{scene.visualCues}\n\n"
+        f"【前置分镜已写出的实际正文（供承上启下）】\n----- 前情回顾 -----\n{preceding_block}\n-------------------\n"
+        "请紧密承接前置分镜最后一句话的语气、环境与角色站位，继续创作当前分镜。"
+        "严禁剧情断层或设定漂移。直接开始输出正文，不要重复前文。"
     )
 
     async def event_generator():
@@ -434,7 +540,7 @@ async def generate_text(data: GenerationInput, request: Request):
 
             yield sse_event("done", {"ok": True})
         except Exception as exc:
-            logger.warning("generate_text failed ip=%s model=%s err=%s", get_client_ip(request), model, exc.__class__.__name__)
+            logger.warning("stream_scene_text failed ip=%s model=%s err=%s", get_client_ip(request), model, exc.__class__.__name__)
             _, code, message = classify_openai_error(exc)
             yield sse_event("error", {"code": code, "message": message})
 
