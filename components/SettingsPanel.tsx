@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Eye, EyeOff, LockKeyhole, Orbit, X } from 'lucide-react';
 import { useAppStore } from '../app/store';
 import { getProviderMeta, listProviderMetas } from '../app/llmProviders';
 import { getLlmConfigError } from '../app/llmClient';
@@ -38,166 +37,97 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      <button type="button" className="absolute inset-0 bg-black/80 backdrop-blur-xs" onClick={onClose} aria-label="关闭设置" />
+      <button type="button" className="absolute inset-0 bg-black/70" onClick={onClose} aria-label="关闭" />
 
-      <aside className="animate-slide-in relative flex h-full w-full max-w-[420px] flex-col border-l border-hairline bg-[#050505] shadow-2xl">
-        <header className="linear-border-b px-6 py-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.02] px-3 py-1 text-xs text-zinc-400">
-                <Orbit className="h-3.5 w-3.5 text-zinc-300" />
-                模型配置底座
-              </div>
-              <h2 className="mt-4 text-lg font-semibold text-zinc-100 tracking-tight">配置大模型引擎</h2>
-              <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-                密钥仅在此浏览器本地存储（LocalStorage）。点亮引擎后，章节映射、DNA 提炼与创意碰撞逻辑将自动点亮。
-              </p>
-            </div>
-            <button
-              onClick={onClose}
-              className="rounded-full border border-hairline p-1.5 text-zinc-600 transition-linear hover:border-white/15 hover:text-zinc-200"
-              aria-label="关闭"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
+      <aside className="relative flex h-full w-full max-w-md flex-col border-l bg-black">
+        <header className="flex h-12 items-center justify-between border-b px-6">
+          <span className="text-sm">设置</span>
+          <button onClick={onClose} className="text-secondary hover:text-primary">×</button>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-          <div className={`rounded-xl border p-5 bg-surface-1/40 flex items-start gap-4 ${
-            readiness ? 'border-hairline' : 'border-white/10'
-          }`}>
-            <span className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${
-              readiness ? 'bg-amber-500 animate-pulse shadow-[0_0_6px_#f59e0b]' : 'bg-emerald-500 shadow-[0_0_6px_#10b981]'
-            }`} />
-            <div>
-              <p className="text-[10px] font-mono tracking-wider text-zinc-600 uppercase">ENGINE_STATUS</p>
-              <h3 className="mt-1 text-sm font-semibold text-zinc-250">
-                {readiness ? '还有前置配置待点亮' : '模型引擎配置完好'}
-              </h3>
-              <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
-                {readiness ? readiness : '链路已完全畅通，可直接返回工作台继续创作心流。'}
-              </p>
-              {returnHint && (
-                <div className="mt-3 rounded-lg border border-hairline bg-white/[0.01] px-3 py-2 text-[11px] text-zinc-450 font-mono">
-                  PENDING_TASK: <span className="text-zinc-300">{returnHint}</span>
-                </div>
-              )}
-            </div>
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {/* Status */}
+          <div className="flex items-center gap-3 text-sm">
+            <span className={readiness ? 'text-amber-500' : 'text-emerald-500'}>
+              {readiness ? '○' : '●'}
+            </span>
+            <span>{readiness || '配置完成'}</span>
           </div>
 
-          <div className="mt-5 grid gap-2.5 font-mono text-[11px]">
-            {[
-              { label: '服务提供商', done: true },
-              { label: requiresApiKey ? 'API 接口密钥' : '本地接口密钥', done: !requiresApiKey || activeProfile.apiKey.trim().length > 0 },
-              { label: 'BASE_URL 地址', done: activeProfile.baseUrl.trim().length > 0 },
-              { label: 'MODEL 预设模型', done: activeProfile.model.trim().length > 0 },
-            ].map((item) => (
-              <div key={item.label} className="flex items-center justify-between rounded-xl border border-hairline bg-white/[0.015] px-4 py-2.5 text-zinc-400">
-                <span>{item.label}</span>
-                <span className={item.done ? 'text-zinc-400 font-medium' : 'text-amber-500 font-medium animate-pulse'}>
-                  {item.done ? 'READY' : 'REQUIRED'}
-                </span>
-              </div>
-            ))}
-          </div>
+          {returnHint && <p className="text-xs text-muted">待执行: {returnHint}</p>}
 
-          <div className="mt-6 space-y-4">
-            <div>
-              <label className="mb-1.5 block text-[10px] font-mono text-zinc-500">PROVIDER / 提供方</label>
+          {/* Form */}
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-xs text-muted">提供商</label>
               <select
                 value={activeProvider}
-                onChange={(event) => setActiveProvider(event.target.value as typeof activeProvider)}
-                className="h-10 w-full rounded-xl border border-hairline bg-zinc-950 px-3 text-xs text-zinc-200 focus:outline-none focus:border-white/15"
+                onChange={(e) => setActiveProvider(e.target.value as typeof activeProvider)}
+                className="w-full border bg-transparent p-2 text-sm focus:outline-none"
               >
                 {providerOptions.map((provider) => (
-                  <option key={provider.id} value={provider.id} className="bg-[#0c0c0e]">
-                    {provider.name}
-                  </option>
+                  <option key={provider.id} value={provider.id}>{provider.name}</option>
                 ))}
               </select>
             </div>
 
-            <div>
-              <label className="mb-1.5 block text-[10px] font-mono text-zinc-500">
-                {requiresApiKey ? 'API_KEY / 接口密钥' : 'LOCAL_KEY / 本地密钥'}
-              </label>
-              <div className="relative">
+            <div className="space-y-2">
+              <label className="text-xs text-muted">{requiresApiKey ? 'API Key' : 'API Key（可选）'}</label>
+              <div className="flex items-center gap-2">
                 <input
                   type={showKey ? 'text' : 'password'}
                   value={activeProfile.apiKey}
-                  onChange={(event) => updateActiveProviderProfile({ apiKey: event.target.value })}
-                  onBlur={(event) => updateActiveProviderProfile({ apiKey: event.target.value.trim() })}
-                  placeholder={requiresApiKey ? 'sk-...' : '本地引擎可直接留空'}
-                  className="h-10 w-full rounded-xl border border-hairline bg-zinc-950 px-4 pr-12 text-xs font-mono text-zinc-200 placeholder:text-zinc-700 focus:outline-none focus:border-white/15"
+                  onChange={(e) => updateActiveProviderProfile({ apiKey: e.target.value })}
+                  onBlur={(e) => updateActiveProviderProfile({ apiKey: e.target.value.trim() })}
+                  placeholder="sk-..."
+                  className="flex-1 border bg-transparent p-2 text-sm font-mono focus:outline-none"
                 />
                 <button
                   type="button"
-                  onClick={() => setShowKey((value) => !value)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-600 transition-linear hover:text-zinc-300"
-                  aria-label={showKey ? '隐藏密钥' : '显示密钥'}
+                  onClick={() => setShowKey(!showKey)}
+                  className="text-xs text-muted hover:text-secondary"
                 >
-                  {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  {showKey ? '隐藏' : '显示'}
                 </button>
               </div>
             </div>
 
-            <div>
-              <label className="mb-1.5 block text-[10px] font-mono text-zinc-500">BASE_URL / 接口端点地址</label>
+            <div className="space-y-2">
+              <label className="text-xs text-muted">Base URL</label>
               <input
                 type="text"
                 value={activeProfile.baseUrl}
-                onChange={(event) => updateActiveProviderProfile({ baseUrl: event.target.value })}
-                onBlur={(event) => updateActiveProviderProfile({ baseUrl: event.target.value.trim() })}
+                onChange={(e) => updateActiveProviderProfile({ baseUrl: e.target.value })}
+                onBlur={(e) => updateActiveProviderProfile({ baseUrl: e.target.value.trim() })}
                 placeholder="https://api.example.com/v1"
-                className="h-10 w-full rounded-xl border border-hairline bg-zinc-950 px-4 text-xs font-mono text-zinc-200 placeholder:text-zinc-700 focus:outline-none focus:border-white/15"
+                className="w-full border bg-transparent p-2 text-sm font-mono focus:outline-none"
               />
             </div>
 
-            <div>
-              <label className="mb-1.5 block text-[10px] font-mono text-zinc-500">MODEL_NAME / 拟合模型名称</label>
+            <div className="space-y-2">
+              <label className="text-xs text-muted">模型</label>
               <input
                 list="model-presets"
                 value={activeProfile.model}
-                onChange={(event) => updateActiveProviderProfile({ model: event.target.value })}
-                onBlur={(event) => updateActiveProviderProfile({ model: event.target.value.trim() })}
-                placeholder="例如 gpt-4o / deepseek-chat"
-                className="h-10 w-full rounded-xl border border-hairline bg-zinc-950 px-4 text-xs font-mono text-zinc-200 placeholder:text-zinc-700 focus:outline-none focus:border-white/15"
+                onChange={(e) => updateActiveProviderProfile({ model: e.target.value })}
+                onBlur={(e) => updateActiveProviderProfile({ model: e.target.value.trim() })}
+                placeholder="gpt-4o"
+                className="w-full border bg-transparent p-2 text-sm font-mono focus:outline-none"
               />
               <datalist id="model-presets">
                 {activeProviderMeta.modelPresets.map((preset) => (
-                  <option key={preset.value} value={preset.value}>
-                    {preset.label}
-                  </option>
+                  <option key={preset.value} value={preset.value}>{preset.label}</option>
                 ))}
               </datalist>
             </div>
           </div>
 
-          <div className="mt-6 rounded-xl border border-hairline bg-white/[0.015] p-4 text-xs leading-relaxed text-zinc-500">
-            <div className="flex items-start gap-3">
-              <LockKeyhole className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400" />
-              <div>
-                <p className="font-semibold text-zinc-400">密钥沙箱保证 (SANDBOX_SAFE)</p>
-                <p className="mt-1">
-                  您的密钥在底层以沙箱形式保护在 LocalStorage 中，永不触碰云端或中间服务器，在前端随调用发生而直接封装至 LLM Body。
-                </p>
-              </div>
-            </div>
-          </div>
+          <p className="text-xs text-muted">密钥仅存储在浏览器本地，不会上传服务器。</p>
         </div>
 
-        <footer className="linear-border-t px-6 py-5 bg-[#030303]">
-          <button
-            onClick={onClose}
-            className={`flex h-10 w-full items-center justify-center gap-1.5 rounded-md text-xs font-semibold transition-linear ${
-              readiness
-                ? 'border border-hairline bg-surface-2 text-zinc-400 hover:bg-surface-3'
-                : 'bg-primary hover:bg-primary-hover active:bg-primary-focus text-white active-press'
-            }`}
-          >
-            {!readiness && <CheckCircle2 className="h-3.5 w-3.5 text-zinc-300" />}
-            {readiness ? '保存修改并暂退' : '配置链完好，返回继续心流'}
+        <footer className="border-t p-6">
+          <button onClick={onClose} className="w-full py-2 text-sm text-secondary hover:text-primary">
+            关闭
           </button>
         </footer>
       </aside>
