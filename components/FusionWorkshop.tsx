@@ -46,9 +46,9 @@ type BlockKey = 'worldviewBlock' | 'protagonistBlock' | 'antagonistBlock' | 'nar
 
 const BLOCKS: { key: BlockKey; label: string; helper: string; icon: typeof Globe }[] = [
   { key: 'worldviewBlock', label: '世界观规约', helper: '哪些法则真正控制这个变体世界。', icon: Globe },
-  { key: 'protagonistBlock', label: '主角原型', helper: '主角如何欲望驱动、如何承担代价。', icon: Sparkles },
-  { key: 'antagonistBlock', label: '对手原型', helper: '谁会制造阻力，阻力来自何处。', icon: Swords },
-  { key: 'narrativeTone', label: '叙事色调', helper: '语气、镜头、节奏和情绪的主旋律。', icon: WandSparkles },
+  { key: 'protagonistBlock', label: '主角灵魂原型', helper: '主角如何欲望驱动、如何承担代价。', icon: Sparkles },
+  { key: 'antagonistBlock', label: '对手原型体系', helper: '谁会制造阻力，阻力来自何处。', icon: Swords },
+  { key: 'narrativeTone', label: '叙事色调气质', helper: '语气、镜头、节奏和情绪的主旋律。', icon: WandSparkles },
 ];
 
 const STATUS_CHAIN = [
@@ -58,10 +58,21 @@ const STATUS_CHAIN = [
   '正在打磨三条可选路线，准备点亮工坊…',
 ];
 
+const PRESETS = [
+  { label: '加深冲突张力', cmd: '加深角色之间的核心冲突与命运张力' },
+  { label: '弱化幻想设定', cmd: '弱化科幻或奇幻设定，将核心聚焦于现实与人性冲突' },
+  { label: '增加悬疑冷冽感', cmd: '为故事板和文风注入更浓郁的悬疑、冷峻与黑色电影（Noir）色调' },
+  { label: '让代价转向记忆', cmd: '让主角面临的重大代价由生理性创伤转向宿命般丢失的记忆' },
+];
+
 function StepBadge({ index, label, active }: { index: number; label: string; active: boolean }) {
   return (
-    <div className={`rounded-full border px-3 py-1 text-xs ${active ? 'border-amber-300/30 bg-amber-300/12 text-amber-50' : 'border-white/10 bg-white/[0.03] text-zinc-500'}`}>
-      {index}. {label}
+    <div className={`rounded-full border px-3 py-1 text-[10px] font-mono ${
+      active 
+        ? 'border-white/10 bg-white/[0.03] text-zinc-100' 
+        : 'border-white/5 bg-transparent text-zinc-600'
+    }`}>
+      0{index}. {label}
     </div>
   );
 }
@@ -146,7 +157,7 @@ export default function FusionWorkshop() {
       setDirections(data.directions || []);
       setStep('directions');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '创意碰撞失败，请重试。');
+      setError(err instanceof Error ? err.message : '创意碰撞评估失败，请重试。');
     } finally {
       setColliding(false);
     }
@@ -167,7 +178,7 @@ export default function FusionWorkshop() {
 
   const flashPulse = (keys: BlockKey[]) => {
     setPulse(new Set(keys));
-    setTimeout(() => setPulse(new Set()), 1000);
+    setTimeout(() => setPulse(new Set()), 1200);
   };
 
   const runTweak = async () => {
@@ -196,7 +207,7 @@ export default function FusionWorkshop() {
       flashPulse(changed);
       setCommand('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '调整失败，请重试。');
+      setError(err instanceof Error ? err.message : '变体精调调整失败，请重试。');
     } finally {
       setTweaking(false);
     }
@@ -219,7 +230,7 @@ export default function FusionWorkshop() {
       setStoryboard(data.scenes || []);
       setSceneTexts({});
     } catch (err) {
-      setError(err instanceof Error ? err.message : '生成故事板失败，请重试。');
+      setError(err instanceof Error ? err.message : '生成分镜故事板失败，请重试。');
     } finally {
       setGeneratingBoard(false);
     }
@@ -250,7 +261,7 @@ export default function FusionWorkshop() {
     } catch (err) {
       setSceneTexts((previous) => ({
         ...previous,
-        [num]: `${previous[num] || ''}\n\n[生成出错: ${err instanceof Error ? err.message : err}]`,
+        [num]: `${previous[num] || ''}\n\n[生成发生阻碍: ${err instanceof Error ? err.message : err}]`,
       }));
     } finally {
       setStreamingScene(null);
@@ -275,33 +286,33 @@ export default function FusionWorkshop() {
 
   if (readyNovels.length < 2) {
     return (
-      <div className="flex flex-1 items-center justify-center animate-fade-in">
-        <div className="glass-card max-w-3xl rounded-[32px] p-8 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl border border-amber-400/20 bg-amber-400/10 text-amber-100 energy-ring">
-            <Layers3 className="h-8 w-8" />
+      <div className="flex flex-1 items-center justify-center animate-fade-in bg-[#000000]">
+        <div className="glass-card max-w-3xl rounded-2xl p-8 text-center border-white/5 bg-zinc-950/60">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-white/[0.02] text-zinc-300">
+            <Layers3 className="h-5 w-5" />
           </div>
-          <p className="mt-6 text-[11px] uppercase tracking-[0.26em] text-zinc-500">工坊尚未点火</p>
-          <h1 className="mt-3 text-3xl font-semibold text-zinc-50">DNA 资产还不够，融合变体阶段暂时不能继续</h1>
-          <p className="mt-4 text-base leading-7 text-zinc-300">
-            融合变体不是独立功能区，而是前序工作的自然产物。当前只有 {readyNovels.length} 部 DNA 就绪作品，
-            还差 {missingReadyCount} 部，无法稳定生成真正有张力的方向卡、故事板与正文变体草案。
+          <p className="mt-6 text-[10px] font-mono tracking-widest text-zinc-500 uppercase">工坊未开启</p>
+          <h1 className="mt-3 text-2xl font-semibold text-zinc-100 tracking-tight">创意融合工坊尚需 DNA 原料依赖</h1>
+          <p className="mt-2.5 text-xs leading-relaxed text-zinc-400 max-w-2xl mx-auto">
+            创意变体融合基于上游的 DNA 提炼资产。当前数据库中仅有 {readyNovels.length} 部 DNA 就绪作品，还差 {missingReadyCount} 部。
+            请先将两本及以上的 TXT 长篇小说提炼出 DNA 后再点亮本工坊。
           </p>
-          <div className="mt-6 grid gap-3 text-left md:grid-cols-4">
-            <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
-              <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">当前阶段</p>
-              <p className="mt-2 text-sm text-zinc-100">04 融合变体</p>
+          <div className="mt-6 grid gap-3 text-left grid-cols-2 md:grid-cols-4 text-xs font-mono">
+            <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4">
+              <p className="text-[9px] text-zinc-650 uppercase">当前阶段</p>
+              <p className="mt-1.5 text-zinc-300 font-sans font-medium">04 融合变体</p>
             </div>
-            <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
-              <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">阻塞原因</p>
-              <p className="mt-2 text-sm leading-6 text-zinc-200">DNA 资产不足，无法形成可靠碰撞。</p>
+            <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4">
+              <p className="text-[9px] text-zinc-650 uppercase">阻碍原因</p>
+              <p className="mt-1.5 text-zinc-300 font-sans">DNA 库不足以拟合碰撞。</p>
             </div>
-            <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
-              <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">修复动作</p>
-              <p className="mt-2 text-sm leading-6 text-zinc-200">回到上游，再完成一部作品的 DNA。</p>
+            <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4">
+              <p className="text-[9px] text-zinc-650 uppercase">修正动作</p>
+              <p className="mt-1.5 text-zinc-300 font-sans">提炼另一部项目的 DNA。</p>
             </div>
-            <div className="rounded-2xl border border-amber-300/15 bg-amber-300/8 p-4">
-              <p className="text-[11px] uppercase tracking-[0.22em] text-amber-100/75">完成后得到</p>
-              <p className="mt-2 text-sm leading-6 text-amber-50">方向卡、故事板与正文变体草案。</p>
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+              <p className="text-[9px] text-zinc-500 uppercase">完成后获得</p>
+              <p className="mt-1.5 text-zinc-200 font-sans font-medium">分镜故事板与流式正文。</p>
             </div>
           </div>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
@@ -311,15 +322,15 @@ export default function FusionWorkshop() {
                 setWorkshopOpen(false);
                 setSelectedNovelId(firstIncompleteNovel.id);
               }}
-              className="rounded-2xl border border-amber-300/25 bg-amber-300/14 px-5 py-3 text-sm font-medium text-amber-50 transition-linear hover:bg-amber-300/20"
+              className="rounded-xl border border-white/10 bg-white/[0.04] px-5 py-2.5 text-xs font-semibold text-white transition-linear hover:bg-white/[0.08]"
             >
-              去补齐另一部作品的 DNA
+              去补齐另一部原稿的 DNA
             </button>
             <button
               onClick={() => window.dispatchEvent(new CustomEvent('open-settings-panel', { detail: { intent: '融合变体' } }))}
-              className="rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-3 text-sm font-medium text-zinc-200 transition-linear hover:border-white/20 hover:bg-white/[0.05]"
+              className="rounded-xl border border-white/5 bg-white/[0.015] px-5 py-2.5 text-xs font-semibold text-zinc-300 transition-linear hover:border-white/10 hover:bg-white/[0.03]"
             >
-              先检查模型配置
+              前去模型配置检查
             </button>
           </div>
         </div>
@@ -330,34 +341,33 @@ export default function FusionWorkshop() {
   if (step === 'material') {
     return (
       <div className="flex flex-1 flex-col gap-5 animate-fade-in">
-        <div className="glass-card rounded-[30px] p-6 panel-grid">
+        <div className="glass-card rounded-2xl p-6 panel-grid border-white/5 bg-zinc-950/60">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="max-w-3xl">
-              <p className="text-[11px] uppercase tracking-[0.26em] text-zinc-500">万有引力室 / 多作品融合起点</p>
-              <h1 className="mt-3 text-3xl font-semibold text-zinc-50">先选参与碰撞的作品，再决定你想要的变体世界偏航方向</h1>
-              <p className="mt-4 text-base leading-7 text-zinc-300">
-                这里是变体阶段的第一步。先确认哪些作品要一起发生反应，再决定要不要追加高级约束，而不是先被大文本框打断。
+              <p className="text-[10px] font-mono tracking-widest text-zinc-500 uppercase">第一阶段 / 万有引力室</p>
+              <h1 className="mt-2 text-2xl font-semibold text-zinc-100 tracking-tight">选定碰撞作品组合，设定偏航大方向</h1>
+              <p className="mt-2 text-xs leading-relaxed text-zinc-400">
+                从库内选取至少两部已生成 DNA 骨架的小说进行融合。您可以根据需求在高级面板注入偏航方向，碰撞算法将给出三条全然不同的原创路线。
               </p>
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <StepBadge index={1} label="选择参与作品" active />
-              <StepBadge index={2} label="选择融合方向" active={false} />
-              <StepBadge index={3} label="高级约束与生成" active={false} />
+              <StepBadge index={1} label="素材选择" active />
+              <StepBadge index={2} label="路线筛选" active={false} />
+              <StepBadge index={3} label="设定打磨" active={false} />
             </div>
           </div>
         </div>
 
         <div className="grid gap-4 xl:grid-cols-[1.5fr_0.9fr]">
-          <div className="glass-card rounded-[30px] p-6">
+          <div className="glass-card rounded-2xl p-6 border-white/5 bg-zinc-950/60">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">步骤 1 / 选材台</p>
-                <h2 className="mt-2 text-xl font-semibold text-zinc-50">选择要参与融合的作品</h2>
-                <p className="mt-2 text-sm leading-6 text-zinc-400">输入是至少两部 DNA 就绪作品，输出是一组可继续生成变体方向的素材组合。</p>
+                <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">步骤 1 / 选取输入资产</p>
+                <h2 className="mt-1 text-sm font-semibold text-zinc-200">选择参与融合的原稿项目</h2>
               </div>
-              <div className="rounded-full border border-white/10 px-3 py-1 text-xs text-zinc-400">
-                已选 {selectedIds.length} / {readyNovels.length}
+              <div className="rounded-full border border-white/5 bg-white/[0.01] px-3 py-0.5 text-[10px] font-mono text-zinc-450">
+                SELECTED: {selectedIds.length} / {readyNovels.length}
               </div>
             </div>
 
@@ -368,24 +378,24 @@ export default function FusionWorkshop() {
                   <button
                     key={novel.id}
                     onClick={() => toggleNovel(novel.id)}
-                    className={`rounded-3xl border p-5 text-left transition-linear ${
+                    className={`rounded-2xl border p-5 text-left transition-linear ${
                       selected
-                        ? 'border-amber-300/30 bg-amber-300/12 shadow-[0_0_0_1px_rgba(247,165,26,0.08)]'
-                        : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.05]'
+                        ? 'border-zinc-700 bg-zinc-900/40 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]'
+                        : 'border-white/5 bg-white/[0.015] hover:border-white/10 hover:bg-white/[0.03]'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-4">
-                      <span className="text-lg font-semibold text-zinc-100">{novel.name}</span>
+                      <span className="text-sm font-semibold text-zinc-200">{novel.name}</span>
                       {selected ? (
-                        <span className="rounded-full border border-amber-300/20 px-2.5 py-1 text-[11px] text-amber-50">已加入</span>
+                        <span className="rounded-full border border-zinc-700 bg-zinc-900 px-2.5 py-0.5 text-[9px] font-mono text-zinc-200">ACTIVE</span>
                       ) : (
-                        <span className="rounded-full border border-white/10 px-2.5 py-1 text-[11px] text-zinc-500">可加入</span>
+                        <span className="rounded-full border border-white/5 px-2.5 py-0.5 text-[9px] font-mono text-zinc-600">IDLE</span>
                       )}
                     </div>
-                    <p className="mt-3 text-sm leading-6 text-zinc-400 line-clamp-3">{novel.dnaCard?.theme}</p>
-                    <div className="mt-4 flex items-center gap-3 text-xs text-zinc-500">
+                    <p className="mt-3 text-xs leading-relaxed text-zinc-500 line-clamp-3 font-serif">{novel.dnaCard?.theme}</p>
+                    <div className="mt-4 flex items-center gap-3 text-[10px] text-zinc-650 font-mono">
                       <span>{novel.wordCount.toLocaleString()} 字</span>
-                      <span>角色与结构已摘要</span>
+                      <span>DNA_MAPPED</span>
                     </div>
                   </button>
                 );
@@ -393,62 +403,70 @@ export default function FusionWorkshop() {
             </div>
           </div>
 
-          <div className="linear-card rounded-[30px] p-5">
-            <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">步骤 2 / 高级操控台</p>
-            <h3 className="mt-3 text-xl font-semibold text-zinc-50">先用默认流程就够了，只有想精调时再展开</h3>
-              <p className="mt-3 text-sm leading-7 text-zinc-400">
-                你可以先直接选作品并生成方向。只有在你明确知道“想往哪个极端偏航”时，才需要补充自定义方向和红队约束。
-              </p>
+          <div className="linear-card rounded-2xl p-5 border-white/5 bg-zinc-950/20">
+            <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">步骤 2 / 偏航微调台</p>
+            <h3 className="mt-2 text-sm font-semibold text-zinc-200">注入创意偏航指令与防套路红队规则</h3>
+            <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+              默认碰撞会自动拉开最大架构差异。如果您有独特的碰撞意图，可以在下方高级操控台注入具体偏航引导和黑名单规约。
+            </p>
 
             <button
               onClick={() => setAdvancedOpen((value) => !value)}
-              className="mt-5 flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-medium text-zinc-200 transition-linear hover:border-white/20 hover:bg-white/[0.05]"
+              className="mt-5 flex w-full items-center justify-between rounded-xl border border-white/5 bg-white/[0.015] px-4 py-2.5 text-xs font-medium text-zinc-350 transition-linear hover:border-white/10 hover:bg-white/[0.03]"
             >
-              <span>高级操控台</span>
-              <ChevronDown className={`h-4 w-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`} />
+              <span>高级操控选项面板</span>
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${advancedOpen ? 'rotate-180' : ''}`} />
             </button>
 
             {advancedOpen && (
-              <div className="mt-4 space-y-3 rounded-3xl border border-white/8 bg-white/[0.03] p-4">
+              <div className="mt-4 space-y-3 rounded-xl border border-white/5 bg-white/[0.01] p-4 text-xs">
                 <textarea
                   value={customPrompt}
                   onChange={(event) => setCustomPrompt(event.target.value)}
                   rows={3}
-                  placeholder="可选：告诉工坊你想往哪个方向偏航，例如“把权谋与废土生存压在同一条时间线上”"
-                  className="w-full rounded-2xl border border-white/10 bg-[#0b1018] p-3 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none resize-none"
+                  placeholder="可选：引导碰撞走向，例如“把诡异废土的生存挣扎与高墙内部的权谋博弈压在同一条时间线上”..."
+                  className="w-full rounded-xl border border-white/5 bg-zinc-950 p-3 text-xs text-zinc-200 placeholder:text-zinc-700 focus:outline-none resize-none"
                 />
                 <textarea
                   value={adversarialRules}
                   onChange={(event) => setAdversarialRules(event.target.value)}
                   rows={3}
-                  placeholder="可选：反套路红队约束，例如“严防宿命论、避免万能外挂与唯心主义捷径”"
-                  className="w-full rounded-2xl border border-white/10 bg-[#0b1018] p-3 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none resize-none"
+                  placeholder="可选：反套路红队规约，例如“严防宿命论、避免万能外挂与唯心主义捷径，强化逻辑硬核感”..."
+                  className="w-full rounded-xl border border-white/5 bg-zinc-950 p-3 text-xs text-zinc-200 placeholder:text-zinc-700 focus:outline-none resize-none"
                 />
               </div>
             )}
 
-            {error && <p className="mt-4 text-sm text-rose-300">{error}</p>}
+            {error && <p className="mt-4 text-xs font-mono text-rose-400">{error}</p>}
 
-            <div className="mt-5 rounded-3xl border border-amber-300/16 bg-amber-300/8 p-4 text-sm leading-7 text-zinc-300">
-              <p className="font-medium text-amber-50">当前推荐路线</p>
-              <p className="mt-2">先至少选 2 部作品。如果你是第一次使用，建议先不加高级约束，先看系统给出的 3 条变体路线。</p>
+            <div className="mt-5 rounded-xl border border-white/5 bg-white/[0.01] p-4 text-xs leading-relaxed text-zinc-500">
+              <p className="font-semibold text-zinc-400">初次使用建议</p>
+              <p className="mt-1">首次碰撞建议先不添加任何偏向与规约，让大模型自适应评估多视角题材的离散碰撞方向，以获得最优创意惊喜感。</p>
             </div>
 
             <div className="mt-5">
               {colliding ? (
-                <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-50">
-                  <div className="flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    {STATUS_CHAIN[statusIdx]}
+                <div className="rounded-xl border border-white/5 bg-zinc-950/40 p-4">
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between text-xs text-zinc-400 font-mono">
+                      <span className="flex items-center gap-2">
+                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                        COLLIDING...
+                      </span>
+                    </div>
+                    <div className="linear-loader-container rounded-full">
+                      <div className="linear-loader-bar rounded-full" />
+                    </div>
+                    <span className="text-[11px] text-zinc-500 font-sans tracking-tight">{STATUS_CHAIN[statusIdx]}</span>
                   </div>
                 </div>
               ) : (
                 <button
                   onClick={collide}
                   disabled={selectedIds.length < 2}
-                  className="w-full rounded-2xl border border-amber-300/25 bg-amber-300/14 px-5 py-3 text-sm font-medium text-amber-50 transition-linear hover:bg-amber-300/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="w-full rounded-xl border border-white/10 bg-white/[0.02] px-5 py-3 text-xs font-semibold text-white transition-linear hover:bg-white/[0.05] disabled:cursor-not-allowed disabled:opacity-30"
                 >
-                  {selectedIds.length < 2 ? '至少选择 2 部作品' : '启动创意碰撞'}
+                  {selectedIds.length < 2 ? '请至少选择 2 部作品立项' : '启动创意碰撞反应'}
                 </button>
               )}
             </div>
@@ -460,51 +478,51 @@ export default function FusionWorkshop() {
 
   if (step === 'directions') {
     return (
-      <div className="flex flex-1 flex-col gap-5 animate-fade-in">
+      <div className="flex flex-1 flex-col gap-5 animate-fade-in bg-[#000000]">
         <div className="flex items-center justify-between gap-4">
           <button
             onClick={() => setStep('material')}
-            className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm text-zinc-200 transition-linear hover:border-white/20 hover:bg-white/[0.05]"
+            className="inline-flex items-center gap-2 rounded-xl border border-white/5 bg-white/[0.015] px-4 py-2 text-xs font-medium text-zinc-400 transition-linear hover:border-white/10 hover:text-zinc-200"
           >
-            <ArrowLeft className="h-4 w-4" />
-            返回选材台
+            <ArrowLeft className="h-3.5 w-3.5" />
+            返回万有引力室
           </button>
           <div className="flex flex-wrap gap-2">
-            <StepBadge index={1} label="选择参与作品" active={false} />
-            <StepBadge index={2} label="选择融合方向" active />
-            <StepBadge index={3} label="高级约束与生成" active={false} />
+            <StepBadge index={1} label="素材选择" active={false} />
+            <StepBadge index={2} label="路线筛选" active />
+            <StepBadge index={3} label="设定打磨" active={false} />
           </div>
         </div>
 
-        <div className="glass-card rounded-[30px] p-6">
-          <p className="text-[11px] uppercase tracking-[0.26em] text-zinc-500">步骤 2 / 选择融合方向</p>
-          <h1 className="mt-3 text-3xl font-semibold text-zinc-50">挑一条最值得继续点火的变体世界</h1>
-          <p className="mt-3 text-base leading-7 text-zinc-300">
-            这一步的输入是已选中的作品组合，输出是可以继续落地的变体方向。下面三条路线会在核心概念、冲突引擎与叙事气质上拉开差异。
+        <div className="glass-card rounded-2xl p-6 border-white/5 bg-zinc-950/60">
+          <p className="text-[10px] font-mono tracking-widest text-zinc-500 uppercase">第二阶段 / 融合路线评筛</p>
+          <h1 className="mt-2 text-2xl font-semibold text-zinc-100 tracking-tight">选定一条具备核心张力的原创变体世界</h1>
+          <p className="mt-2 text-xs leading-relaxed text-zinc-400 max-w-3xl">
+            碰撞算法已将导入的 DNA 做自适应交叉分析，生成了 3 条完全不同的变体拟合走向。请审阅三者核心概念、冲突发动机与题材厚度，并点亮一条以开启微调与正文故事板分镜。
           </p>
 
-          <div className="mt-6 grid gap-4 xl:grid-cols-3">
+          <div className="mt-6 grid gap-5 xl:grid-cols-3">
             {directions.map((direction, index) => (
               <button
                 key={`${direction.title}-${index}`}
                 onClick={() => chooseDirection(direction)}
-                className="group rounded-[28px] border border-white/10 bg-white/[0.03] p-5 text-left transition-linear hover:-translate-y-1 hover:border-amber-300/28 hover:bg-white/[0.05]"
+                className="group rounded-2xl border border-white/5 bg-white/[0.01] p-5 text-left transition-linear hover:border-white/15 hover:bg-white/[0.02]"
               >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">方向 0{index + 1}</span>
-                  <Compass className="h-4 w-4 text-zinc-500 transition-linear group-hover:text-amber-100" />
+                <div className="flex items-center justify-between gap-3 font-mono">
+                  <span className="text-[9px] text-zinc-500 uppercase tracking-widest">DIRECTION 0{index + 1}</span>
+                  <Compass className="h-4 w-4 text-zinc-650 transition-linear group-hover:text-white" />
                 </div>
-                <h2 className="mt-4 text-xl font-semibold leading-8 text-zinc-50">{direction.title}</h2>
-                <p className="mt-4 text-sm leading-7 text-zinc-300">{direction.concept}</p>
+                <h2 className="mt-4 text-base font-semibold leading-relaxed text-zinc-200 tracking-tight">{direction.title}</h2>
+                <p className="mt-3 text-xs leading-relaxed text-zinc-400">{direction.concept}</p>
 
-                <div className="mt-5 rounded-3xl border border-amber-300/15 bg-amber-300/8 p-4">
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-amber-100/75">为什么它值得被选中</p>
-                  <p className="mt-2 text-sm leading-6 text-zinc-300">{direction.catalyst}</p>
+                <div className="mt-5 rounded-xl border border-white/5 bg-white/[0.01] p-4">
+                  <p className="text-[9px] font-mono tracking-wider text-zinc-500 uppercase">核心冲突发动机</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-zinc-400 font-serif">{direction.catalyst}</p>
                 </div>
 
-                <div className="mt-5 inline-flex items-center gap-2 text-sm font-medium text-amber-100">
-                  点亮这条变体路线
-                  <ArrowLeft className="h-4 w-4 rotate-180" />
+                <div className="mt-5 inline-flex items-center gap-1.5 text-xs font-semibold text-white">
+                  选定并点亮此变体
+                  <ArrowLeft className="h-3.5 w-3.5 rotate-180" />
                 </div>
               </button>
             ))}
@@ -515,53 +533,53 @@ export default function FusionWorkshop() {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-5 animate-fade-in">
+    <div className="flex flex-1 flex-col gap-5 animate-fade-in bg-[#000000]">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <p className="text-[11px] uppercase tracking-[0.26em] text-zinc-500">步骤 3 / 高级约束与生成</p>
-          <h1 className="mt-3 text-3xl font-semibold text-zinc-50">{directionTitle}</h1>
-          <p className="mt-3 text-base leading-7 text-zinc-300">
-            这一步会把方向卡继续推进为故事板和正文变体草案。左边管设定，右边管输出，底部命令栏负责微调。
+          <p className="text-[10px] font-mono tracking-widest text-zinc-500 uppercase">第三阶段 / 设定与正文生成</p>
+          <h1 className="mt-2 text-2xl font-semibold text-zinc-100 tracking-tight">{directionTitle}</h1>
+          <p className="mt-2 text-xs leading-relaxed text-zinc-400 max-w-3xl">
+            本页承担核心变体打磨任务。左侧大卡为 4 大设定骨架块，您可以利用底部的精密命令行发送微调指令；右侧则为您生成核心场景故事板与流式正文。
           </p>
         </div>
 
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setStep('directions')}
-            className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm text-zinc-200 transition-linear hover:border-white/20 hover:bg-white/[0.05]"
+            className="inline-flex items-center gap-2 rounded-xl border border-white/5 bg-white/[0.015] px-4 py-2.5 text-xs font-medium text-zinc-400 transition-linear hover:border-white/10 hover:text-zinc-200"
           >
-            <ArrowLeft className="h-4 w-4" />
-            重选方向
+            <ArrowLeft className="h-3.5 w-3.5" />
+            重选融合走向
           </button>
-          <StepBadge index={3} label="高级约束与生成" active />
+          <StepBadge index={3} label="设定打磨与正文" active />
         </div>
       </div>
 
       <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[1.05fr_1fr]">
         <div className="flex min-h-0 flex-col gap-5">
-          <div className="glass-card rounded-[30px] p-6">
+          <div className="glass-card rounded-2xl p-6 border-white/5 bg-zinc-950/60">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">设定块</p>
-                <h2 className="mt-2 text-xl font-semibold text-zinc-50">先把变体世界的骨架钉牢</h2>
+                <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">世界设定体系</p>
+                <h2 className="mt-1 text-sm font-semibold text-zinc-200">打磨并锁定变体设定骨架</h2>
               </div>
               <button
                 onClick={() => setAdvancedOpen((value) => !value)}
-                className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm text-zinc-200 transition-linear hover:border-white/20 hover:bg-white/[0.05]"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-white/5 bg-white/[0.015] px-3.5 py-2 text-xs font-medium text-zinc-350 transition-linear hover:border-white/10 hover:bg-white/[0.03]"
               >
-                高级约束
-                <ChevronDown className={`h-4 w-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`} />
+                追加红队规约
+                <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${advancedOpen ? 'rotate-180' : ''}`} />
               </button>
             </div>
 
             {advancedOpen && (
-              <div className="mt-5 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="mt-4 rounded-xl border border-white/5 bg-white/[0.015] p-4">
                 <textarea
                   value={adversarialRules}
                   onChange={(event) => setAdversarialRules(event.target.value)}
                   rows={3}
-                  placeholder="这里可以继续补充红队约束，告诉工坊什么方向一定不能走。"
-                  className="w-full rounded-2xl border border-white/10 bg-[#0b1018] p-3 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none resize-none"
+                  placeholder="追加不可涉足的禁区与约束，例如：“严防纯逻辑外挂、杜绝无端洗白与圣母走向”..."
+                  className="w-full rounded-xl border border-white/5 bg-zinc-950 p-3 text-xs text-zinc-200 placeholder:text-zinc-700 focus:outline-none resize-none font-mono"
                 />
               </div>
             )}
@@ -570,119 +588,148 @@ export default function FusionWorkshop() {
               {BLOCKS.map(({ key, label, helper, icon: Icon }) => (
                 <div
                   key={key}
-                  className={`rounded-3xl border bg-white/[0.03] p-5 transition-linear ${pulse.has(key) ? 'pulse-cyan border-cyan-300/30' : 'border-white/10'}`}
+                  className={`rounded-xl border bg-white/[0.01] p-5 transition-linear ${
+                    pulse.has(key) ? 'pulse-zinc border-white/20' : 'border-white/5'
+                  }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-2xl border border-cyan-300/18 bg-cyan-300/10 p-2.5 text-cyan-100">
-                      <Icon className="h-4 w-4" />
+                  <div className="flex items-center gap-3 border-b border-white/[0.02] pb-3">
+                    <div className="rounded-xl border border-white/5 bg-white/[0.015] p-2 text-zinc-300">
+                      <Icon className="h-3.5 w-3.5" />
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-zinc-100">{label}</p>
-                      <p className="text-xs text-zinc-500">{helper}</p>
+                      <p className="text-xs font-semibold text-zinc-250">{label}</p>
+                      <p className="text-[10px] text-zinc-600 font-mono uppercase">SETTING_BLOCK</p>
                     </div>
                   </div>
-                  <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-zinc-200">{blocks[key]}</p>
+                  <p className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-zinc-400 font-serif">{blocks[key]}</p>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="shrink-0 glass-card rounded-[28px] px-4 py-3">
+          {/* Raycast-style Command Bar & Creative Pills */}
+          <div className="shrink-0 glass-card rounded-2xl px-5 py-4 border-white/5 bg-zinc-950/60 shadow-2xl flex flex-col">
             <div className="flex items-center gap-3">
-              <Sparkles className="h-5 w-5 text-amber-100" />
+              <Sparkles className="h-4.5 w-4.5 text-zinc-400" />
               <input
                 value={command}
                 onChange={(event) => setCommand(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') runTweak();
                 }}
-                placeholder="输入一句话微调设定，例如“让主角的代价从肉体转向记忆”"
-                className="flex-1 bg-transparent text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
+                placeholder="键入一句偏航或微调指令，例如“让主角的痛苦由肉体创伤转向缺失的宿命记忆”"
+                className="flex-1 bg-transparent text-xs text-zinc-200 placeholder:text-zinc-700 focus:outline-none font-mono"
               />
+              <span className="hidden sm:inline-flex h-5 items-center gap-0.5 rounded border border-white/10 bg-white/[0.02] px-1.5 font-mono text-[9px] font-medium text-zinc-500">Ctrl ↵</span>
               <button
                 onClick={runTweak}
                 disabled={tweaking || !command.trim()}
-                className="rounded-2xl border border-amber-300/20 bg-amber-300/12 p-2.5 text-amber-50 transition-linear hover:bg-amber-300/18 disabled:cursor-not-allowed disabled:opacity-40"
+                className="rounded-xl border border-white/10 bg-white/[0.02] p-2 text-zinc-200 transition-linear hover:bg-white/[0.05] disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {tweaking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                {tweaking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
               </button>
+            </div>
+
+            {/* Clickable Quick Creative Pills */}
+            <div className="mt-3 flex flex-wrap gap-2 border-t border-white/[0.02] pt-3">
+              {PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  onClick={() => setCommand(p.cmd)}
+                  className="rounded-full border border-white/5 bg-white/[0.01] px-2.5 py-1 text-[10px] text-zinc-550 transition-linear hover:border-white/15 hover:text-zinc-300"
+                >
+                  ✦ {p.label}
+                </button>
+              ))}
             </div>
           </div>
         </div>
 
         <div className="flex min-h-0 flex-col gap-5">
-          <div className="glass-card flex min-h-0 flex-1 flex-col rounded-[30px] p-6">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="glass-card flex min-h-0 flex-1 flex-col rounded-2xl p-6 border-white/5 bg-zinc-950/60">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 pb-4">
               <div>
-                <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">故事板与落文</p>
-                <h2 className="mt-2 text-xl font-semibold text-zinc-50">先有场景骨架，再有正文输出</h2>
+                <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">分镜故事板与正文落文</p>
+                <h2 className="mt-1 text-sm font-semibold text-zinc-200">生成分镜大纲，逐一落笔成文</h2>
               </div>
               <button
                 onClick={generateStoryboard}
                 disabled={generatingBoard}
-                className="inline-flex items-center gap-2 rounded-2xl border border-amber-300/20 bg-amber-300/12 px-4 py-2.5 text-sm font-medium text-amber-50 transition-linear hover:bg-amber-300/18 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5 text-xs font-semibold text-zinc-200 transition-linear hover:bg-white/[0.05] disabled:opacity-50"
               >
-                {generatingBoard ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clapperboard className="h-4 w-4" />}
-                {storyboard.length ? '重新生成故事板' : '生成故事板'}
+                {generatingBoard ? (
+                  <div className="linear-loader-container rounded-full w-[20px]">
+                    <div className="linear-loader-bar rounded-full" />
+                  </div>
+                ) : (
+                  <Clapperboard className="h-3.5 w-3.5" />
+                )}
+                {storyboard.length ? '重设分镜故事板' : '智能生成分镜故事板'}
               </button>
             </div>
 
-            <div className="mt-5 flex-1 overflow-y-auto">
+            <div className="mt-5 flex-1 overflow-y-auto pr-0.5">
               {storyboard.length === 0 ? (
-                <div className="flex h-full flex-col items-center justify-center rounded-[28px] border border-dashed border-white/10 bg-white/[0.02] px-6 py-10 text-center">
-                  <Film className="h-8 w-8 text-zinc-500" />
-                  <p className="mt-4 text-lg font-semibold text-zinc-100">故事板还没生成</p>
-                  <p className="mt-2 max-w-md text-sm leading-7 text-zinc-400">
-                    先让工坊生成 3 幕分镜，确认节奏与冲突是否成立，再逐幕落成正文。
+                <div className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-white/5 bg-white/[0.01] px-6 py-10 text-center">
+                  <Film className="h-6 w-6 text-zinc-550" />
+                  <p className="mt-4 text-sm font-semibold text-zinc-200">大纲分镜故事板待点亮</p>
+                  <p className="mt-1.5 max-w-sm text-xs leading-relaxed text-zinc-500">
+                    点击右上角让工坊率先规划 3 幕分镜大纲，审查情绪张力与情节离散度是否合理，再落笔流式抽取精美正文。
                   </p>
                 </div>
               ) : (
                 <div className="space-y-4">
                   {storyboard.map((scene) => (
-                    <div key={scene.sceneNumber} className="rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div key={scene.sceneNumber} className="rounded-xl border border-white/5 bg-zinc-950/20 p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/[0.02] pb-3">
                         <div>
-                          <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">Scene {scene.sceneNumber}</p>
-                          <h3 className="mt-2 text-lg font-semibold text-zinc-100">{scene.sceneTitle}</h3>
+                          <p className="text-[9px] font-mono tracking-wider text-zinc-500 uppercase">SCENE 0{scene.sceneNumber}</p>
+                          <h3 className="mt-1 text-sm font-semibold text-zinc-200 tracking-tight">{scene.sceneTitle}</h3>
                         </div>
                         <button
                           onClick={() => generateScene(scene)}
                           disabled={streamingScene !== null}
-                          className="inline-flex items-center gap-2 rounded-2xl border border-cyan-300/18 bg-cyan-300/10 px-4 py-2.5 text-sm font-medium text-cyan-50 transition-linear hover:bg-cyan-300/16 disabled:opacity-50"
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.02] px-3.5 py-2 text-xs font-semibold text-zinc-300 transition-linear hover:bg-white/[0.05] disabled:opacity-40"
                         >
-                          {streamingScene === scene.sceneNumber ? <Loader2 className="h-4 w-4 animate-spin" /> : <PenTool className="h-4 w-4" />}
-                          动笔生成
+                          {streamingScene === scene.sceneNumber ? (
+                            <div className="linear-loader-container rounded-full w-[24px]">
+                              <div className="linear-loader-bar rounded-full" />
+                            </div>
+                          ) : (
+                            <PenTool className="h-3.5 w-3.5" />
+                          )}
+                          落笔生成
                         </button>
                       </div>
 
-                      <p className="mt-3 text-sm leading-7 text-zinc-300">{scene.plotOutline}</p>
-                      <div className="mt-4 flex flex-wrap gap-4 text-xs text-zinc-500">
-                        <span>张力：{scene.tensionLevel}</span>
-                        <span>视觉提示：{scene.visualCues}</span>
+                      <p className="mt-3 text-xs leading-relaxed text-zinc-400">{scene.plotOutline}</p>
+                      <div className="mt-4 flex flex-wrap gap-4 text-[10px] text-zinc-600 font-mono">
+                        <span>张力级别: {scene.tensionLevel}</span>
+                        <span>画面提示词: {scene.visualCues}</span>
                       </div>
 
                       {sceneTexts[scene.sceneNumber] !== undefined && (
-                        <div className="mt-5 border-t border-white/8 pt-4">
+                        <div className="mt-5 border-t border-white/5 pt-4">
                           <div className="mb-3 flex items-center justify-end gap-2">
                             <button
                               onClick={() => copyScene(scene.sceneNumber)}
-                              className="inline-flex items-center gap-1 rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-300 transition-linear hover:border-white/20 hover:bg-white/[0.05]"
+                              className="inline-flex items-center gap-1 rounded-full border border-white/5 bg-white/[0.01] px-2.5 py-1 text-[10px] text-zinc-400 transition-linear hover:border-white/15 hover:bg-white/[0.02]"
                             >
-                              {copied === scene.sceneNumber ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />}
+                              {copied === scene.sceneNumber ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
                               复制
                             </button>
                             <button
                               onClick={() => saveScene(scene)}
-                              className="inline-flex items-center gap-1 rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-300 transition-linear hover:border-white/20 hover:bg-white/[0.05]"
+                              className="inline-flex items-center gap-1 rounded-full border border-white/5 bg-white/[0.01] px-2.5 py-1 text-[10px] text-zinc-400 transition-linear hover:border-white/15 hover:bg-white/[0.02]"
                             >
-                              <Download className="h-3.5 w-3.5" />
-                              保存
+                              <Download className="h-3 w-3" />
+                              导出
                             </button>
                           </div>
-                          <p className="whitespace-pre-wrap text-[15px] leading-loose text-zinc-200">
+                          <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-zinc-300 font-serif">
                             {sceneTexts[scene.sceneNumber]}
                             {streamingScene === scene.sceneNumber && (
-                              <span className="ml-1 inline-block h-4 w-1.5 animate-pulse rounded-full bg-amber-300 align-middle" />
+                              <span className="ml-1 inline-block h-3.5 w-1 bg-zinc-200 animate-pulse align-middle" />
                             )}
                           </p>
                         </div>
@@ -693,7 +740,7 @@ export default function FusionWorkshop() {
               )}
             </div>
           </div>
-          {error && <p className="text-sm text-rose-300">{error}</p>}
+          {error && <p className="text-xs font-mono text-rose-400">{error}</p>}
         </div>
       </div>
     </div>

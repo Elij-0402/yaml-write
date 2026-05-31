@@ -4,7 +4,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   BookMarked,
-  Bot,
   ChevronRight,
   Compass,
   FilePlus2,
@@ -21,7 +20,7 @@ import NovelUploader from '../components/NovelUploader';
 import NovelDetail from '../components/NovelDetail';
 import FusionWorkshop from '../components/FusionWorkshop';
 import SettingsPanel from '../components/SettingsPanel';
-import { getLlmReadinessSummary, getNovelWorkflowSummary, getStageStatusClasses } from './workflow';
+import { getLlmReadinessSummary, getNovelWorkflowSummary } from './workflow';
 
 type LandingMode = 'overview' | 'upload';
 
@@ -29,38 +28,38 @@ const PIPELINE_BLUEPRINT = [
   {
     id: 'import',
     stage: '01 导入文本',
-    title: '把原文变成可推进的作品项目',
-    input: 'TXT 原文与作品名',
-    process: '清洗编码、净化噪音、建立项目',
-    output: '作品项目已建立',
-    next: '进入切分校验',
+    title: '原文项目创建',
+    input: 'TXT 原文与项目名称',
+    process: '去广告噪音、规范格式与编码',
+    output: '建立本地可控的原稿项目',
+    next: '切分校验台',
   },
   {
     id: 'split',
     stage: '02 校验切分',
-    title: '确认章节结构是否可信',
-    input: '已导入的章节草分结果',
-    process: '检查异常短章、超长章与噪音',
-    output: '章节结构可被信任',
-    next: '进入 DNA 提取',
+    title: '章节结构核验',
+    input: '已切分的原始章节序列',
+    process: '检测超长章、异常极短章与编号断层',
+    output: '高连续性、高可信度章节树',
+    next: '创作 DNA 提取',
   },
   {
     id: 'dna',
     stage: '03 提取 DNA',
-    title: '提炼可复用的创作骨架',
-    input: '可信的章节结构',
-    process: '抽取题材、角色、世界观、结构与风格',
-    output: '可进入变体阶段的创作骨架',
-    next: '进入融合变体',
+    title: '提炼骨架线索',
+    input: '高可信度章节全文',
+    process: '逐章映射题材、角色、结构与风格',
+    output: '全书收束创作 DNA 卡片',
+    next: '碰撞变体工坊',
   },
   {
     id: 'fusion',
     stage: '04 融合变体',
-    title: '让多部作品产生新方向',
-    input: '至少两部 DNA 就绪作品',
-    process: '选择方向、打磨设定、生成故事板',
-    output: '方向卡、故事板、正文变体草案',
-    next: '继续扩写与迭代',
+    title: '碰撞变体融合',
+    input: '至少两部 DNA 就绪资产',
+    process: '方向拟合、故事板生成、SSE 正文流出',
+    output: '变体故事板与正文分镜草稿',
+    next: '导出与继续迭代',
   },
 ] as const;
 
@@ -78,19 +77,19 @@ function formatTime(timestamp: number): string {
   }).format(timestamp);
 }
 
-function dnaBadge(novel: Novel): { text: string; cls: string } {
+function dnaBadge(novel: Novel): { text: string; dotCls: string } {
   if (novel.analysisStatus === 'done' && novel.dnaCard) {
-    return { text: 'DNA 就绪', cls: 'text-emerald-300' };
+    return { text: 'DNA 就绪', dotCls: 'bg-emerald-500 shadow-[0_0_6px_#10b981]' };
   }
   if (novel.analysisStatus === 'mapping' || novel.analysisStatus === 'reducing') {
     const p = novel.mapProgress;
     const pct = p && p.total ? Math.round((p.current / p.total) * 100) : 0;
-    return { text: `提取中 ${pct}%`, cls: 'text-amber-200' };
+    return { text: `提取中 ${pct}%`, dotCls: 'bg-amber-500 animate-pulse shadow-[0_0_6px_#f59e0b]' };
   }
   if (novel.splitStatus === 'needs_review') {
-    return { text: '切分待校验', cls: 'text-rose-200' };
+    return { text: '切分待校验', dotCls: 'bg-rose-500 shadow-[0_0_6px_#f43f5e]' };
   }
-  return { text: '待提取', cls: 'text-cyan-100' };
+  return { text: '待提取', dotCls: 'bg-zinc-500' };
 }
 
 function WorkspaceOverview({
@@ -111,55 +110,55 @@ function WorkspaceOverview({
 
   return (
     <div className="flex h-full flex-col gap-6 animate-fade-in">
-      <div className="glass-card rounded-[28px] p-8 panel-grid">
+      <div className="glass-card rounded-2xl p-8 panel-grid border-white/5 bg-zinc-950/60">
         <div className="max-w-3xl">
-          <div className="inline-flex items-center gap-2 rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1 text-xs text-amber-100">
-            <Sparkles className="h-3.5 w-3.5" />
-            未来感创作工坊
+          <div className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.02] px-3 py-1 text-xs text-zinc-400">
+            <Sparkles className="h-3 w-3 text-zinc-300" />
+            极致克制 · 创作工坊
           </div>
-          <h1 className="mt-5 text-4xl font-semibold leading-tight text-zinc-50">
-            把长篇原文炼成
-            <span className="bg-gradient-to-r from-amber-200 via-amber-300 to-cyan-200 bg-clip-text text-transparent"> 可继续创作的 DNA 与融合方向</span>
+          <h1 className="mt-5 text-3xl font-semibold leading-tight text-zinc-100 tracking-tight">
+            从原文长篇提炼创作
+            <span className="text-white font-bold"> DNA 骨架与碰撞变体</span>
           </h1>
-          <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-300">
-            这里不是简单的文本工具，而是一条清晰的创作流水线：
-            导入原文、校验切分、提取题材与角色骨架，再进入多作品融合变体阶段。
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
+            这里是将长篇小说精炼为核心素材并驱动创新的精密流水线。
+            支持自动净化文本、异常章节深度校验、多维度 DNA 映射与多作品创意碰撞。
           </p>
         </div>
 
         <div className="mt-8 grid gap-4 md:grid-cols-2">
           <button
             onClick={onUpload}
-            className="glass-card group rounded-3xl border border-cyan-400/20 p-6 text-left transition-linear hover:-translate-y-0.5 hover:border-cyan-300/30 focus-energy"
+            className="glass-card group rounded-2xl border border-white/5 bg-white/[0.01] p-6 text-left transition-linear hover:border-white/15 hover:bg-white/[0.03] focus-energy"
           >
             <div className="flex items-center justify-between gap-4">
-              <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-3 text-cyan-100">
-                <FilePlus2 className="h-6 w-6" />
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-2.5 text-zinc-200">
+                <FilePlus2 className="h-5 w-5" />
               </div>
-              <ChevronRight className="h-5 w-5 text-zinc-500 transition-linear group-hover:text-cyan-100" />
+              <ChevronRight className="h-4 w-4 text-zinc-600 transition-linear group-hover:text-white" />
             </div>
-            <h3 className="mt-4 text-lg font-semibold text-zinc-100">导入新作品</h3>
-            <p className="mt-2 text-sm leading-6 text-zinc-400">
-              支持 TXT 文本、自动净化广告噪音、多编码识别，并直接进入切分校验台。
+            <h3 className="mt-4 text-base font-medium text-zinc-200">导入新作品</h3>
+            <p className="mt-2 text-xs leading-5 text-zinc-500">
+              加载本地 TXT 文本，自动识别编码并净化广告字词，直接流转至切分校验台。
             </p>
           </button>
 
           <button
             onClick={onContinue}
             disabled={!latestNovel}
-            className="glass-card group rounded-3xl border border-amber-400/20 p-6 text-left transition-linear hover:-translate-y-0.5 hover:border-amber-300/30 disabled:cursor-not-allowed disabled:opacity-50"
+            className="glass-card group rounded-2xl border border-white/5 bg-white/[0.01] p-6 text-left transition-linear hover:border-white/15 hover:bg-white/[0.03] disabled:cursor-not-allowed disabled:opacity-40"
           >
             <div className="flex items-center justify-between gap-4">
-              <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-3 text-amber-100">
-                <Compass className="h-6 w-6" />
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-2.5 text-zinc-200">
+                <Compass className="h-5 w-5" />
               </div>
-              <ChevronRight className="h-5 w-5 text-zinc-500 transition-linear group-hover:text-amber-100" />
+              <ChevronRight className="h-4 w-4 text-zinc-600 transition-linear group-hover:text-white" />
             </div>
-            <h3 className="mt-4 text-lg font-semibold text-zinc-100">继续最近作品</h3>
-            <p className="mt-2 text-sm leading-6 text-zinc-400">
+            <h3 className="mt-4 text-base font-medium text-zinc-200">继续最近作品</h3>
+            <p className="mt-2 text-xs leading-5 text-zinc-500">
               {latestNovel
-                ? `继续回到《${latestNovel.name}》，沿着当前阶段继续推进。`
-                : '先导入第一部作品，这里会自动记住你的最近进度。'}
+                ? `回到《${latestNovel.name}》的当前任务节点，继续向前推进。`
+                : '首批作品导入后，此通道将记录并显示您的最近作业进度。'}
             </p>
           </button>
         </div>
@@ -167,42 +166,43 @@ function WorkspaceOverview({
 
       <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-4">
         {PIPELINE_BLUEPRINT.map((item) => (
-          <div key={item.id} className="linear-card rounded-3xl p-5">
-            <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">{item.stage}</p>
-            <h3 className="mt-3 text-lg font-semibold text-zinc-50">{item.title}</h3>
-            <div className="mt-4 space-y-3 text-sm leading-6 text-zinc-400">
-              <p><span className="text-zinc-200">输入：</span>{item.input}</p>
-              <p><span className="text-zinc-200">处理：</span>{item.process}</p>
-              <p><span className="text-zinc-200">输出：</span>{item.output}</p>
-              <p><span className="text-amber-100">下一步：</span>{item.next}</p>
+          <div key={item.id} className="linear-card rounded-2xl p-5 bg-zinc-950/20 border-white/5">
+            <p className="text-[10px] font-mono tracking-widest text-zinc-600 uppercase">{item.stage}</p>
+            <h3 className="mt-3 text-sm font-medium text-zinc-200">{item.title}</h3>
+            <div className="mt-4 space-y-2 text-xs text-zinc-500 leading-relaxed">
+              <p><span className="text-zinc-400">输入：</span>{item.input}</p>
+              <p><span className="text-zinc-400">处理：</span>{item.process}</p>
+              <p><span className="text-zinc-400">产出：</span>{item.output}</p>
+              <p><span className="text-zinc-300 font-mono">NEXT：</span>{item.next}</p>
             </div>
           </div>
         ))}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-4">
-        <div className="linear-card rounded-3xl p-5">
-          <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">作品库存</p>
-          <p className="mt-4 text-3xl font-semibold text-zinc-50">{novels.length}</p>
-          <p className="mt-2 text-sm text-zinc-400">库内已有可继续推进的长篇项目。</p>
+        <div className="linear-card rounded-2xl p-5 bg-zinc-950/20 border-white/5">
+          <p className="text-[10px] font-mono tracking-widest text-zinc-600 uppercase">作品库存</p>
+          <p className="mt-3 text-2xl font-mono font-medium text-zinc-300">{novels.length}</p>
+          <p className="mt-2 text-xs text-zinc-500">工坊内已被导入的完整项目总数。</p>
         </div>
-        <div className="linear-card rounded-3xl p-5">
-          <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">DNA 就绪</p>
-          <p className="mt-4 text-3xl font-semibold text-emerald-200">{readyNovelCount}</p>
-          <p className="mt-2 text-sm text-zinc-400">可直接进入工坊选材台的作品数量。</p>
+        <div className="linear-card rounded-2xl p-5 bg-zinc-950/20 border-white/5">
+          <p className="text-[10px] font-mono tracking-widest text-zinc-600 uppercase">DNA 就绪</p>
+          <p className="mt-3 text-2xl font-mono font-medium text-zinc-300">{readyNovelCount}</p>
+          <p className="mt-2 text-xs text-zinc-500">可直接用作创意碰撞输入的成熟作品。</p>
         </div>
-        <div className="linear-card rounded-3xl p-5">
-          <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">待校验异常</p>
-          <p className="mt-4 text-3xl font-semibold text-rose-200">{needsReviewCount}</p>
-          <p className="mt-2 text-sm text-zinc-400">切分质量仍需人工确认或修复的项目。</p>
+        <div className="linear-card rounded-2xl p-5 bg-zinc-950/20 border-white/5">
+          <p className="text-[10px] font-mono tracking-widest text-zinc-600 uppercase">待校验异常</p>
+          <p className="mt-3 text-2xl font-mono font-medium text-zinc-300">{needsReviewCount}</p>
+          <p className="mt-2 text-xs text-zinc-500">分章规则存在存疑点、需人工介入校验的项目。</p>
         </div>
-        <div className="linear-card rounded-3xl p-5">
-          <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">模型状态</p>
-          <p className={`mt-4 text-2xl font-semibold ${llmReady ? 'text-cyan-100' : 'text-amber-200'}`}>
-            {llmReady ? '已就绪' : '待启动'}
-          </p>
-          <p className="mt-2 text-sm text-zinc-400">
-            {llmReady ? '可以直接开始 DNA 提取，并为后续变体阶段解锁输入资产。' : '请先配置大模型，DNA 与变体阶段才会点亮。'}
+        <div className="linear-card rounded-2xl p-5 bg-zinc-950/20 border-white/5">
+          <p className="text-[10px] font-mono tracking-widest text-zinc-600 uppercase">大模型引擎</p>
+          <div className="mt-3 flex items-center gap-2">
+            <span className={`h-2 w-2 rounded-full ${llmReady ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+            <p className="text-base font-medium text-zinc-300">{llmReady ? '就绪' : '待启动'}</p>
+          </div>
+          <p className="mt-2 text-xs text-zinc-500">
+            {llmReady ? 'LLM 已点亮，随时可发起章节映射提取与创意碰撞。' : '请先在底部启动面板配置大模型接口密钥。'}
           </p>
         </div>
       </div>
@@ -244,7 +244,7 @@ export default function Home() {
 
   const deleteNovel = async (id: string, event: React.MouseEvent) => {
     event.stopPropagation();
-    if (typeof window !== 'undefined' && !window.confirm('删除该小说及其全部章节？此操作不可撤销。')) return;
+    if (typeof window !== 'undefined' && !window.confirm('确认删除该小说及其所有章节数据？该动作无法撤销。')) return;
     await db.transaction('rw', db.novels, db.chapters, async () => {
       await db.chapters.where('novelId').equals(id).delete();
       await db.novels.delete(id);
@@ -268,15 +268,15 @@ export default function Home() {
     : '创作工坊总览';
   const sidebarReason = workshopOpen
     ? readyNovelCount > 1
-      ? '变体阶段已经满足准入条件，接下来应直接从选材开始，而不是回到上游反复确认。'
-      : '当前仍缺少足够的 DNA 资产，变体阶段会被阻塞，应该先回到上游补齐。'
+      ? '多部作品的创作 DNA 均已点亮，准入条件满足，当前正位于变体融合工坊。'
+      : '库内缺乏足够（至少 2 本）的 DNA 资产，融合变体被阻断，请先提炼单部作品。'
     : selectedSummary.readinessReason ||
       workflowStages.find((stage) => stage.status === 'blocked' || stage.status === 'ready')?.hint ||
-      '当前链路已经畅通，可以继续进入下一阶段。';
+      '当前链路无阻碍，可顺利往下一阶段流动。';
   const sidebarNextStep = workshopOpen
     ? readyNovelCount > 1
-      ? '进入选材与方向生成'
-      : '去补齐另一部作品的 DNA'
+      ? '启动创意碰撞与设定微调'
+      : '去点亮其他原稿的 DNA 提取'
     : selectedSummary.recommendedNextStep;
   const sidebarCurrentStep = workshopOpen
     ? '融合变体阶段'
@@ -286,15 +286,15 @@ export default function Home() {
 
   return (
     <main className="flex min-h-screen bg-[var(--bg-app)] text-zinc-100">
-      <aside className="linear-border-r hidden w-[280px] shrink-0 flex-col bg-[#06090f] lg:flex">
+      <aside className="linear-border-r hidden w-[270px] shrink-0 flex-col bg-[#050505] lg:flex">
         <div className="linear-border-b px-5 py-5">
-          <div className="flex items-start gap-3">
-            <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-2.5 text-amber-100 energy-ring">
-              <Orbit className="h-5 w-5" />
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-2 text-zinc-200">
+              <Orbit className="h-4 w-4" />
             </div>
             <div>
-              <h1 className="text-base font-semibold tracking-tight text-zinc-50">创作 DNA 工坊</h1>
-              <p className="mt-1 text-[11px] uppercase tracking-[0.28em] text-zinc-500">FUTURE STORY FOUNDRY</p>
+              <h1 className="text-sm font-medium tracking-tight text-zinc-100">创作 DNA 工坊</h1>
+              <p className="mt-0.5 text-[9px] font-mono tracking-widest text-zinc-600 uppercase">CREATIVE DNA LAB</p>
             </div>
           </div>
 
@@ -305,23 +305,23 @@ export default function Home() {
               setManageMode(false);
               setLandingMode('upload');
             }}
-            className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-sm font-medium text-cyan-100 transition-linear hover:border-cyan-300/30 hover:bg-cyan-400/14"
+            className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5 text-xs font-medium text-zinc-200 transition-linear hover:border-white/20 hover:bg-white/[0.04]"
           >
-            <FilePlus2 className="h-4 w-4" />
-            导入新作品
+            <FilePlus2 className="h-3.5 w-3.5" />
+            导入新原稿
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-4">
-          <div className="mb-3 flex items-center justify-between">
-            <span className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">作品项目轨道</span>
-            <span className="rounded-full border border-white/10 px-2 py-0.5 text-[11px] text-zinc-400">{novels.length}</span>
+        <div className="flex-1 overflow-y-auto px-3.5 py-4">
+          <div className="mb-3 px-1.5 flex items-center justify-between">
+            <span className="text-[10px] font-mono tracking-wider text-zinc-600 uppercase">小说项目列表</span>
+            <span className="font-mono text-[10px] text-zinc-500">{novels.length}</span>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-2">
             {novels.length === 0 && (
-              <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-4 text-sm leading-6 text-zinc-500">
-                还没有作品。先导入一本长篇原文，工坊轨道就会开始记录你的进度。
+              <div className="rounded-xl border border-dashed border-white/5 bg-white/[0.01] p-4 text-xs leading-relaxed text-zinc-600">
+                暂无作品。请先从上方导入本地 TXT 原文。
               </div>
             )}
 
@@ -336,29 +336,35 @@ export default function Home() {
                     setSelectedNovelId(novel.id);
                     setLandingMode('overview');
                   }}
-                  className={`group w-full rounded-3xl border p-4 text-left transition-linear ${
+                  className={`group relative w-full rounded-xl border p-3.5 text-left transition-linear ${
                     active
-                      ? 'border-amber-400/30 bg-amber-400/10 shadow-[0_0_0_1px_rgba(247,165,26,0.12)]'
-                      : 'border-white/8 bg-white/[0.025] hover:border-white/15 hover:bg-white/[0.04]'
+                      ? 'border-zinc-700 bg-zinc-900/40'
+                      : 'border-white/5 bg-white/[0.015] hover:border-white/10 hover:bg-white/[0.03]'
                   }`}
                 >
+                  {active && <span className="absolute left-0 top-3 bottom-3 w-[2px] rounded-r bg-white" />}
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-zinc-100">{novel.name}</p>
-                      <p className="mt-1 text-xs text-zinc-500">{formatWordCount(novel.wordCount)} · 更新于 {formatTime(novel.createdAt)}</p>
+                      <p className="truncate text-xs font-medium text-zinc-200">{novel.name}</p>
+                      <p className="mt-1 text-[10px] text-zinc-600 font-mono">
+                        {formatWordCount(novel.wordCount)} · {formatTime(novel.createdAt)}
+                      </p>
                     </div>
                     <button
                       onClick={(event) => void deleteNovel(novel.id, event)}
-                      className="rounded-full border border-white/10 p-1.5 text-zinc-500 transition-linear hover:border-rose-400/30 hover:text-rose-200"
-                      title="删除作品"
+                      className="rounded-full border border-white/5 p-1 text-zinc-600 opacity-0 group-hover:opacity-100 transition-linear hover:border-white/15 hover:text-rose-400"
+                      title="删除原稿"
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Trash2 className="h-3 w-3" />
                     </button>
                   </div>
 
-                  <div className="mt-4 flex items-center justify-between gap-3">
-                    <span className={`rounded-full px-2.5 py-1 text-[11px] ${badge.cls} bg-white/5`}>{badge.text}</span>
-                    <span className="text-[11px] text-zinc-500">{workflow.recommendedNextStep}</span>
+                  <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/[0.02] pt-2">
+                    <span className="flex items-center gap-1.5 text-[10px] text-zinc-500">
+                      <span className={`h-1.5 w-1.5 rounded-full ${badge.dotCls}`} />
+                      {badge.text}
+                    </span>
+                    <span className="text-[10px] text-zinc-500 truncate max-w-[100px]">{workflow.recommendedNextStep}</span>
                   </div>
                 </button>
               );
@@ -366,71 +372,98 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="linear-border-t space-y-2 px-4 py-4">
+        <div className="linear-border-t space-y-2 px-3.5 py-4 bg-[#030303]">
           <button
             onClick={() => setWorkshopOpen(true)}
-            className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-medium transition-linear ${
+            className={`flex w-full items-center gap-3 rounded-xl border px-4 py-2.5 text-xs font-medium transition-linear ${
               workshopOpen
-                ? 'border-amber-400/30 bg-amber-400/10 text-amber-100'
-                : 'border-white/10 bg-white/[0.03] text-zinc-200 hover:border-white/20 hover:bg-white/[0.05]'
+                ? 'border-zinc-700 bg-zinc-900/40 text-white'
+                : 'border-white/5 bg-white/[0.015] text-zinc-300 hover:border-white/10 hover:bg-white/[0.03]'
             }`}
           >
-            <Layers className="h-4 w-4" />
-            变体工坊
+            <Layers className="h-3.5 w-3.5" />
+            变体融合工坊
           </button>
           <button
             onClick={() => {
               setSettingsIntent(workshopOpen ? '融合变体' : selectedNovel ? 'DNA 提取' : '创作工坊');
               setSettingsOpen(true);
             }}
-            className="flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-medium text-zinc-200 transition-linear hover:border-white/20 hover:bg-white/[0.05]"
+            className="flex w-full items-center gap-3 rounded-xl border border-white/5 bg-white/[0.015] px-4 py-2.5 text-xs font-medium text-zinc-300 transition-linear hover:border-white/10 hover:bg-white/[0.03]"
           >
-            <Settings className="h-4 w-4" />
-            工坊启动面板
-            <span className="ml-auto text-[11px] text-zinc-500">
-              {llmReadiness.ok ? '已就绪' : '待配置'}
+            <Settings className="h-3.5 w-3.5" />
+            启动面板
+            <span className="ml-auto text-[10px] text-zinc-500 font-mono">
+              {llmReadiness.ok ? 'ON' : 'OFF'}
             </span>
           </button>
         </div>
       </aside>
 
-      <section className="flex min-w-0 flex-1 flex-col">
-        <header className="linear-border-b sticky top-0 z-20 bg-[#070a10]/88 backdrop-blur-xl">
+      <section className="flex min-w-0 flex-1 flex-col bg-[#000000]">
+        <header className="linear-border-b sticky top-0 z-20 bg-[#000000]/70 backdrop-blur-xl">
           <div className="px-5 py-4 lg:px-8">
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div className="flex items-center gap-2 text-xs text-zinc-500">
-                    <BookMarked className="h-3.5 w-3.5" />
-                    <span>{selectedNovel ? selectedNovel.name : workshopOpen ? '变体工坊' : '总览'}</span>
+                  <div className="flex items-center gap-1.5 text-[10px] text-zinc-500">
+                    <BookMarked className="h-3 w-3" />
+                    <span className="truncate max-w-[120px]">{selectedNovel ? selectedNovel.name : workshopOpen ? '变体工坊' : '总览'}</span>
                     <span>/</span>
-                    <span>{workshopOpen ? '变体阶段' : selectedNovel ? '作品链路' : '流水线总览'}</span>
+                    <span>{workshopOpen ? '变体融合' : selectedNovel ? '原稿处理' : '流程总览'}</span>
                     <span>/</span>
-                    <span className="text-zinc-300">{headerLabel}</span>
+                    <span className="text-zinc-400">{headerLabel}</span>
                   </div>
-                  <h2 className="mt-2 text-xl font-semibold text-zinc-50">{headerLabel}</h2>
+                  <h2 className="mt-1.5 text-base font-semibold text-zinc-100 tracking-tight">{headerLabel}</h2>
                 </div>
 
-                <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-400">
-                  <Bot className="h-3.5 w-3.5" />
-                  模型状态：
-                  <span className={llmReadiness.ok ? 'text-cyan-100' : 'text-amber-200'}>
-                    {llmReadiness.ok ? '已就绪' : llmReadiness.reason}
-                  </span>
+                <div className="flex items-center gap-2 rounded-full border border-white/5 bg-white/[0.01] px-3 py-1.5 text-xs text-zinc-400">
+                  <span className={`h-1.5 w-1.5 rounded-full ${llmReadiness.ok ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  <span className="font-mono text-[10px]">ENGINE: {llmReadiness.ok ? 'READY' : 'OFFLINE'}</span>
                 </div>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-4">
-                {workflowStages.map((stage, index) => (
-                  <div key={stage.id} className={`rounded-2xl border px-4 py-3 ${getStageStatusClasses(stage.status)}`}>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] uppercase tracking-[0.22em] text-current/65">0{index + 1}</span>
-                      <span className="text-xs text-current/80">{stage.shortLabel}</span>
+              {/* Monochromatic Horizontal Timeline Stepper */}
+              <div className="linear-border-t pt-3 flex items-center justify-between w-full overflow-x-auto gap-4 scrollbar-none">
+                {workflowStages.map((stage, index) => {
+                  const isActive = stage.status === 'running' || stage.status === 'ready';
+                  const isDone = stage.status === 'done';
+                  const isBlocked = stage.status === 'blocked';
+                  
+                  let labelColor = 'text-zinc-600';
+                  if (isActive) {
+                    labelColor = 'text-white font-medium';
+                  } else if (isDone) {
+                    labelColor = 'text-zinc-300';
+                  } else if (isBlocked) {
+                    labelColor = 'text-zinc-500';
+                  }
+
+                  return (
+                    <div key={stage.id} className="flex flex-1 items-center gap-3 min-w-max">
+                      <div className={`flex items-center gap-2 ${labelColor} text-[11px]`}>
+                        <span className={`flex h-4.5 w-4.5 items-center justify-center rounded-full border text-[9px] font-mono ${
+                          isActive 
+                            ? 'bg-white text-black border-white shadow-[0_0_8px_rgba(255,255,255,0.4)]' 
+                            : isDone
+                            ? 'bg-zinc-800 border-zinc-700 text-zinc-400'
+                            : 'bg-transparent border-zinc-900 text-zinc-600'
+                        }`}>
+                          0{index + 1}
+                        </span>
+                        <span className="tracking-tight">{stage.label}</span>
+                        {isActive && (
+                          <span className="hidden xl:inline text-[9px] text-zinc-400 opacity-80 font-normal">
+                            ({stage.hint.split('，')[0].split('。')[0]})
+                          </span>
+                        )}
+                      </div>
+                      {index < workflowStages.length - 1 && (
+                        <div className="flex-1 h-[1px] min-w-[20px] bg-zinc-900 mx-1" />
+                      )}
                     </div>
-                    <p className="mt-2 text-sm font-semibold text-current">{stage.label}</p>
-                    <p className="mt-1 text-xs leading-5 text-current/75">{stage.hint}</p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -460,54 +493,52 @@ export default function Home() {
             )}
           </div>
 
-          <aside className="linear-border-l hidden w-[320px] shrink-0 overflow-y-auto bg-[#070a10]/92 px-5 py-6 xl:block">
+          <aside className="linear-border-l hidden w-[300px] shrink-0 overflow-y-auto bg-[#040404] px-5 py-6 xl:block">
             <div className="space-y-4">
-              <div className="glass-card rounded-3xl p-5">
-                <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">当前状态</p>
+              <div className="glass-card rounded-2xl p-5 border-white/5 bg-zinc-950/40">
+                <p className="text-[10px] font-mono tracking-wider text-zinc-600 uppercase">当前任务</p>
                 <div className="mt-4 space-y-4">
                   <div>
-                    <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">当前在哪一步</p>
-                    <h3 className="mt-2 text-lg font-semibold text-zinc-50">{sidebarCurrentStep}</h3>
+                    <p className="text-[10px] text-zinc-500 font-mono">当前在哪一步</p>
+                    <h3 className="mt-1 text-sm font-semibold text-zinc-200">{sidebarCurrentStep}</h3>
                   </div>
                   <div>
-                    <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">为什么停在这</p>
-                    <p className="mt-2 text-sm leading-6 text-zinc-400">{sidebarReason}</p>
+                    <p className="text-[10px] text-zinc-500 font-mono">任务轨迹背景</p>
+                    <p className="mt-1 text-xs leading-relaxed text-zinc-400">{sidebarReason}</p>
                   </div>
-                  <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
-                    <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">推荐下一步</p>
-                    <p className="mt-2 text-sm font-medium text-zinc-100">{sidebarNextStep}</p>
+                  <div className="rounded-xl border border-white/5 bg-white/[0.01] px-4 py-3">
+                    <p className="text-[10px] text-zinc-400 font-mono">推荐下一步动作</p>
+                    <p className="mt-1 text-xs font-medium text-zinc-200">{sidebarNextStep}</p>
                   </div>
                 </div>
               </div>
 
-              <div className="linear-card rounded-3xl p-5">
-                <div className="flex items-center gap-2 text-zinc-300">
-                  <ScanSearch className="h-4 w-4 text-cyan-200" />
-                  <h4 className="text-sm font-semibold">工坊摘要</h4>
+              <div className="linear-card rounded-2xl p-5 border-white/5 bg-zinc-950/20">
+                <div className="flex items-center gap-2 text-zinc-400">
+                  <ScanSearch className="h-3.5 w-3.5 text-zinc-300" />
+                  <h4 className="text-xs font-semibold">工坊摘要数据</h4>
                 </div>
-                <div className="mt-4 space-y-3 text-sm text-zinc-400">
+                <div className="mt-4 space-y-2.5 text-xs text-zinc-500">
                   <div className="flex items-center justify-between">
-                    <span>作品库存</span>
-                    <span className="text-zinc-100">{novels.length}</span>
+                    <span>原稿项目库存</span>
+                    <span className="font-mono text-zinc-300">{novels.length}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span>DNA 就绪</span>
-                    <span className="text-emerald-200">{readyNovelCount}</span>
+                    <span>DNA 就绪数</span>
+                    <span className="font-mono text-zinc-300">{readyNovelCount}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span>待切分校验</span>
-                    <span className="text-rose-200">{novels.filter((novel) => novel.splitStatus === 'needs_review').length}</span>
+                    <span>切分待核验</span>
+                    <span className="font-mono text-zinc-300">{novels.filter((n) => n.splitStatus === 'needs_review').length}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span>模型状态</span>
-                    <span className={llmReadiness.ok ? 'text-cyan-100' : 'text-amber-200'}>
-                      {llmReadiness.ok ? '已就绪' : '待配置'}
-                    </span>
+                    <span>引擎就绪状态</span>
+                    <span className="font-mono text-zinc-300">{llmReadiness.ok ? 'OK' : 'OFFLINE'}</span>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span>变体准入</span>
-                    <span className={readyNovelCount > 1 ? 'text-amber-100' : 'text-zinc-400'}>
-                      {readyNovelCount > 1 ? '已满足' : `还差 ${Math.max(0, 2 - readyNovelCount)} 部 DNA`}
+                  <div className="flex items-center justify-between border-t border-white/[0.02] pt-2">
+                    <span>变体碰撞准入</span>
+                    <span className="font-mono text-zinc-300">
+                      {readyNovelCount > 1 ? '满足' : `缺 ${Math.max(0, 2 - readyNovelCount)} 部`}
                     </span>
                   </div>
                 </div>

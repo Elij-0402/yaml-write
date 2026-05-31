@@ -32,9 +32,9 @@ const DNA_FIELDS: { key: keyof NovelDNACard; label: string; helper: string }[] =
 ];
 
 const MAP_DOT: Record<string, string> = {
-  pending: 'bg-zinc-600',
-  done: 'bg-emerald-400',
-  error: 'bg-rose-400',
+  pending: 'bg-zinc-800 border-zinc-700',
+  done: 'bg-emerald-500 shadow-[0_0_6px_#10b981]',
+  error: 'bg-rose-500 shadow-[0_0_6px_#f43f5e]',
 };
 
 function formatWordCount(count: number): string {
@@ -69,7 +69,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
   const abortRef = useRef<AbortController | null>(null);
 
   if (!novel) {
-    return <div className="flex flex-1 items-center justify-center text-zinc-500 text-sm">加载中…</div>;
+    return <div className="flex flex-1 items-center justify-center text-zinc-600 text-xs font-mono">LOADING_PROJECT...</div>;
   }
 
   const llmReadiness = getLlmReadinessSummary(llmConfig);
@@ -86,7 +86,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
 
   const blocked = workflow.stages.find((stage) => stage.status === 'blocked');
   const ready = workflow.stages.find((stage) => stage.status === 'ready');
-  const nextReason = blocked?.hint || ready?.hint || '当前链路畅通，可以继续进入下一阶段。';
+  const nextReason = blocked?.hint || ready?.hint || '上游轨道畅通，可推进当前 DNA 提炼任务。';
 
   const handleExtract = async (limit?: number) => {
     const readiness = ensureLlmConfigReady(llmConfig);
@@ -101,7 +101,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
     try {
       await runDnaExtraction(novelId, { limit, signal: controller.signal });
     } catch (err) {
-      setError(err instanceof Error ? err.message : '提取失败，请重试。');
+      setError(err instanceof Error ? err.message : '提炼失败，请核实引擎状态并重试。');
     } finally {
       setExtracting(false);
       abortRef.current = null;
@@ -117,73 +117,76 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
   };
 
   return (
-    <div className="flex flex-1 flex-col gap-5 animate-fade-in">
+    <div className="flex flex-1 flex-col gap-5 animate-fade-in bg-[#000000]">
       <div className="grid gap-5 xl:grid-cols-[1.7fr_1fr]">
-        <div className="glass-card rounded-[28px] p-6">
+        <div className="glass-card rounded-2xl p-6 border-white/5 bg-zinc-950/60">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="max-w-3xl">
-              <p className="text-[11px] uppercase tracking-[0.26em] text-zinc-500">作品详情 / 创作 DNA</p>
-              <h1 className="mt-3 text-3xl font-semibold text-zinc-50">{novel.name}</h1>
-              <p className="mt-3 text-base leading-7 text-zinc-300">
-                “创作 DNA” 是这部作品的题材、角色、世界观、结构与风格摘要。完成这一层后，它才会成为后续融合变体阶段的可用输入资产。
+              <p className="text-[10px] font-mono tracking-widest text-zinc-500 uppercase">原稿管理 / 提炼工作台</p>
+              <h1 className="mt-2 text-2xl font-semibold text-zinc-100 tracking-tight">{novel.name}</h1>
+              <p className="mt-2.5 text-xs leading-relaxed text-zinc-400">
+                “创作 DNA” 是利用 Map-Reduce 框架逐章分析并汇总所得的世界观、母题、角色骨架与文风线索。
+                DNA 提取完毕后，本小说项目将自动沉淀为可参与创意变体融合的数字资产。
               </p>
             </div>
 
             <button
               onClick={() => setManageMode(true)}
-              className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-medium text-zinc-100 transition-linear hover:border-white/20 hover:bg-white/[0.05]"
+              className="rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5 text-xs font-medium text-zinc-300 transition-linear hover:border-white/20 hover:bg-white/[0.04]"
             >
               <span className="flex items-center gap-2">
-                <Scissors className="h-4 w-4 text-cyan-200" />
-                前往切分校验台
+                <Scissors className="h-3.5 w-3.5 text-zinc-400" />
+                返回切分校验台
               </span>
             </button>
           </div>
 
-          <div className="mt-6 grid gap-3 md:grid-cols-4">
-            <div className="linear-card rounded-2xl p-4">
-              <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">作品体量</p>
-              <p className="mt-3 text-2xl font-semibold text-zinc-100">{formatWordCount(novel.wordCount)}</p>
+          <div className="mt-6 grid gap-3 grid-cols-2 md:grid-cols-4 font-mono">
+            <div className="linear-card rounded-xl p-4 bg-zinc-950/20 border-white/5">
+              <p className="text-[9px] tracking-wider text-zinc-650 uppercase">项目总字数</p>
+              <p className="mt-2 text-base font-semibold text-zinc-300">{formatWordCount(novel.wordCount)}</p>
             </div>
-            <div className="linear-card rounded-2xl p-4">
-              <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">章节数</p>
-              <p className="mt-3 text-2xl font-semibold text-zinc-100">{chapters.length}</p>
+            <div className="linear-card rounded-xl p-4 bg-zinc-950/20 border-white/5">
+              <p className="text-[9px] tracking-wider text-zinc-650 uppercase">总章节数</p>
+              <p className="mt-2 text-base font-semibold text-zinc-300">{chapters.length}</p>
             </div>
-            <div className="linear-card rounded-2xl p-4">
-              <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">当前阶段</p>
-              <p className="mt-3 text-2xl font-semibold text-amber-100">{workflow.recommendedNextStep}</p>
+            <div className="linear-card rounded-xl p-4 bg-zinc-950/20 border-white/5">
+              <p className="text-[9px] tracking-wider text-zinc-650 uppercase">推荐行动</p>
+              <p className="mt-2 text-xs font-sans font-medium text-zinc-200 truncate">{workflow.recommendedNextStep}</p>
             </div>
-            <div className="linear-card rounded-2xl p-4">
-              <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">主要异常</p>
-              <p className="mt-3 text-2xl font-semibold text-zinc-100">
-                {novel.splitStatus === 'needs_review' ? '待校验' : errorChapters > 0 ? `${errorChapters} 章出错` : '无'}
+            <div className="linear-card rounded-xl p-4 bg-zinc-950/20 border-white/5">
+              <p className="text-[9px] tracking-wider text-zinc-650 uppercase">校验健康度</p>
+              <p className="mt-2 text-base font-semibold text-zinc-300">
+                {novel.splitStatus === 'needs_review' ? '待修正' : errorChapters > 0 ? '存疑' : '正常'}
               </p>
             </div>
           </div>
         </div>
 
-        <div className="linear-card rounded-[28px] p-5">
-          <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">为什么下一步是这个</p>
-          <h2 className="mt-3 text-xl font-semibold text-zinc-50">{workflow.recommendedNextStep}</h2>
-          <p className="mt-3 text-sm leading-7 text-zinc-400">{nextReason}</p>
+        <div className="linear-card rounded-2xl p-5 border-white/5 bg-zinc-950/20">
+          <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">任务决策线索</p>
+          <h2 className="mt-2 text-sm font-semibold text-zinc-200">{workflow.recommendedNextStep}</h2>
+          <p className="mt-2 text-xs leading-relaxed text-zinc-500">{nextReason}</p>
 
-          <div className="mt-5 space-y-3 rounded-3xl border border-white/8 bg-white/[0.03] p-4">
-            <div className="flex items-center justify-between text-sm text-zinc-400">
-              <span>模型状态</span>
-              <span className={llmReadiness.ok ? 'text-cyan-100' : 'text-amber-200'}>
-                {llmReadiness.ok ? '已就绪' : llmReadiness.reason}
+          <div className="mt-5 space-y-2.5 rounded-xl border border-white/5 bg-white/[0.01] p-4 text-xs font-mono">
+            <div className="flex items-center justify-between text-zinc-500">
+              <span>模型接口密钥</span>
+              <span className="flex items-center gap-1.5 text-zinc-400">
+                <span className={`h-1.5 w-1.5 rounded-full ${llmReadiness.ok ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                {llmReadiness.ok ? 'OK' : 'OFFLINE'}
               </span>
             </div>
-            <div className="flex items-center justify-between text-sm text-zinc-400">
-              <span>切分质量</span>
-              <span className={novel.splitStatus === 'needs_review' ? 'text-rose-200' : 'text-emerald-200'}>
-                {novel.splitStatus === 'needs_review' ? '建议先修复' : '可以继续'}
+            <div className="flex items-center justify-between text-zinc-500">
+              <span>章节划分品质</span>
+              <span className="flex items-center gap-1.5 text-zinc-400">
+                <span className={`h-1.5 w-1.5 rounded-full ${novel.splitStatus === 'needs_review' ? 'bg-rose-500 animate-pulse' : 'bg-emerald-500'}`} />
+                {novel.splitStatus === 'needs_review' ? '待校验异常' : '完好'}
               </span>
             </div>
-            <div className="flex items-center justify-between text-sm text-zinc-400">
-              <span>已完成章节摘要</span>
-              <span className="text-zinc-100">
-                {completedChapters}/{chapters.length}
+            <div className="flex items-center justify-between text-zinc-500">
+              <span>章节摘要进度</span>
+              <span className="text-zinc-300">
+                {completedChapters} / {chapters.length} 章
               </span>
             </div>
           </div>
@@ -191,219 +194,218 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
       </div>
 
       <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[1.65fr_0.9fr]">
-        <div className="glass-card rounded-[28px] p-6">
+        <div className="glass-card rounded-2xl p-6 border-white/5 bg-zinc-950/60">
           {!dnaReady ? (
             <div className="flex h-full flex-col gap-5">
               {!llmReadiness.ok && (
-                <div className="rounded-3xl border border-amber-400/20 bg-amber-400/10 p-5">
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-amber-100/80">工坊启动前置条件</p>
-                  <h3 className="mt-3 text-lg font-semibold text-amber-50">还差一步：先点亮模型引擎</h3>
-                  <p className="mt-2 text-sm leading-7 text-amber-100/85">
-                    当前还不能开始 DNA 提取，因为 {llmReadiness.reason}。配置完成后会直接回到本页继续当前任务。
+                <div className="rounded-xl border border-white/5 bg-zinc-950/40 p-5">
+                  <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">工坊前置硬阻碍</p>
+                  <h3 className="mt-2.5 text-sm font-semibold text-zinc-200">引擎未点亮，模型密钥待配置</h3>
+                  <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+                    当前大模型引擎未启用（{llmReadiness.reason}）。请首先点击下方前去启动面板配置 Base URL 和接口 Key。
                   </p>
                   <button
                     onClick={() =>
                       window.dispatchEvent(new CustomEvent('open-settings-panel', { detail: { intent: 'DNA 提取' } }))
                     }
-                    className="mt-4 inline-flex items-center gap-2 rounded-2xl border border-amber-300/25 bg-amber-300/10 px-4 py-2.5 text-sm font-medium text-amber-50 transition-linear hover:bg-amber-300/16"
+                    className="mt-4 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2 text-xs font-semibold text-zinc-300 transition-linear hover:bg-white/[0.04]"
                   >
-                    现在去配置模型
-                    <ArrowRight className="h-4 w-4" />
+                    前去模型配置面板
+                    <ArrowRight className="h-3.5 w-3.5" />
                   </button>
                 </div>
               )}
 
-              <div className="dna-breathe linear-card rounded-[28px] p-6">
+              <div className="dna-breathe linear-card rounded-2xl p-6 bg-zinc-950/20 border-white/5">
                 <div className="flex items-start gap-4">
-                  <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-3 text-amber-100">
-                    <Sparkles className="h-6 w-6" />
+                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-2.5 text-zinc-200">
+                    <Sparkles className="h-5 w-5" />
                   </div>
                   <div>
-                    <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">阶段任务卡</p>
-                    <h3 className="mt-2 text-2xl font-semibold text-zinc-50">把这部作品炼成可复用的创作 DNA</h3>
-                    <p className="mt-3 max-w-3xl text-sm leading-7 text-zinc-400">
-                      这一步会把整本书拆成可继续创作的骨架摘要。完成后，你不仅能回看结构与角色，还能把它带进融合变体阶段，与其他作品一起生成新方向。
+                    <p className="text-[10px] font-mono tracking-widest text-zinc-500 uppercase">提取控制卡</p>
+                    <h3 className="mt-1 text-base font-semibold text-zinc-200">提炼小说创作 DNA 线索</h3>
+                    <p className="mt-2.5 max-w-3xl text-xs leading-relaxed text-zinc-500">
+                      通过 LLM 对所有章节进行 Map-Reduce：首轮抽取每章节的母题冲突、角色映射；第二轮将章节汇总收束为一幅包含五大维度的创作骨架名片。提炼完毕即可解锁创意融合。
                     </p>
                   </div>
                 </div>
 
-                <div className="mt-6 grid gap-3 md:grid-cols-4">
-                  <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
-                    <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">输入</p>
-                    <p className="mt-2 text-sm leading-6 text-zinc-200">可信的章节结构与已清洗的原文内容。</p>
+                <div className="mt-6 grid gap-3 md:grid-cols-4 text-xs leading-relaxed text-zinc-500">
+                  <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4">
+                    <p className="text-[9px] font-mono tracking-wider text-zinc-500 uppercase">项目输入</p>
+                    <p className="mt-1 text-zinc-400">已校验的章节原稿结构全文。</p>
                   </div>
-                  <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
-                    <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">处理</p>
-                    <p className="mt-2 text-sm leading-6 text-zinc-200">逐章映射题材、角色、结构与风格线索，再做全书收束。</p>
+                  <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4">
+                    <p className="text-[9px] font-mono tracking-wider text-zinc-500 uppercase">模型拟合</p>
+                    <p className="mt-1 text-zinc-400">逐章抽取题材与笔触特征，最终全书降维收束。</p>
                   </div>
-                  <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
-                    <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">输出</p>
-                    <p className="mt-2 text-sm leading-6 text-zinc-200">一份可进入变体阶段的创作骨架。</p>
+                  <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4">
+                    <p className="text-[9px] font-mono tracking-wider text-zinc-500 uppercase">提炼成果</p>
+                    <p className="mt-1 text-zinc-400">一份标准数字化的创作 DNA 看板。</p>
                   </div>
-                  <div className="rounded-2xl border border-amber-300/15 bg-amber-300/8 p-4">
-                    <p className="text-[11px] uppercase tracking-[0.22em] text-amber-100/75">下一步</p>
-                    <p className="mt-2 text-sm leading-6 text-amber-50">
-                      {readyNovelCount > 1 ? 'DNA 完成后进入融合变体。' : 'DNA 完成后，再补齐另一部作品的 DNA。'}
+                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                    <p className="text-[9px] font-mono tracking-wider text-zinc-400 uppercase">工作流依赖</p>
+                    <p className="mt-1 text-zinc-200">
+                      {readyNovelCount > 1 ? 'DNA 完成后立即可融合。' : '还需提炼另一本以凑齐碰撞对。'}
                     </p>
                   </div>
                 </div>
 
                 {busy ? (
-                  <div className="mt-8 rounded-3xl border border-amber-400/15 bg-amber-400/8 p-5">
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <p className="text-[11px] uppercase tracking-[0.22em] text-amber-100/70">当前正在处理</p>
-                        <h4 className="mt-2 text-lg font-semibold text-amber-50">
-                          {status === 'reducing' ? '正在收束整本作品的 DNA' : '正在逐章映射创作线索'}
-                        </h4>
-                        <p className="mt-2 text-sm leading-6 text-amber-100/75">
-                          已完成 {progress.current}/{progress.total || chapters.length} 章。
-                          你可以暂停，稍后继续，不会丢失已完成的章节摘要。
-                        </p>
+                  <div className="mt-8 rounded-xl border border-white/5 bg-zinc-950/40 p-5">
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-center justify-between text-xs text-zinc-450 font-mono">
+                        <span className="flex items-center gap-2">
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                          {status === 'reducing' ? '汇总收束整本 DNA 骨架中' : `逐章映射中 (${progress.current}/${progress.total || chapters.length})`}
+                        </span>
+                        <button
+                          onClick={pause}
+                          className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-1 text-[10px] font-semibold text-zinc-300 hover:bg-white/[0.06] transition-linear active-press"
+                        >
+                          <Pause className="h-3 w-3" />
+                          暂停
+                        </button>
                       </div>
 
-                      <button
-                        onClick={pause}
-                        className="rounded-2xl border border-white/10 bg-white/[0.08] px-4 py-2 text-sm font-medium text-zinc-100 transition-linear hover:bg-white/[0.12]"
-                      >
-                        <span className="flex items-center gap-2">
-                          <Pause className="h-4 w-4" />
-                          暂停处理
-                        </span>
-                      </button>
-                    </div>
+                      {/* Geist Style Precise Progress Line (2px) */}
+                      <div className="h-[2px] w-full bg-zinc-900 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-white transition-all duration-300"
+                          style={{
+                            width: `${progress.total ? (progress.current / progress.total) * 100 : status === 'reducing' ? 100 : 0}%`,
+                          }}
+                        />
+                      </div>
 
-                    <div className="mt-5 h-2 rounded-full bg-white/10">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-amber-300 via-amber-400 to-cyan-300"
-                        style={{
-                          width: `${progress.total ? (progress.current / progress.total) * 100 : status === 'reducing' ? 100 : 0}%`,
-                        }}
-                      />
+                      <div className="flex justify-between text-[10px] text-zinc-600 font-mono">
+                        <span>MAP_REDUCE_PIPELINE</span>
+                        <span>{progress.total ? Math.round((progress.current / progress.total) * 100) : status === 'reducing' ? 100 : 0}%</span>
+                      </div>
                     </div>
                   </div>
                 ) : (
                   <div className="mt-8 grid gap-4 lg:grid-cols-2">
                     <button
                       onClick={() => handleExtract(100)}
-                      className="rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-5 text-left transition-linear hover:-translate-y-0.5 hover:border-cyan-300/30"
+                      className="rounded-2xl border border-white/5 bg-white/[0.01] p-5 text-left transition-linear hover:border-white/15 hover:bg-white/[0.02]"
                     >
                       <div className="flex items-center justify-between gap-4">
-                        <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/14 p-3 text-cyan-100">
-                          <Zap className="h-5 w-5" />
+                        <div className="rounded-xl border border-white/5 bg-white/[0.015] p-2.5 text-zinc-300">
+                          <Zap className="h-4 w-4" />
                         </div>
-                        <span className="rounded-full border border-cyan-300/20 px-2.5 py-1 text-[11px] text-cyan-100">推荐先跑</span>
+                        <span className="rounded-full border border-white/10 px-2.5 py-0.5 text-[9px] font-mono text-zinc-400">RECOMMENDED</span>
                       </div>
-                      <h4 className="mt-4 text-lg font-semibold text-zinc-50">
-                        {status === 'error' ? '继续快速提取' : '快速预览提取'}
+                      <h4 className="mt-4 text-sm font-semibold text-zinc-200">
+                        {status === 'error' ? '继续快速提取' : '快速提取 (前 100 章)'}
                       </h4>
-                      <p className="mt-2 text-sm leading-6 text-zinc-300">
-                        先提取前 100 章，快速建立题材、角色与结构轮廓。适合第一次判断这部作品的创作 DNA 是否可用。
+                      <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+                        快速拟合前 100 章。适合大体量小说快速建模、预览 DNA 粗坯，耗时显著缩短。
                       </p>
-                      <div className="mt-4 flex items-center gap-4 text-xs text-zinc-400">
-                        <span className="flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" />更快出结果</span>
-                        <span>适合先看轮廓</span>
+                      <div className="mt-4 flex items-center gap-4 text-[10px] text-zinc-650 font-mono">
+                        <span className="flex items-center gap-1"><Clock3 className="h-3 w-3" />EST_SHORT</span>
+                        <span>PREVIEW_MODE</span>
                       </div>
                     </button>
 
                     <button
                       onClick={() => handleExtract(undefined)}
-                      className="rounded-3xl border border-amber-400/18 bg-amber-400/8 p-5 text-left transition-linear hover:-translate-y-0.5 hover:border-amber-300/28"
+                      className="rounded-2xl border border-white/5 bg-white/[0.01] p-5 text-left transition-linear hover:border-white/15 hover:bg-white/[0.02]"
                     >
-                      <div className="rounded-2xl border border-amber-400/20 bg-amber-400/12 p-3 text-amber-100 w-fit">
-                        <BookOpen className="h-5 w-5" />
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="rounded-xl border border-white/5 bg-white/[0.015] p-2.5 text-zinc-300">
+                          <BookOpen className="h-4 w-4" />
+                        </div>
+                        <span className="rounded-full border border-white/5 px-2.5 py-0.5 text-[9px] font-mono text-zinc-650">DEEP_RUN</span>
                       </div>
-                      <h4 className="mt-4 text-lg font-semibold text-zinc-50">完整提取，用于最终融合</h4>
-                      <p className="mt-2 text-sm leading-6 text-zinc-300">
-                        对全书进行完整的 Map-Reduce，得到更稳定的创作 DNA。适合准备进入多作品融合或需要长期沉淀这本书的摘要。
+                      <h4 className="mt-4 text-sm font-semibold text-zinc-200">深度全量提取 (最终融合依赖)</h4>
+                      <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+                        对全书章节做全量级分析归纳。适合获取最终成熟的 DNA 板块资产，提炼品质极高。
                       </p>
-                      <div className="mt-4 flex items-center gap-4 text-xs text-zinc-400">
-                        <span className="flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" />耗时更长</span>
-                        <span>适合最终结果</span>
+                      <div className="mt-4 flex items-center gap-4 text-[10px] text-zinc-650 font-mono">
+                        <span className="flex items-center gap-1"><Clock3 className="h-3 w-3" />EST_LONG</span>
+                        <span>PRODUCTION_MODE</span>
                       </div>
                     </button>
                   </div>
                 )}
 
-                {error && <p className="mt-4 text-sm text-rose-300">{error}</p>}
+                {error && <p className="mt-4 text-xs font-mono text-rose-400">{error}</p>}
               </div>
 
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="linear-card rounded-2xl p-4">
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">已完成摘要</p>
-                  <p className="mt-3 text-2xl font-semibold text-zinc-50">{completedChapters}</p>
-                  <p className="mt-1 text-sm text-zinc-400">逐章映射已落地的章节数量。</p>
+              <div className="grid gap-3 grid-cols-3 font-mono text-xs">
+                <div className="linear-card rounded-xl p-4 bg-zinc-950/20 border-white/5">
+                  <p className="text-[9px] tracking-wider text-zinc-600 uppercase">已完成章节摘要</p>
+                  <p className="mt-2.5 text-lg font-semibold text-zinc-300">{completedChapters}</p>
                 </div>
-                <div className="linear-card rounded-2xl p-4">
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">异常短章</p>
-                  <p className="mt-3 text-2xl font-semibold text-amber-100">{shortChapters}</p>
-                  <p className="mt-1 text-sm text-zinc-400">可能是插图、后记或切分异常的候选。</p>
+                <div className="linear-card rounded-xl p-4 bg-zinc-950/20 border-white/5">
+                  <p className="text-[9px] tracking-wider text-zinc-600 uppercase">异常超短章节</p>
+                  <p className="mt-2.5 text-lg font-semibold text-zinc-300">{shortChapters}</p>
                 </div>
-                <div className="linear-card rounded-2xl p-4">
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">超长章节</p>
-                  <p className="mt-3 text-2xl font-semibold text-cyan-100">{longChapters}</p>
-                  <p className="mt-1 text-sm text-zinc-400">如果明显偏多，建议先去切分校验台复核。</p>
+                <div className="linear-card rounded-xl p-4 bg-zinc-950/20 border-white/5">
+                  <p className="text-[9px] tracking-wider text-zinc-600 uppercase">异常超长章节</p>
+                  <p className="mt-2.5 text-lg font-semibold text-zinc-300">{longChapters}</p>
                 </div>
               </div>
             </div>
           ) : (
             <div className="flex h-full flex-col gap-5">
-              <div className="flex items-start justify-between gap-4 rounded-[28px] border border-emerald-400/18 bg-emerald-400/8 p-6">
+              <div className="flex items-start justify-between gap-4 rounded-2xl border border-white/5 bg-zinc-950/40 p-6">
                 <div>
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-emerald-100/75">阶段完成</p>
-                  <h3 className="mt-2 text-2xl font-semibold text-zinc-50">这部作品的创作 DNA 已经点亮</h3>
-                  <p className="mt-3 max-w-3xl text-sm leading-7 text-zinc-300">
-                    你现在已经拿到了可进入变体阶段的创作骨架。下一步不是回到工具列表，而是判断变体准入是否满足，然后继续生成新方向。
+                  <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">STAGE_COMPLETED</p>
+                  <h3 className="mt-1 text-base font-semibold text-zinc-200">《{novel.name}》的创作 DNA 已成功点亮</h3>
+                  <p className="mt-2.5 max-w-3xl text-xs leading-relaxed text-zinc-500">
+                    本原稿已完成自适应的 Map-Reduce 创作骨架提炼。您可以往下直接查看/精调各项设定，也可以立即进入变体融合工坊。
                   </p>
                 </div>
                 {readyNovelCount > 1 ? (
                   <button
                     onClick={() => setWorkshopOpen(true)}
-                    className="rounded-2xl border border-amber-300/25 bg-amber-300/14 px-4 py-3 text-sm font-medium text-amber-50 transition-linear hover:bg-amber-300/18"
+                    className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-xs font-semibold text-white transition-linear hover:bg-white/[0.08]"
                   >
                     <span className="flex items-center gap-2">
-                      进入融合变体
-                      <ArrowRight className="h-4 w-4" />
+                      进入融合工坊
+                      <ArrowRight className="h-3.5 w-3.5" />
                     </span>
                   </button>
                 ) : (
-                  <div className="rounded-2xl border border-rose-300/18 bg-rose-300/10 px-4 py-3 text-sm leading-6 text-rose-100">
-                    变体阶段仍受阻：当前只有 {readyNovelCount} 部 DNA 就绪作品。至少两部作品完成 DNA，才有足够的碰撞素材。
+                  <div className="rounded-xl border border-white/5 bg-white/[0.01] px-4 py-3 text-xs leading-relaxed text-zinc-500 max-w-xs">
+                    碰撞准备阻断：目前仅有 {readyNovelCount} 本 DNA 就绪作品。至少两本 DNA 就绪，才能进入创意融合。
                   </div>
                 )}
               </div>
 
-              <div className="grid gap-3 md:grid-cols-4">
-                <div className="linear-card rounded-2xl p-4">
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">当前产物</p>
-                  <p className="mt-3 text-lg font-semibold text-emerald-200">创作 DNA 已就绪</p>
+              <div className="grid gap-3 grid-cols-2 md:grid-cols-4 font-mono text-xs">
+                <div className="linear-card rounded-xl p-4 bg-zinc-950/20 border-white/5">
+                  <p className="text-[9px] tracking-wider text-zinc-650 uppercase">当前状况</p>
+                  <p className="mt-2 text-sm font-sans font-semibold text-emerald-400">DNA 已就绪</p>
                 </div>
-                <div className="linear-card rounded-2xl p-4">
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">变体准入</p>
-                  <p className="mt-3 text-lg font-semibold text-zinc-100">{readyNovelCount}/2 部 DNA</p>
+                <div className="linear-card rounded-xl p-4 bg-zinc-950/20 border-white/5">
+                  <p className="text-[9px] tracking-wider text-zinc-650 uppercase">变体备用素材数</p>
+                  <p className="mt-2 text-sm font-semibold text-zinc-300">{readyNovelCount} / 2 部</p>
                 </div>
-                <div className="linear-card rounded-2xl p-4">
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">完成后可得</p>
-                  <p className="mt-3 text-sm leading-6 text-zinc-200">方向卡、故事板与正文变体草案。</p>
+                <div className="linear-card rounded-xl p-4 bg-zinc-950/20 border-white/5">
+                  <p className="text-[9px] tracking-wider text-zinc-650 uppercase">已完成汇总项</p>
+                  <p className="mt-2 text-sm font-semibold text-zinc-350">5 大骨架维度</p>
                 </div>
-                <div className="linear-card rounded-2xl p-4">
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">唯一下一步</p>
-                  <p className="mt-3 text-sm leading-6 text-amber-100">
-                    {readyNovelCount > 1 ? '进入融合变体阶段。' : '再完成一部作品的 DNA。'}
+                <div className="linear-card rounded-xl p-4 bg-zinc-950/20 border-white/5">
+                  <p className="text-[9px] tracking-wider text-zinc-650 uppercase">下一步指引</p>
+                  <p className="mt-2 text-xs font-sans text-zinc-400">
+                    {readyNovelCount > 1 ? '前去变体工坊' : '补齐第二部 DNA'}
                   </p>
                 </div>
               </div>
 
               <div className="grid gap-4 lg:grid-cols-2">
                 {DNA_FIELDS.map(({ key, label, helper }) => (
-                  <div key={key} className="group linear-card rounded-3xl p-5 transition-linear">
+                  <div key={key} className="group linear-card rounded-2xl p-5 bg-zinc-950/20 border-white/5">
                     <div className="flex items-center justify-between gap-4">
                       <div>
-                        <p className="text-[11px] uppercase tracking-[0.22em] text-amber-100/75">{label}</p>
-                        <p className="mt-2 text-sm leading-6 text-zinc-500">{helper}</p>
+                        <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">{label}</p>
+                        <p className="mt-1 text-xs text-zinc-600">{helper}</p>
                       </div>
                       {editKey === key ? (
-                        <button onClick={() => saveField(key)} className="text-emerald-300 hover:text-emerald-200" title="保存">
+                        <button onClick={() => saveField(key)} className="text-zinc-200 hover:text-white transition-linear" title="保存">
                           <Check className="h-4 w-4" />
                         </button>
                       ) : (
@@ -412,10 +414,10 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
                             setEditKey(key);
                             setDraft(novel.dnaCard?.[key] ?? '');
                           }}
-                          className="rounded-full border border-white/10 p-2 text-zinc-500 transition-linear hover:border-amber-300/25 hover:text-amber-100"
-                          title="编辑"
+                          className="rounded-full border border-white/5 p-1.5 text-zinc-600 opacity-0 group-hover:opacity-100 transition-linear hover:border-white/15 hover:text-zinc-200"
+                          title="编辑修改"
                         >
-                          <Pencil className="h-4 w-4" />
+                          <Pencil className="h-3.5 w-3.5" />
                         </button>
                       )}
                     </div>
@@ -426,10 +428,10 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
                         value={draft}
                         onChange={(event) => setDraft(event.target.value)}
                         rows={7}
-                        className="mt-4 w-full rounded-2xl border border-amber-400/18 bg-[#0a1018] p-3 text-sm leading-7 text-zinc-100 focus:outline-none resize-y"
+                        className="mt-4 w-full rounded-xl border border-white/10 bg-zinc-950 p-3 text-xs leading-relaxed text-zinc-200 focus:outline-none focus:border-white/20 focus:ring-1 focus:ring-white/10 resize-y font-mono"
                       />
                     ) : (
-                      <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-zinc-200">{novel.dnaCard?.[key]}</p>
+                      <p className="mt-4 whitespace-pre-wrap text-xs leading-relaxed text-zinc-400 font-serif">{novel.dnaCard?.[key]}</p>
                     )}
                   </div>
                 ))}
@@ -439,25 +441,25 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
         </div>
 
         <div className="flex min-h-0 flex-col gap-5">
-          <div className="linear-card flex min-h-[460px] flex-1 flex-col rounded-[28px] overflow-hidden">
+          <div className="linear-card flex min-h-[460px] flex-1 flex-col rounded-2xl overflow-hidden border-white/5 bg-zinc-950/20">
             <div className="linear-border-b p-5">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">章节预览面板</p>
-                  <h3 className="mt-2 text-lg font-semibold text-zinc-50">快速检查作品切分与进度</h3>
+                  <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">项目校验状态</p>
+                  <h3 className="mt-1 text-xs font-semibold text-zinc-200">原稿章节初筛与摘要状态表</h3>
                 </div>
-                <div className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-zinc-400">
-                  {chapters.length} 章
+                <div className="rounded-full border border-white/5 bg-white/[0.01] px-2 py-0.5 text-[10px] font-mono text-zinc-500">
+                  {chapters.length} CHS
                 </div>
               </div>
 
               <div className="relative mt-4">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="搜索章节标题、序章、后记…"
-                  className="w-full rounded-2xl border border-white/10 bg-white/[0.03] py-3 pl-10 pr-4 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
+                  placeholder="检索特定的章节名称或字眼..."
+                  className="w-full rounded-xl border border-white/5 bg-zinc-950 py-2.5 pl-10 pr-4 text-xs text-zinc-200 placeholder:text-zinc-655 focus:outline-none"
                 />
               </div>
             </div>
@@ -465,41 +467,43 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
             <div className="flex-1 overflow-y-auto p-3">
               <div className="space-y-2">
                 {filtered.slice(0, 80).map((chapter) => (
-                  <div key={chapter.id} className="rounded-2xl border border-white/8 bg-white/[0.02] px-4 py-3">
-                    <div className="flex items-start gap-3">
-                      {chapter.mapStatus === 'mapping' ? (
-                        <Loader2 className="mt-1 h-4 w-4 shrink-0 animate-spin text-amber-200" />
-                      ) : (
-                        <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${MAP_DOT[chapter.mapStatus] || 'bg-zinc-600'}`} />
-                      )}
+                  <div key={chapter.id} className="rounded-xl border border-white/5 bg-white/[0.01] px-4 py-2.5">
+                    <div className="flex items-start gap-3 justify-between">
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-zinc-100">{chapter.name}</p>
-                        <p className="mt-1 text-xs text-zinc-500">{chapter.wordCount.toLocaleString()} 字</p>
+                        <p className="truncate text-xs font-medium text-zinc-300">{chapter.name}</p>
+                        <p className="mt-1 text-[10px] text-zinc-600 font-mono">{chapter.wordCount.toLocaleString()} 字</p>
                       </div>
+                      {chapter.mapStatus === 'mapping' ? (
+                        <div className="linear-loader-container rounded-full w-[24px] mt-2">
+                          <div className="linear-loader-bar rounded-full" />
+                        </div>
+                      ) : (
+                        <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full border ${MAP_DOT[chapter.mapStatus] || 'bg-zinc-800'}`} />
+                      )}
                     </div>
                   </div>
                 ))}
                 {filtered.length === 0 && (
-                  <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-8 text-center text-sm text-zinc-500">
-                    没有找到匹配章节，试试换个关键词。
+                  <div className="rounded-xl border border-dashed border-white/5 bg-white/[0.01] px-4 py-8 text-center text-xs text-zinc-600">
+                    未查到符合过滤项的章节。
                   </div>
                 )}
               </div>
             </div>
           </div>
 
-          <div className="linear-card rounded-[28px] p-5">
-            <div className="flex items-center gap-2 text-zinc-100">
-              <ScanSearch className="h-4 w-4 text-cyan-200" />
-              <h4 className="text-sm font-semibold">继续这条心流的原因</h4>
+          <div className="linear-card rounded-2xl p-5 border-white/5 bg-zinc-950/20">
+            <div className="flex items-center gap-2 text-zinc-400">
+              <ScanSearch className="h-3.5 w-3.5 text-zinc-300" />
+              <h4 className="text-xs font-semibold">提取心流保障 (SAFEGUARD)</h4>
             </div>
-            <p className="mt-3 text-sm leading-7 text-zinc-400">
-              先把单本作品的骨架提炼清楚，后面的变体阶段才不会变成“只是在拼素材”。如果你看到很多短章、插图或异常章节，先去切分校验台处理，再继续这一步会更稳。
+            <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+              单篇原稿提取是构建高可控创意碰撞的刚性基石。如果章节存在严重的乱码断章、插图误识别，强烈建议前去校验台利用正则对其重置，防止提取阶段的特征被稀释。
             </p>
             {dnaReady && (
-              <div className="mt-4 flex items-center gap-2 rounded-2xl border border-emerald-400/18 bg-emerald-400/8 px-4 py-3 text-sm text-emerald-100">
-                <CheckCircle2 className="h-4 w-4" />
-                当前作品已经具备成为变体输入资产的资格。
+              <div className="mt-4 flex items-center gap-2 rounded-xl border border-white/5 bg-white/[0.01] px-4 py-3 text-xs text-zinc-400">
+                <CheckCircle2 className="h-4 w-4 text-zinc-400" />
+                已锁定当前项目的数字特征，具备融合工坊输入许可。
               </div>
             )}
           </div>

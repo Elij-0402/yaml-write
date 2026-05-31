@@ -1,23 +1,25 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&family=Geist:wght@100..900&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    --bg-app: #090b10;
-    --bg-panel: #0f131a;
-    --bg-card: #121720;
-    --bg-card-strong: #171d27;
-    --border-dim: rgba(255, 255, 255, 0.07);
-    --border-strong: rgba(255, 255, 255, 0.13);
+    --bg-app: #000000;
+    --bg-panel: #09090b;
+    --bg-card: #0c0c0c;
+    --bg-card-strong: #161616;
+    --border-dim: rgba(255, 255, 255, 0.05);
+    --border-strong: rgba(255, 255, 255, 0.1);
     --brand-amber: #d5a44c;
-    --brand-amber-soft: rgba(213, 164, 76, 0.12);
-    --brand-cyan: #9bb9d6;
-    --brand-cyan-soft: rgba(155, 185, 214, 0.1);
-    --text-primary: #f3f5f8;
-    --text-secondary: #c7cfdb;
-    --text-muted: #7d8798;
-    --text-faint: #60697a;
+    --brand-amber-soft: rgba(255, 255, 255, 0.05);
+    --brand-cyan: #a1a1aa;
+    --brand-cyan-soft: rgba(255, 255, 255, 0.04);
+    --text-primary: #f4f4f5;
+    --text-secondary: #a1a1aa;
+    --text-muted: #52525b;
+    --text-faint: #27272a;
   }
 
   * {
@@ -26,25 +28,26 @@
 
   html {
     color-scheme: dark;
+    scroll-behavior: smooth;
   }
 
   body {
     min-height: 100vh;
-    background: linear-gradient(180deg, #090b10 0%, #0a0d12 100%);
+    background: var(--bg-app);
     color: var(--text-primary);
-    font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Segoe UI", sans-serif;
+    font-family: "Geist", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Segoe UI", sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
   ::selection {
-    background: rgba(155, 185, 214, 0.2);
-    color: #f8fbff;
+    background: rgba(255, 255, 255, 0.15);
+    color: #ffffff;
   }
 
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
   }
 
   ::-webkit-scrollbar-track {
@@ -52,12 +55,12 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.08);
     border-radius: 999px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.22);
+    background: rgba(255, 255, 255, 0.18);
   }
 }
 
@@ -87,16 +90,16 @@
     border: 1px solid var(--border-dim);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.02),
-      0 8px 24px rgba(0, 0, 0, 0.18);
+      0 4px 20px rgba(0, 0, 0, 0.4);
   }
 
   .glass-card {
-    background: rgba(15, 19, 26, 0.96);
+    background: rgba(9, 9, 11, 0.96);
     border: 1px solid var(--border-dim);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.02),
-      0 12px 32px rgba(0, 0, 0, 0.22);
-    backdrop-filter: blur(10px);
+      0 12px 32px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(12px);
   }
 
   .panel-grid {
@@ -104,20 +107,19 @@
   }
 
   .energy-ring {
-    box-shadow: 0 0 0 1px rgba(213, 164, 76, 0.16);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
   }
 
   .focus-energy {
-    box-shadow: 0 0 0 1px rgba(155, 185, 214, 0.14);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15);
   }
 }
 
 @keyframes slideIn {
   from {
     opacity: 0;
-    transform: translateX(24px);
+    transform: translateX(16px);
   }
-
   to {
     opacity: 1;
     transform: translateX(0);
@@ -125,15 +127,14 @@
 }
 
 .animate-slide-in {
-  animation: slideIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: slideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 @keyframes fadeIn {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(4px);
   }
-
   to {
     opacity: 1;
     transform: translateY(0);
@@ -141,11 +142,11 @@
 }
 
 .animate-fade-in {
-  animation: fadeIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .active-press {
-  transition: transform 0.12s ease;
+  transition: transform 0.1s ease;
 }
 
 .active-press:active {
@@ -153,16 +154,62 @@
 }
 
 .transition-linear {
-  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .dna-breathe {
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.02),
-    0 8px 24px rgba(0, 0, 0, 0.2);
+    inset 0 1px 0 rgba(255, 255, 255, 0.01),
+    0 8px 24px rgba(0, 0, 0, 0.3);
 }
 
-.pulse-cyan {
-  background-color: rgba(155, 185, 214, 0.06);
-  border-color: rgba(155, 185, 214, 0.18);
+/* Monochromatic Pulse Effects */
+.pulse-zinc {
+  background-color: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.15);
+  animation: zincPulse 1.2s cubic-bezier(0.16, 1, 0.3, 1) infinite alternate;
+}
+
+@keyframes zincPulse {
+  0% {
+    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+  }
+  100% {
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 0 8px 0 rgba(255, 255, 255, 0.04);
+  }
+}
+
+/* Precise 1px Linear Loading Bar */
+.linear-loader-container {
+  width: 100%;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+  position: relative;
+}
+
+.linear-loader-bar {
+  height: 100%;
+  background: #ffffff;
+  width: 30%;
+  position: absolute;
+  left: -30%;
+  animation: linearMarquee 1.4s infinite cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 4px #ffffff;
+}
+
+@keyframes linearMarquee {
+  0% {
+    left: -30%;
+    width: 30%;
+  }
+  50% {
+    width: 40%;
+  }
+  100% {
+    left: 100%;
+    width: 20%;
+  }
 }
