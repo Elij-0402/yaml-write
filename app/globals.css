@@ -4,85 +4,136 @@
 
 @layer base {
   :root {
-    --bg-sidebar: #08080a;
-    --bg-main: #0c0c0e;
-    --bg-card: #121214;
-    --border-dim: #1d1d21;
-    --border-accent: #27272a;
-    --brand-amber: #f59e0b;
-    --brand-indigo: #6366f1;
-    --text-primary: #f4f4f5;
-    --text-secondary: #a1a1aa;
-    --text-muted: #52525b;
+    --bg-app: #090b10;
+    --bg-panel: #0f131a;
+    --bg-card: #121720;
+    --bg-card-strong: #171d27;
+    --border-dim: rgba(255, 255, 255, 0.07);
+    --border-strong: rgba(255, 255, 255, 0.13);
+    --brand-amber: #d5a44c;
+    --brand-amber-soft: rgba(213, 164, 76, 0.12);
+    --brand-cyan: #9bb9d6;
+    --brand-cyan-soft: rgba(155, 185, 214, 0.1);
+    --text-primary: #f3f5f8;
+    --text-secondary: #c7cfdb;
+    --text-muted: #7d8798;
+    --text-faint: #60697a;
+  }
+
+  * {
+    border-color: var(--border-dim);
+  }
+
+  html {
+    color-scheme: dark;
   }
 
   body {
-    background-color: var(--bg-main);
+    min-height: 100vh;
+    background: linear-gradient(180deg, #090b10 0%, #0a0d12 100%);
     color: var(--text-primary);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Microsoft YaHei", sans-serif;
+    font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Segoe UI", sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Custom super fine minimal scrollbar - Linear style */
-  ::-webkit-scrollbar {
-    width: 4px;
-    height: 4px;
+  ::selection {
+    background: rgba(155, 185, 214, 0.2);
+    color: #f8fbff;
   }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
   ::-webkit-scrollbar-track {
     background: transparent;
   }
+
   ::-webkit-scrollbar-thumb {
-    background: #1f1f23;
-    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
   }
+
   ::-webkit-scrollbar-thumb:hover {
-    background: #3f3f46;
+    background: rgba(255, 255, 255, 0.22);
   }
 }
 
-/* Linear-style fine utility styles */
 @layer utilities {
   .linear-border-b {
     border-bottom: 1px solid var(--border-dim);
   }
+
   .linear-border-r {
     border-right: 1px solid var(--border-dim);
   }
+
   .linear-border-l {
     border-left: 1px solid var(--border-dim);
   }
+
   .linear-border-t {
     border-top: 1px solid var(--border-dim);
   }
+
   .linear-border {
     border: 1px solid var(--border-dim);
   }
+
   .linear-card {
-    background-color: var(--bg-card);
+    background: var(--bg-card);
     border: 1px solid var(--border-dim);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.02),
+      0 8px 24px rgba(0, 0, 0, 0.18);
+  }
+
+  .glass-card {
+    background: rgba(15, 19, 26, 0.96);
+    border: 1px solid var(--border-dim);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.02),
+      0 12px 32px rgba(0, 0, 0, 0.22);
+    backdrop-filter: blur(10px);
+  }
+
+  .panel-grid {
+    background-image: none;
+  }
+
+  .energy-ring {
+    box-shadow: 0 0 0 1px rgba(213, 164, 76, 0.16);
+  }
+
+  .focus-energy {
+    box-shadow: 0 0 0 1px rgba(155, 185, 214, 0.14);
   }
 }
 
-/* Keyframes for ultra-smooth transitions */
 @keyframes slideIn {
   from {
-    transform: translateX(100%);
+    opacity: 0;
+    transform: translateX(24px);
   }
+
   to {
+    opacity: 1;
     transform: translateX(0);
   }
 }
 
 .animate-slide-in {
-  animation: slideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: slideIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 @keyframes fadeIn {
   from {
     opacity: 0;
-    transform: translateY(3px);
+    transform: translateY(6px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -90,36 +141,28 @@
 }
 
 .animate-fade-in {
-  animation: fadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: fadeIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* Button Active Press micro-scale */
 .active-press {
-  transition: transform 0.1s ease;
+  transition: transform 0.12s ease;
 }
+
 .active-press:active {
   transform: scale(0.985);
 }
 
-/* Notion-style micro-cursor hover transition */
 .transition-linear {
-  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* DNA extraction CTA — subtle breathing glow */
-@keyframes dnaBreathe {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); border-color: var(--border-dim); }
-  50% { box-shadow: 0 0 24px 0 rgba(245, 158, 11, 0.10); border-color: rgba(245, 158, 11, 0.25); }
-}
 .dna-breathe {
-  animation: dnaBreathe 3.2s ease-in-out infinite;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.02),
+    0 8px 24px rgba(0, 0, 0, 0.2);
 }
 
-/* Fusion block updated — cyan pulse */
-@keyframes pulseCyan {
-  0% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.45); }
-  100% { box-shadow: 0 0 0 10px rgba(34, 211, 238, 0); }
-}
 .pulse-cyan {
-  animation: pulseCyan 1s cubic-bezier(0.16, 1, 0.3, 1);
+  background-color: rgba(155, 185, 214, 0.06);
+  border-color: rgba(155, 185, 214, 0.18);
 }
