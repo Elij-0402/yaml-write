@@ -1108,7 +1108,7 @@ export default function NovelUploader() {
       />
 
       {dragActive && (
-        <div className="pointer-events-none absolute inset-0 z-40 flex flex-col items-center justify-center rounded-2xl border border-dashed border-white/20 bg-black/95 p-6 backdrop-blur-md transition-linear">
+        <div className="pointer-events-none absolute inset-0 z-40 flex flex-col items-center justify-center rounded-xl border border-dashed border-white/20 bg-black/95 p-6 backdrop-blur-md transition-linear">
           <Upload className="mb-3 h-6 w-6 text-white" />
           <p className="text-sm font-semibold text-zinc-100">释手即刻导入，开启分析轨道</p>
           <p className="mt-1 text-xs text-zinc-500">工坊将自动进行原稿降噪净化，生成可校验的树状章节结构。</p>
@@ -1117,7 +1117,7 @@ export default function NovelUploader() {
 
       {!selectedNovelId ? (
         <>
-          <div className="glass-card rounded-2xl p-7 border-white/5 bg-zinc-950/60">
+          <div className="glass-card rounded-xl p-7 border-hairline bg-surface-1">
             <p className="text-[10px] font-mono tracking-widest text-zinc-600 uppercase">导入原稿 / 项目立项</p>
             <h1 className="mt-3 text-2xl font-semibold text-zinc-100 tracking-tight">建立高可信度长篇创作项目</h1>
             <p className="mt-2.5 max-w-3xl text-xs leading-relaxed text-zinc-400">
@@ -1125,15 +1125,15 @@ export default function NovelUploader() {
             </p>
 
             <div className="mt-6 grid gap-3 md:grid-cols-4">
-              <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4">
+              <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
                 <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">输入资产</p>
                 <p className="mt-2 text-xs leading-relaxed text-zinc-300">本地 TXT 纯文本原稿与项目命名。</p>
               </div>
-              <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4">
+              <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
                 <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">处理阶段</p>
                 <p className="mt-2 text-xs leading-relaxed text-zinc-300">自动多编码适配、水印净化、智能多策略分章。</p>
               </div>
-              <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4">
+              <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
                 <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">产出项目</p>
                 <p className="mt-2 text-xs leading-relaxed text-zinc-300">完全脱敏、极度干净的结构化树状章节目录。</p>
               </div>
@@ -1145,7 +1145,7 @@ export default function NovelUploader() {
           </div>
 
           <div className="grid gap-5 xl:grid-cols-[1.35fr_0.95fr]">
-            <div className="glass-card rounded-2xl p-6 border-white/5 bg-zinc-950/60">
+            <div className="glass-card rounded-xl p-6 border-hairline bg-surface-1">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">立项入口</p>
@@ -1166,7 +1166,7 @@ export default function NovelUploader() {
                 </button>
               </div>
 
-              <div className="mt-6 rounded-2xl border border-dashed border-white/5 bg-zinc-950/20 px-6 py-10 text-center transition-linear hover:border-white/10">
+              <div className="mt-6 rounded-xl border border-dashed border-hairline bg-surface-2/40 px-6 py-10 text-center transition-linear hover:border-white/10">
                 <Upload className="mx-auto h-5 w-5 text-zinc-500" />
                 <p className="mt-4 text-xs font-medium text-zinc-300">拖拽 `.txt` 文本至此处</p>
                 <p className="mt-2 text-[11px] leading-5 text-zinc-500 max-w-sm mx-auto">
@@ -1175,7 +1175,7 @@ export default function NovelUploader() {
               </div>
 
               {uploading && (
-                <div className="mt-5 rounded-xl border border-white/5 bg-zinc-950/40 p-5">
+                <div className="mt-5 rounded-xl border border-hairline bg-zinc-950/40 p-5">
                   <div className="flex flex-col gap-3">
                     <div className="flex items-center justify-between text-xs text-zinc-400 font-mono">
                       <span className="flex items-center gap-2">
@@ -1206,7 +1206,7 @@ export default function NovelUploader() {
             </div>
 
             <div className="space-y-5">
-              <div className="linear-card rounded-2xl p-5 border-white/5 bg-zinc-950/20">
+              <div className="linear-card rounded-xl p-5 border-hairline bg-surface-2/40">
                 <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">数据清洗流程</p>
                 <div className="mt-4 space-y-4 text-xs leading-relaxed text-zinc-400">
                   <div>
@@ -1224,14 +1224,14 @@ export default function NovelUploader() {
                 </div>
               </div>
 
-              <div className="linear-card rounded-2xl p-5 border-white/5 bg-zinc-950/20">
+              <div className="linear-card rounded-xl p-5 border-hairline bg-surface-2/40">
                 <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">工坊摘要数据</p>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4">
+                  <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
                     <p className="text-[10px] font-mono text-zinc-500 uppercase">已入库作品</p>
                     <p className="mt-2 text-xl font-mono font-semibold text-zinc-300">{novels.length}</p>
                   </div>
-                  <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4">
+                  <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
                     <p className="text-[10px] font-mono text-zinc-500 uppercase">待初校验数</p>
                     <p className="mt-2 text-xl font-mono font-semibold text-zinc-300">
                       {novels.filter((novel) => novel.splitStatus === 'needs_review').length}
@@ -1244,7 +1244,7 @@ export default function NovelUploader() {
         </>
       ) : (
         <>
-          <div className="glass-card rounded-2xl p-7 border-white/5 bg-zinc-950/60">
+          <div className="glass-card rounded-xl p-7 border-hairline bg-surface-1">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="max-w-3xl">
                 <p className="text-[10px] font-mono tracking-widest text-zinc-600 uppercase">章节树校验控制台</p>
@@ -1276,7 +1276,7 @@ export default function NovelUploader() {
                 )}
                 <button
                   onClick={() => setAdvancedRepairOpen((prev) => !prev)}
-                  className="rounded-xl border border-white/5 bg-white/[0.015] px-4 py-2.5 text-xs font-medium text-zinc-400 transition-linear hover:border-white/10 hover:text-zinc-200"
+                  className="rounded-xl border border-hairline bg-white/[0.015] px-4 py-2.5 text-xs font-medium text-zinc-400 transition-linear hover:border-white/10 hover:text-zinc-200"
                 >
                   {advancedRepairOpen ? '隐藏高级重划分' : '手动规则重划分'}
                 </button>
@@ -1284,15 +1284,15 @@ export default function NovelUploader() {
             </div>
 
             <div className="mt-6 grid gap-3 md:grid-cols-4">
-              <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4">
+              <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
                 <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">源数据输入</p>
                 <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">已载入净化文本与章节评估结构。</p>
               </div>
-              <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4">
+              <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
                 <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">校验评估项</p>
                 <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">异常短章节比例、超长篇章、标题序号递增单调性。</p>
               </div>
-              <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4">
+              <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
                 <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">评估质量状况</p>
                 <p className="mt-1.5 text-xs leading-relaxed text-zinc-300">{splitOutputLabel}</p>
               </div>
@@ -1307,7 +1307,7 @@ export default function NovelUploader() {
             <div className={`rounded-xl border px-4 py-3.5 text-xs ${
               errorMsg
                 ? 'border-rose-950/40 bg-rose-950/10 text-rose-200'
-                : 'border-white/5 bg-zinc-950/40 text-zinc-300'
+                : 'border-hairline bg-zinc-950/40 text-zinc-300'
             }`}>
               <div className="flex items-center gap-2">
                 {errorMsg ? (
@@ -1326,7 +1326,7 @@ export default function NovelUploader() {
 
           <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[1.45fr_0.95fr]">
             <div className="flex min-h-0 flex-col gap-5">
-              <div className="linear-card rounded-2xl p-5 border-white/5 bg-zinc-950/20">
+              <div className="linear-card rounded-xl p-5 border-hairline bg-surface-2/40">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">离散质量测算</p>
@@ -1336,7 +1336,7 @@ export default function NovelUploader() {
                     </p>
                   </div>
                   {splitMeta && (
-                    <div className="flex items-center gap-1.5 rounded-full border border-white/5 bg-white/[0.01] px-3 py-1 text-[10px] font-mono text-zinc-400">
+                    <div className="flex items-center gap-1.5 rounded-full border border-hairline bg-white/[0.01] px-3 py-1 text-[10px] font-mono text-zinc-400">
                       <span className={`h-1.5 w-1.5 rounded-full ${
                         splitMeta.confidenceLevel === 'high' ? 'bg-emerald-500' : splitMeta.confidenceLevel === 'medium' ? 'bg-amber-500' : 'bg-rose-500'
                       }`} />
@@ -1346,29 +1346,29 @@ export default function NovelUploader() {
                 </div>
 
                 <div className="mt-5 grid gap-3 grid-cols-2 md:grid-cols-5">
-                  <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4 text-center">
+                  <div className="rounded-xl border border-hairline bg-white/[0.01] p-4 text-center">
                     <p className="text-[10px] font-mono text-zinc-500 uppercase">总章节</p>
                     <p className="mt-2 text-lg font-mono font-semibold text-zinc-200">{chapters.length}</p>
                   </div>
-                  <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4 text-center">
+                  <div className="rounded-xl border border-hairline bg-white/[0.01] p-4 text-center">
                     <p className="text-[10px] font-mono text-zinc-500 uppercase">均章大小</p>
                     <p className="mt-2 text-lg font-mono font-semibold text-zinc-200">{Math.round(derivedStats?.avgChapterChars ?? 0).toLocaleString()}</p>
                   </div>
-                  <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4 text-center">
+                  <div className="rounded-xl border border-hairline bg-white/[0.01] p-4 text-center">
                     <p className="text-[10px] font-mono text-zinc-500 uppercase">极短章</p>
                     <p className="mt-2 text-lg font-mono font-semibold text-zinc-200">{shortChapterCount}</p>
                   </div>
-                  <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4 text-center">
+                  <div className="rounded-xl border border-hairline bg-white/[0.01] p-4 text-center">
                     <p className="text-[10px] font-mono text-zinc-500 uppercase">极长章</p>
                     <p className="mt-2 text-lg font-mono font-semibold text-zinc-200">{longChapterCount}</p>
                   </div>
-                  <div className="rounded-xl border border-white/5 bg-white/[0.01] p-4 text-center">
+                  <div className="rounded-xl border border-hairline bg-white/[0.01] p-4 text-center">
                     <p className="text-[10px] font-mono text-zinc-500 uppercase">降噪字符</p>
                     <p className="mt-2 text-lg font-mono font-semibold text-zinc-200">{activeNovel?.purifiedCount?.toLocaleString() || 0}</p>
                   </div>
                 </div>
 
-                <div className="mt-5 rounded-xl border border-white/5 bg-white/[0.01] p-4">
+                <div className="mt-5 rounded-xl border border-hairline bg-white/[0.01] p-4">
                   <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">结构异常校验原因（RISKS）</p>
                   {reviewReasons.length > 0 ? (
                     <div className="mt-3 flex flex-wrap gap-2">
@@ -1390,8 +1390,8 @@ export default function NovelUploader() {
                 </div>
               </div>
 
-              <div className="linear-card flex min-h-0 flex-1 flex-col rounded-2xl p-5 border-white/5 bg-zinc-950/20">
-                <div className="flex flex-col gap-3 border-b border-white/5 pb-4">
+              <div className="linear-card flex min-h-0 flex-1 flex-col rounded-xl p-5 border-hairline bg-surface-2/40">
+                <div className="flex flex-col gap-3 border-b border-hairline pb-4">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <div>
                       <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">章节树检视列表</p>
@@ -1408,20 +1408,20 @@ export default function NovelUploader() {
                         setCurrentPage(1);
                       }}
                       placeholder="搜索特定的章节名称、序号、后记或楔子..."
-                      className="w-full rounded-xl border border-white/5 bg-zinc-950 py-2.5 pl-10 pr-4 text-xs text-zinc-100 placeholder:text-zinc-650 focus:outline-none focus:border-white/15 transition-linear"
+                      className="w-full rounded-xl border border-hairline bg-zinc-950 py-2.5 pl-10 pr-4 text-xs text-zinc-100 placeholder:text-zinc-650 focus:outline-none focus:border-white/15 transition-linear"
                     />
                   </div>
                 </div>
 
                 <div className="mt-4 flex-1 overflow-y-auto pr-0.5">
                   {paginatedChapters.length === 0 ? (
-                    <div className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-white/5 bg-white/[0.01] px-6 py-12 text-center">
+                    <div className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-hairline bg-white/[0.01] px-6 py-12 text-center">
                       <p className="text-xs font-medium text-zinc-400">无过滤匹配结果</p>
                       <p className="mt-1 text-xs text-zinc-600">更换过滤词，以辅助检查在野章节名称的合理性。</p>
                     </div>
                   ) : (
-                    <div className="overflow-hidden rounded-xl border border-white/5 bg-[#080808]">
-                      <div className="grid grid-cols-12 gap-3 border-b border-white/5 bg-white/[0.015] px-4 py-2.5 text-[9px] font-mono tracking-widest text-zinc-500 uppercase">
+                    <div className="overflow-hidden rounded-xl border border-hairline bg-[#080808]">
+                      <div className="grid grid-cols-12 gap-3 border-b border-hairline bg-white/[0.015] px-4 py-2.5 text-[9px] font-mono tracking-widest text-zinc-500 uppercase">
                         <div className="col-span-2">章节标号</div>
                         <div className="col-span-7">章节标题</div>
                         <div className="col-span-3 text-right">篇幅字数</div>
@@ -1450,7 +1450,7 @@ export default function NovelUploader() {
                 </div>
 
                 {totalPages > 1 && (
-                  <div className="mt-4 flex items-center justify-between border-t border-white/5 pt-4">
+                  <div className="mt-4 flex items-center justify-between border-t border-hairline pt-4">
                     <span className="text-[10px] font-mono text-zinc-500">
                       PAGE {safePage} / {totalPages} · TOTAL {filteredChapters.length} CHAPTERS
                     </span>
@@ -1458,14 +1458,14 @@ export default function NovelUploader() {
                       <button
                         onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
                         disabled={safePage === 1}
-                        className="rounded-xl border border-white/5 bg-white/[0.015] px-3 py-1.5 text-[11px] text-zinc-300 transition-linear hover:border-white/10 hover:bg-white/[0.03] disabled:opacity-30"
+                        className="rounded-xl border border-hairline bg-white/[0.015] px-3 py-1.5 text-[11px] text-zinc-300 transition-linear hover:border-white/10 hover:bg-white/[0.03] disabled:opacity-30"
                       >
                         PREV
                       </button>
                       <button
                         onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
                         disabled={safePage === totalPages}
-                        className="rounded-xl border border-white/5 bg-white/[0.015] px-3 py-1.5 text-[11px] text-zinc-300 transition-linear hover:border-white/10 hover:bg-white/[0.03] disabled:opacity-30"
+                        className="rounded-xl border border-hairline bg-white/[0.015] px-3 py-1.5 text-[11px] text-zinc-300 transition-linear hover:border-white/10 hover:bg-white/[0.03] disabled:opacity-30"
                       >
                         NEXT
                       </button>
@@ -1476,7 +1476,7 @@ export default function NovelUploader() {
             </div>
 
             <div className="space-y-5">
-              <div className="glass-card rounded-2xl p-5 border-white/5 bg-zinc-950/60">
+              <div className="glass-card rounded-xl p-5 border-hairline bg-surface-1">
                 <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">工坊行动指引</p>
                 <h3 className="mt-2.5 text-sm font-semibold text-zinc-200">{nextActionLabel}</h3>
                 <p className="mt-2 text-xs leading-relaxed text-zinc-400">
@@ -1485,7 +1485,7 @@ export default function NovelUploader() {
                     : '本小说章节树指标完好，已锁定上游依赖。建议前去提取，点亮多维 DNA 看板。'}
                 </p>
 
-                <div className="mt-5 rounded-xl border border-white/5 bg-white/[0.01] p-4 text-xs leading-relaxed text-zinc-450">
+                <div className="mt-5 rounded-xl border border-hairline bg-white/[0.01] p-4 text-xs leading-relaxed text-zinc-450">
                   <p className="font-medium text-zinc-300">本阶段任务完毕后可解锁</p>
                   <p className="mt-1">
                     {needsSmartRepair
@@ -1517,7 +1517,7 @@ export default function NovelUploader() {
                 </div>
               </div>
 
-              <div className="linear-card rounded-2xl p-5 border-white/5 bg-zinc-950/20">
+              <div className="linear-card rounded-xl p-5 border-hairline bg-surface-2/40">
                 <button
                   onClick={() => setAdvancedRepairOpen((prev) => !prev)}
                   className="flex w-full items-center justify-between text-left"
@@ -1540,7 +1540,7 @@ export default function NovelUploader() {
                       <select
                         value={repairStrategy}
                         onChange={(e) => setRepairStrategy(e.target.value as SplitStrategyId)}
-                        className="w-full rounded-xl border border-white/5 bg-zinc-950 px-3 py-2.5 text-xs text-zinc-200 focus:outline-none"
+                        className="w-full rounded-xl border border-hairline bg-zinc-950 px-3 py-2.5 text-xs text-zinc-200 focus:outline-none"
                       >
                         <option value="zh_strict">中文标准 (第N章/节)</option>
                         <option value="zh_extended">中文扩展 (楔子/尾声/番外)</option>
@@ -1559,7 +1559,7 @@ export default function NovelUploader() {
                               type="text"
                               value={repairRegex}
                               onChange={(e) => setRepairRegex(e.target.value)}
-                              className="w-full rounded-xl border border-white/5 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none"
+                              className="w-full rounded-xl border border-hairline bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none"
                             />
                           </div>
                           <button
@@ -1613,13 +1613,13 @@ export default function NovelUploader() {
             className="absolute inset-0 bg-black/70 backdrop-blur-xs cursor-default"
             onClick={() => setConfirmDialog(null)}
           />
-          <div className="relative w-full max-w-sm rounded border border-white/5 bg-[#0c0c0e] p-5 shadow-2xl z-10 animate-fade-in font-sans">
+          <div className="relative w-full max-w-sm rounded border border-hairline bg-[#0c0c0e] p-5 shadow-2xl z-10 animate-fade-in font-sans">
             <h4 className="text-sm font-semibold text-zinc-200">{confirmDialog.title}</h4>
             <p className="text-xs text-zinc-500 mt-2 leading-relaxed">{confirmDialog.description}</p>
             <div className="mt-5 flex justify-end gap-2">
               <button
                 onClick={() => setConfirmDialog(null)}
-                className="px-3 py-1.5 rounded border border-white/5 text-zinc-400 hover:text-zinc-200 text-xs font-medium hover:bg-zinc-900 transition-linear active-press"
+                className="px-3 py-1.5 rounded border border-hairline text-zinc-400 hover:text-zinc-200 text-xs font-medium hover:bg-zinc-900 transition-linear active-press"
               >
                 取消
               </button>

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Eye, EyeOff, LockKeyhole, Orbit, X } from 'lucide-react';
 import { useAppStore } from '../app/store';
 import { getProviderMeta, listProviderMetas } from '../app/llmProviders';
@@ -20,6 +20,18 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
 
   const readiness = useMemo(() => getLlmConfigError(llmConfig), [llmConfig]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const requiresApiKey = activeProviderMeta.requiresApiKey;
@@ -28,7 +40,7 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
     <div className="fixed inset-0 z-50 flex justify-end">
       <button type="button" className="absolute inset-0 bg-black/80 backdrop-blur-xs" onClick={onClose} aria-label="关闭设置" />
 
-      <aside className="animate-slide-in relative flex h-full w-full max-w-[420px] flex-col border-l border-white/5 bg-[#050505] shadow-2xl">
+      <aside className="animate-slide-in relative flex h-full w-full max-w-[420px] flex-col border-l border-hairline bg-[#050505] shadow-2xl">
         <header className="linear-border-b px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -43,7 +55,7 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
             </div>
             <button
               onClick={onClose}
-              className="rounded-full border border-white/5 p-1.5 text-zinc-600 transition-linear hover:border-white/15 hover:text-zinc-200"
+              className="rounded-full border border-hairline p-1.5 text-zinc-600 transition-linear hover:border-white/15 hover:text-zinc-200"
               aria-label="关闭"
             >
               <X className="h-3.5 w-3.5" />
@@ -52,8 +64,8 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
         </header>
 
         <div className="flex-1 overflow-y-auto px-6 py-5">
-          <div className={`rounded-xl border p-5 bg-zinc-950/40 flex items-start gap-4 ${
-            readiness ? 'border-white/5' : 'border-white/10'
+          <div className={`rounded-xl border p-5 bg-surface-1/40 flex items-start gap-4 ${
+            readiness ? 'border-hairline' : 'border-white/10'
           }`}>
             <span className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${
               readiness ? 'bg-amber-500 animate-pulse shadow-[0_0_6px_#f59e0b]' : 'bg-emerald-500 shadow-[0_0_6px_#10b981]'
@@ -67,7 +79,7 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
                 {readiness ? readiness : '链路已完全畅通，可直接返回工作台继续创作心流。'}
               </p>
               {returnHint && (
-                <div className="mt-3 rounded-lg border border-white/5 bg-white/[0.01] px-3 py-2 text-[11px] text-zinc-450 font-mono">
+                <div className="mt-3 rounded-lg border border-hairline bg-white/[0.01] px-3 py-2 text-[11px] text-zinc-450 font-mono">
                   PENDING_TASK: <span className="text-zinc-300">{returnHint}</span>
                 </div>
               )}
@@ -81,7 +93,7 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
               { label: 'BASE_URL 地址', done: activeProfile.baseUrl.trim().length > 0 },
               { label: 'MODEL 预设模型', done: activeProfile.model.trim().length > 0 },
             ].map((item) => (
-              <div key={item.label} className="flex items-center justify-between rounded-xl border border-white/5 bg-white/[0.015] px-4 py-2.5 text-zinc-400">
+              <div key={item.label} className="flex items-center justify-between rounded-xl border border-hairline bg-white/[0.015] px-4 py-2.5 text-zinc-400">
                 <span>{item.label}</span>
                 <span className={item.done ? 'text-zinc-400 font-medium' : 'text-amber-500 font-medium animate-pulse'}>
                   {item.done ? 'READY' : 'REQUIRED'}
@@ -96,7 +108,7 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
               <select
                 value={activeProvider}
                 onChange={(event) => setActiveProvider(event.target.value as typeof activeProvider)}
-                className="h-10 w-full rounded-xl border border-white/5 bg-zinc-950 px-3 text-xs text-zinc-200 focus:outline-none focus:border-white/15"
+                className="h-10 w-full rounded-xl border border-hairline bg-zinc-950 px-3 text-xs text-zinc-200 focus:outline-none focus:border-white/15"
               >
                 {providerOptions.map((provider) => (
                   <option key={provider.id} value={provider.id} className="bg-[#0c0c0e]">
@@ -117,7 +129,7 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
                   onChange={(event) => updateActiveProviderProfile({ apiKey: event.target.value })}
                   onBlur={(event) => updateActiveProviderProfile({ apiKey: event.target.value.trim() })}
                   placeholder={requiresApiKey ? 'sk-...' : '本地引擎可直接留空'}
-                  className="h-10 w-full rounded-xl border border-white/5 bg-zinc-950 px-4 pr-12 text-xs font-mono text-zinc-200 placeholder:text-zinc-700 focus:outline-none focus:border-white/15"
+                  className="h-10 w-full rounded-xl border border-hairline bg-zinc-950 px-4 pr-12 text-xs font-mono text-zinc-200 placeholder:text-zinc-700 focus:outline-none focus:border-white/15"
                 />
                 <button
                   type="button"
@@ -138,7 +150,7 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
                 onChange={(event) => updateActiveProviderProfile({ baseUrl: event.target.value })}
                 onBlur={(event) => updateActiveProviderProfile({ baseUrl: event.target.value.trim() })}
                 placeholder="https://api.example.com/v1"
-                className="h-10 w-full rounded-xl border border-white/5 bg-zinc-950 px-4 text-xs font-mono text-zinc-200 placeholder:text-zinc-700 focus:outline-none focus:border-white/15"
+                className="h-10 w-full rounded-xl border border-hairline bg-zinc-950 px-4 text-xs font-mono text-zinc-200 placeholder:text-zinc-700 focus:outline-none focus:border-white/15"
               />
             </div>
 
@@ -150,7 +162,7 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
                 onChange={(event) => updateActiveProviderProfile({ model: event.target.value })}
                 onBlur={(event) => updateActiveProviderProfile({ model: event.target.value.trim() })}
                 placeholder="例如 gpt-4o / deepseek-chat"
-                className="h-10 w-full rounded-xl border border-white/5 bg-zinc-950 px-4 text-xs font-mono text-zinc-200 placeholder:text-zinc-700 focus:outline-none focus:border-white/15"
+                className="h-10 w-full rounded-xl border border-hairline bg-zinc-950 px-4 text-xs font-mono text-zinc-200 placeholder:text-zinc-700 focus:outline-none focus:border-white/15"
               />
               <datalist id="model-presets">
                 {activeProviderMeta.modelPresets.map((preset) => (
@@ -162,7 +174,7 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
             </div>
           </div>
 
-          <div className="mt-6 rounded-xl border border-white/5 bg-white/[0.015] p-4 text-xs leading-relaxed text-zinc-500">
+          <div className="mt-6 rounded-xl border border-hairline bg-white/[0.015] p-4 text-xs leading-relaxed text-zinc-500">
             <div className="flex items-start gap-3">
               <LockKeyhole className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400" />
               <div>
@@ -178,10 +190,10 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
         <footer className="linear-border-t px-6 py-5 bg-[#030303]">
           <button
             onClick={onClose}
-            className={`flex h-10 w-full items-center justify-center gap-1.5 rounded-xl text-xs font-semibold transition-linear ${
+            className={`flex h-10 w-full items-center justify-center gap-1.5 rounded-md text-xs font-semibold transition-linear ${
               readiness
-                ? 'border border-white/5 bg-white/[0.02] text-zinc-350 hover:bg-white/[0.04]'
-                : 'border border-white/10 bg-white/[0.05] text-white hover:bg-white/[0.08] active-press'
+                ? 'border border-hairline bg-surface-2 text-zinc-400 hover:bg-surface-3'
+                : 'bg-primary hover:bg-primary-hover active:bg-primary-focus text-white active-press'
             }`}
           >
             {!readiness && <CheckCircle2 className="h-3.5 w-3.5 text-zinc-300" />}

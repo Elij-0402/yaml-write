@@ -66,6 +66,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [editKey, setEditKey] = useState<keyof NovelDNACard | null>(null);
   const [draft, setDraft] = useState('');
+  const [showChapters, setShowChapters] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   if (!novel) {
@@ -119,7 +120,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
   return (
     <div className="flex flex-1 flex-col gap-5 animate-fade-in bg-[#000000]">
       <div className="grid gap-5 xl:grid-cols-[1.7fr_1fr]">
-        <div className="glass-card rounded-2xl p-6 border-white/5 bg-zinc-950/60">
+        <div className="glass-card rounded-xl p-6 border-white/5 bg-zinc-950/60">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="max-w-3xl">
               <p className="text-[10px] font-mono tracking-widest text-zinc-500 uppercase">原稿管理 / 提炼工作台</p>
@@ -163,7 +164,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
           </div>
         </div>
 
-        <div className="linear-card rounded-2xl p-5 border-white/5 bg-zinc-950/20">
+        <div className="linear-card rounded-xl p-5 border-white/5 bg-zinc-950/20">
           <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">任务决策线索</p>
           <h2 className="mt-2 text-sm font-semibold text-zinc-200">{workflow.recommendedNextStep}</h2>
           <p className="mt-2 text-xs leading-relaxed text-zinc-500">{nextReason}</p>
@@ -193,8 +194,8 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[1.65fr_0.9fr]">
-        <div className="glass-card rounded-2xl p-6 border-white/5 bg-zinc-950/60">
+      <div className={`grid min-h-0 flex-1 gap-5 ${dnaReady && !showChapters ? 'grid-cols-1' : 'xl:grid-cols-[1.65fr_0.9fr]'}`}>
+        <div className="glass-card rounded-xl p-6 border-hairline bg-surface-1">
           {!dnaReady ? (
             <div className="flex h-full flex-col gap-5">
               {!llmReadiness.ok && (
@@ -216,7 +217,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
                 </div>
               )}
 
-              <div className="dna-breathe linear-card rounded-2xl p-6 bg-zinc-950/20 border-white/5">
+              <div className="dna-breathe linear-card rounded-xl p-6 bg-zinc-950/20 border-white/5">
                 <div className="flex items-start gap-4">
                   <div className="rounded-xl border border-white/10 bg-white/[0.02] p-2.5 text-zinc-200">
                     <Sparkles className="h-5 w-5" />
@@ -288,7 +289,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
                   <div className="mt-8 grid gap-4 lg:grid-cols-2">
                     <button
                       onClick={() => handleExtract(100)}
-                      className="rounded-2xl border border-white/5 bg-white/[0.01] p-5 text-left transition-linear hover:border-white/15 hover:bg-white/[0.02]"
+                      className="rounded-xl border border-hairline bg-white/[0.01] p-5 text-left transition-linear hover:border-white/15 hover:bg-white/[0.02]"
                     >
                       <div className="flex items-center justify-between gap-4">
                         <div className="rounded-xl border border-white/5 bg-white/[0.015] p-2.5 text-zinc-300">
@@ -310,7 +311,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
 
                     <button
                       onClick={() => handleExtract(undefined)}
-                      className="rounded-2xl border border-white/5 bg-white/[0.01] p-5 text-left transition-linear hover:border-white/15 hover:bg-white/[0.02]"
+                      className="rounded-xl border border-hairline bg-white/[0.01] p-5 text-left transition-linear hover:border-white/15 hover:bg-white/[0.02]"
                     >
                       <div className="flex items-center justify-between gap-4">
                         <div className="rounded-xl border border-white/5 bg-white/[0.015] p-2.5 text-zinc-300">
@@ -350,7 +351,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
             </div>
           ) : (
             <div className="flex h-full flex-col gap-5">
-              <div className="flex items-start justify-between gap-4 rounded-2xl border border-white/5 bg-zinc-950/40 p-6">
+              <div className="flex items-start justify-between gap-4 rounded-xl border border-hairline bg-zinc-950/40 p-6">
                 <div>
                   <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">STAGE_COMPLETED</p>
                   <h3 className="mt-1 text-base font-semibold text-zinc-200">《{novel.name}》的创作 DNA 已成功点亮</h3>
@@ -358,21 +359,29 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
                     本原稿已完成自适应的 Map-Reduce 创作骨架提炼。您可以往下直接查看/精调各项设定，也可以立即进入变体融合工坊。
                   </p>
                 </div>
-                {readyNovelCount > 1 ? (
+                <div className="flex items-center gap-3 shrink-0">
                   <button
-                    onClick={() => setWorkshopOpen(true)}
-                    className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-xs font-semibold text-white transition-linear hover:bg-white/[0.08]"
+                    onClick={() => setShowChapters((prev) => !prev)}
+                    className="rounded-md border border-hairline bg-surface-2 px-4 py-2.5 text-xs font-medium text-zinc-300 transition-linear hover:bg-surface-3 active-press"
                   >
-                    <span className="flex items-center gap-2">
-                      进入融合工坊
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </span>
+                    {showChapters ? '隐藏原稿章节' : '查看原稿章节'}
                   </button>
-                ) : (
-                  <div className="rounded-xl border border-white/5 bg-white/[0.01] px-4 py-3 text-xs leading-relaxed text-zinc-500 max-w-xs">
-                    碰撞准备阻断：目前仅有 {readyNovelCount} 本 DNA 就绪作品。至少两本 DNA 就绪，才能进入创意融合。
-                  </div>
-                )}
+                  {readyNovelCount > 1 ? (
+                    <button
+                      onClick={() => setWorkshopOpen(true)}
+                      className="rounded-md bg-primary hover:bg-primary-hover active:bg-primary-focus px-4 py-2.5 text-xs font-semibold text-white transition-linear active-press shadow-[0_0_8px_rgba(94,106,210,0.3)]"
+                    >
+                      <span className="flex items-center gap-2">
+                        进入融合工坊
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </span>
+                    </button>
+                  ) : (
+                    <div className="rounded-md border border-hairline bg-white/[0.01] px-4 py-3 text-xs leading-relaxed text-zinc-500 max-w-xs">
+                      碰撞准备阻断：目前仅有 {readyNovelCount} 本 DNA 就绪作品。至少两本 DNA 就绪，才能进入创意融合。
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="grid gap-3 grid-cols-2 md:grid-cols-4 font-mono text-xs">
@@ -398,7 +407,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
 
               <div className="grid gap-4 lg:grid-cols-2">
                 {DNA_FIELDS.map(({ key, label, helper }) => (
-                  <div key={key} className="group linear-card rounded-2xl p-5 bg-zinc-950/20 border-white/5">
+                  <div key={key} className="group linear-card rounded-xl p-5 bg-zinc-950/20 border-white/5">
                     <div className="flex items-center justify-between gap-4">
                       <div>
                         <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">{label}</p>
@@ -440,8 +449,9 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
           )}
         </div>
 
-        <div className="flex min-h-0 flex-col gap-5">
-          <div className="linear-card flex min-h-[460px] flex-1 flex-col rounded-2xl overflow-hidden border-white/5 bg-zinc-950/20">
+        {(!dnaReady || showChapters) && (
+          <div className="flex min-h-0 flex-col gap-5">
+            <div className="linear-card flex min-h-[460px] flex-1 flex-col rounded-xl overflow-hidden border-hairline bg-zinc-950/20">
             <div className="linear-border-b p-5">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -478,7 +488,10 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
                           <div className="linear-loader-bar rounded-full" />
                         </div>
                       ) : (
-                        <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full border ${MAP_DOT[chapter.mapStatus] || 'bg-zinc-800'}`} />
+                        <span
+                          title={chapter.mapStatus === 'done' ? 'DNA 已点亮就绪' : chapter.mapStatus === 'error' ? '提取发生故障' : '等待 DNA 提取'}
+                          className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full border ${MAP_DOT[chapter.mapStatus] || 'bg-zinc-800'}`}
+                        />
                       )}
                     </div>
                   </div>
@@ -492,7 +505,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
             </div>
           </div>
 
-          <div className="linear-card rounded-2xl p-5 border-white/5 bg-zinc-950/20">
+          <div className="linear-card rounded-xl p-5 border-white/5 bg-zinc-950/20">
             <div className="flex items-center gap-2 text-zinc-400">
               <ScanSearch className="h-3.5 w-3.5 text-zinc-300" />
               <h4 className="text-xs font-semibold">提取心流保障 (SAFEGUARD)</h4>
@@ -501,14 +514,15 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
               单篇原稿提取是构建高可控创意碰撞的刚性基石。如果章节存在严重的乱码断章、插图误识别，强烈建议前去校验台利用正则对其重置，防止提取阶段的特征被稀释。
             </p>
             {dnaReady && (
-              <div className="mt-4 flex items-center gap-2 rounded-xl border border-white/5 bg-white/[0.01] px-4 py-3 text-xs text-zinc-400">
+              <div className="mt-4 flex items-center gap-2 rounded-xl border border-hairline bg-white/[0.01] px-4 py-3 text-xs text-zinc-400">
                 <CheckCircle2 className="h-4 w-4 text-zinc-400" />
                 已锁定当前项目的数字特征，具备融合工坊输入许可。
               </div>
             )}
           </div>
         </div>
-      </div>
+      )}
     </div>
+  </div>
   );
 }

@@ -181,14 +181,14 @@ export function getNovelWorkflowSummary(
 export function getStageStatusClasses(status: StageStatus): string {
   switch (status) {
     case 'done':
-      return 'border-emerald-300/18 bg-emerald-300/[0.06] text-zinc-100';
+      return 'border-emerald-500/20 bg-emerald-500/[0.04] text-emerald-400';
     case 'running':
-      return 'border-amber-300/18 bg-amber-300/[0.06] text-zinc-100';
+      return 'border-amber-500/20 bg-amber-500/[0.04] text-amber-400';
     case 'ready':
-      return 'border-[rgba(155,185,214,0.18)] bg-[rgba(155,185,214,0.06)] text-zinc-100';
+      return 'border-blue-500/20 bg-blue-500/[0.04] text-blue-400';
     case 'blocked':
-      return 'border-rose-300/16 bg-rose-300/[0.06] text-zinc-100';
+      return 'border-rose-500/20 bg-rose-500/[0.04] text-rose-400';
     default:
-      return 'border-white/8 bg-white/[0.02] text-zinc-400';
+      return 'border-hairline bg-white/[0.01] text-zinc-500';
   }
 }

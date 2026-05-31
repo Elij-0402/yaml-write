@@ -110,7 +110,7 @@ function WorkspaceOverview({
 
   return (
     <div className="flex h-full flex-col gap-6 animate-fade-in">
-      <div className="glass-card rounded-2xl p-8 panel-grid border-white/5 bg-zinc-950/60">
+      <div className="glass-card rounded-xl p-8 panel-grid border-hairline bg-zinc-950/60">
         <div className="max-w-3xl">
           <div className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.02] px-3 py-1 text-xs text-zinc-400">
             <Sparkles className="h-3 w-3 text-zinc-300" />
@@ -129,7 +129,7 @@ function WorkspaceOverview({
         <div className="mt-8 grid gap-4 md:grid-cols-2">
           <button
             onClick={onUpload}
-            className="glass-card group rounded-2xl border border-white/5 bg-white/[0.01] p-6 text-left transition-linear hover:border-white/15 hover:bg-white/[0.03] focus-energy"
+            className="glass-card group rounded-xl border border-hairline bg-white/[0.01] p-6 text-left transition-linear hover:border-white/15 hover:bg-white/[0.03] focus-energy"
           >
             <div className="flex items-center justify-between gap-4">
               <div className="rounded-xl border border-white/10 bg-white/[0.02] p-2.5 text-zinc-200">
@@ -146,7 +146,7 @@ function WorkspaceOverview({
           <button
             onClick={onContinue}
             disabled={!latestNovel}
-            className="glass-card group rounded-2xl border border-white/5 bg-white/[0.01] p-6 text-left transition-linear hover:border-white/15 hover:bg-white/[0.03] disabled:cursor-not-allowed disabled:opacity-40"
+            className="glass-card group rounded-xl border border-hairline bg-white/[0.01] p-6 text-left transition-linear hover:border-white/15 hover:bg-white/[0.03] disabled:cursor-not-allowed disabled:opacity-40"
           >
             <div className="flex items-center justify-between gap-4">
               <div className="rounded-xl border border-white/10 bg-white/[0.02] p-2.5 text-zinc-200">
@@ -166,7 +166,7 @@ function WorkspaceOverview({
 
       <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-4">
         {PIPELINE_BLUEPRINT.map((item) => (
-          <div key={item.id} className="linear-card rounded-2xl p-5 bg-zinc-950/20 border-white/5">
+          <div key={item.id} className="linear-card rounded-xl p-5 bg-zinc-950/20 border-hairline">
             <p className="text-[10px] font-mono tracking-widest text-zinc-600 uppercase">{item.stage}</p>
             <h3 className="mt-3 text-sm font-medium text-zinc-200">{item.title}</h3>
             <div className="mt-4 space-y-2 text-xs text-zinc-500 leading-relaxed">
@@ -180,22 +180,22 @@ function WorkspaceOverview({
       </div>
 
       <div className="grid gap-4 lg:grid-cols-4">
-        <div className="linear-card rounded-2xl p-5 bg-zinc-950/20 border-white/5">
+        <div className="linear-card rounded-xl p-5 bg-zinc-950/20 border-hairline">
           <p className="text-[10px] font-mono tracking-widest text-zinc-600 uppercase">作品库存</p>
           <p className="mt-3 text-2xl font-mono font-medium text-zinc-300">{novels.length}</p>
           <p className="mt-2 text-xs text-zinc-500">工坊内已被导入的完整项目总数。</p>
         </div>
-        <div className="linear-card rounded-2xl p-5 bg-zinc-950/20 border-white/5">
+        <div className="linear-card rounded-xl p-5 bg-zinc-950/20 border-hairline">
           <p className="text-[10px] font-mono tracking-widest text-zinc-600 uppercase">DNA 就绪</p>
           <p className="mt-3 text-2xl font-mono font-medium text-zinc-300">{readyNovelCount}</p>
           <p className="mt-2 text-xs text-zinc-500">可直接用作创意碰撞输入的成熟作品。</p>
         </div>
-        <div className="linear-card rounded-2xl p-5 bg-zinc-950/20 border-white/5">
+        <div className="linear-card rounded-xl p-5 bg-zinc-950/20 border-hairline">
           <p className="text-[10px] font-mono tracking-widest text-zinc-600 uppercase">待校验异常</p>
           <p className="mt-3 text-2xl font-mono font-medium text-zinc-300">{needsReviewCount}</p>
           <p className="mt-2 text-xs text-zinc-500">分章规则存在存疑点、需人工介入校验的项目。</p>
         </div>
-        <div className="linear-card rounded-2xl p-5 bg-zinc-950/20 border-white/5">
+        <div className="linear-card rounded-xl p-5 bg-zinc-950/20 border-hairline">
           <p className="text-[10px] font-mono tracking-widest text-zinc-600 uppercase">大模型引擎</p>
           <div className="mt-3 flex items-center gap-2">
             <span className={`h-2 w-2 rounded-full ${llmReady ? 'bg-emerald-500' : 'bg-amber-500'}`} />
@@ -215,8 +215,24 @@ export default function Home() {
     useAppStore();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(true);
   const [settingsIntent, setSettingsIntent] = useState<string | null>(null);
   const [landingMode, setLandingMode] = useState<LandingMode>('overview');
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+        e.preventDefault();
+        setSettingsOpen(true);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+        e.preventDefault();
+        setHelpOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const novels = useLiveQuery<Novel[]>(() => db.novels.orderBy('createdAt').reverse().toArray(), []) || [];
   const selectedNovel = novels.find((novel) => novel.id === selectedNovelId) || null;
@@ -320,7 +336,7 @@ export default function Home() {
 
           <div className="space-y-2">
             {novels.length === 0 && (
-              <div className="rounded-xl border border-dashed border-white/5 bg-white/[0.01] p-4 text-xs leading-relaxed text-zinc-600">
+              <div className="rounded-xl border border-dashed border-hairline bg-white/[0.01] p-4 text-xs leading-relaxed text-zinc-600">
                 暂无作品。请先从上方导入本地 TXT 原文。
               </div>
             )}
@@ -339,7 +355,7 @@ export default function Home() {
                   className={`group relative w-full rounded-xl border p-3.5 text-left transition-linear ${
                     active
                       ? 'border-zinc-700 bg-zinc-900/40'
-                      : 'border-white/5 bg-white/[0.015] hover:border-white/10 hover:bg-white/[0.03]'
+                      : 'border-hairline bg-white/[0.015] hover:border-white/10 hover:bg-white/[0.03]'
                   }`}
                 >
                   {active && <span className="absolute left-0 top-3 bottom-3 w-[2px] rounded-r bg-white" />}
@@ -352,7 +368,7 @@ export default function Home() {
                     </div>
                     <button
                       onClick={(event) => void deleteNovel(novel.id, event)}
-                      className="rounded-full border border-white/5 p-1 text-zinc-600 opacity-0 group-hover:opacity-100 transition-linear hover:border-white/15 hover:text-rose-400"
+                      className="rounded-full border border-hairline p-1 text-zinc-600 opacity-0 group-hover:opacity-100 transition-linear hover:border-white/15 hover:text-rose-400"
                       title="删除原稿"
                     >
                       <Trash2 className="h-3 w-3" />
@@ -378,7 +394,7 @@ export default function Home() {
             className={`flex w-full items-center gap-3 rounded-xl border px-4 py-2.5 text-xs font-medium transition-linear ${
               workshopOpen
                 ? 'border-zinc-700 bg-zinc-900/40 text-white'
-                : 'border-white/5 bg-white/[0.015] text-zinc-300 hover:border-white/10 hover:bg-white/[0.03]'
+                : 'border-hairline bg-white/[0.015] text-zinc-300 hover:border-white/10 hover:bg-white/[0.03]'
             }`}
           >
             <Layers className="h-3.5 w-3.5" />
@@ -389,7 +405,7 @@ export default function Home() {
               setSettingsIntent(workshopOpen ? '融合变体' : selectedNovel ? 'DNA 提取' : '创作工坊');
               setSettingsOpen(true);
             }}
-            className="flex w-full items-center gap-3 rounded-xl border border-white/5 bg-white/[0.015] px-4 py-2.5 text-xs font-medium text-zinc-300 transition-linear hover:border-white/10 hover:bg-white/[0.03]"
+            className="flex w-full items-center gap-3 rounded-xl border border-hairline bg-white/[0.015] px-4 py-2.5 text-xs font-medium text-zinc-300 transition-linear hover:border-white/10 hover:bg-white/[0.03]"
           >
             <Settings className="h-3.5 w-3.5" />
             启动面板
@@ -417,7 +433,7 @@ export default function Home() {
                   <h2 className="mt-1.5 text-base font-semibold text-zinc-100 tracking-tight">{headerLabel}</h2>
                 </div>
 
-                <div className="flex items-center gap-2 rounded-full border border-white/5 bg-white/[0.01] px-3 py-1.5 text-xs text-zinc-400">
+                <div className="flex items-center gap-2 rounded-full border border-hairline bg-white/[0.01] px-3 py-1.5 text-xs text-zinc-400">
                   <span className={`h-1.5 w-1.5 rounded-full ${llmReadiness.ok ? 'bg-emerald-500' : 'bg-amber-500'}`} />
                   <span className="font-mono text-[10px]">ENGINE: {llmReadiness.ok ? 'READY' : 'OFFLINE'}</span>
                 </div>
@@ -493,9 +509,10 @@ export default function Home() {
             )}
           </div>
 
-          <aside className="linear-border-l hidden w-[300px] shrink-0 overflow-y-auto bg-[#040404] px-5 py-6 xl:block">
-            <div className="space-y-4">
-              <div className="glass-card rounded-2xl p-5 border-white/5 bg-zinc-950/40">
+          {helpOpen && (
+            <aside className="linear-border-l hidden w-[300px] shrink-0 overflow-y-auto bg-surface-1 px-5 py-6 xl:block">
+              <div className="space-y-4">
+                <div className="glass-card rounded-xl p-5 border-hairline bg-zinc-950/40">
                 <p className="text-[10px] font-mono tracking-wider text-zinc-600 uppercase">当前任务</p>
                 <div className="mt-4 space-y-4">
                   <div>
@@ -506,14 +523,14 @@ export default function Home() {
                     <p className="text-[10px] text-zinc-500 font-mono">任务轨迹背景</p>
                     <p className="mt-1 text-xs leading-relaxed text-zinc-400">{sidebarReason}</p>
                   </div>
-                  <div className="rounded-xl border border-white/5 bg-white/[0.01] px-4 py-3">
+                  <div className="rounded-xl border border-hairline bg-white/[0.01] px-4 py-3">
                     <p className="text-[10px] text-zinc-400 font-mono">推荐下一步动作</p>
                     <p className="mt-1 text-xs font-medium text-zinc-200">{sidebarNextStep}</p>
                   </div>
                 </div>
               </div>
 
-              <div className="linear-card rounded-2xl p-5 border-white/5 bg-zinc-950/20">
+              <div className="linear-card rounded-xl p-5 border-hairline bg-zinc-950/20">
                 <div className="flex items-center gap-2 text-zinc-400">
                   <ScanSearch className="h-3.5 w-3.5 text-zinc-300" />
                   <h4 className="text-xs font-semibold">工坊摘要数据</h4>
@@ -545,6 +562,7 @@ export default function Home() {
               </div>
             </div>
           </aside>
+        )}
         </div>
       </section>
 
