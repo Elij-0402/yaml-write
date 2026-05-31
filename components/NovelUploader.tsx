@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Chapter, type Novel, type SplitConfidenceLevel, type SplitMeta, type SplitStatus, type SplitStrategyId, type WinnerStrategyId } from '../app/db';
 import { useAppStore } from '../app/store';
-import { AlertTriangle, ArrowRight, CheckCircle2, CircleX, Loader2, Search, Upload } from 'lucide-react';
+import { AlertTriangle, ArrowRight, ChevronDown, Loader2, Search, Upload } from 'lucide-react';
 import jschardet from 'jschardet';
 
 const MAX_UPLOAD_SIZE_MB = 50;
@@ -42,11 +42,11 @@ const STRATEGY_REGEX: Record<BaseStrategyId, string> = {
 const V2_EXTRA_REGEX = '^\\s*((?:正文\\s*)?第\\s*[零〇一二三四五六七八九十百千万两\\d]+\\s*[章节回卷篇幕节].*?)$';
 
 const REVIEW_REASON_TEXT: Record<string, string> = {
-  single_chapter: '仅识别到 1 章，可能漏切',
-  oversized_chapter: '存在超大章节，可能误并章',
-  too_many_short: '短章节占比偏高，可能误切',
-  weak_continuity: '标题编号连续性较弱',
-  weak_title_match: '章节标题命中率偏低',
+  single_chapter: '仅识别到 1 章',
+  oversized_chapter: '存在超大章节',
+  too_many_short: '短章节过多',
+  weak_continuity: '序号连续性弱',
+  weak_title_match: '标题命中率低',
 };
 
 type UploadStage = 'idle' | 'detecting' | 'reading' | 'splitting' | 'saving';
@@ -160,10 +160,10 @@ function hasNestedQuantifierRisk(pattern: string): boolean {
 function validateLineRegex(pattern: string): string | null {
   const trimmed = pattern.trim();
   if (!trimmed) {
-    return '请先填写有效的自定义正则表达式。';
+    return '请填写有效的正则表达式';
   }
   if (trimmed.length > MAX_CUSTOM_REGEX_LENGTH) {
-    return `自定义分章正则过长（>${MAX_CUSTOM_REGEX_LENGTH} 字符），请简化后重试。`;
+    return `正则过长（>${MAX_CUSTOM_REGEX_LENGTH} 字符）`;
   }
 
   const blockedPatterns = [
@@ -176,21 +176,21 @@ function validateLineRegex(pattern: string): string | null {
   ];
 
   if (blockedPatterns.some((rule) => rule.test(pattern))) {
-    return '自定义分章正则需基于“单行章节标题”匹配，当前表达式包含跨行语义，请改为单行规则。';
+    return '正则包含跨行语义，请改为单行规则';
   }
 
   if (hasNestedQuantifierRisk(trimmed)) {
-    return '自定义分章正则包含高风险嵌套量词，可能导致浏览器卡死，请改为更简单的线性匹配规则。';
+    return '正则包含高风险嵌套量词';
   }
 
   try {
     const regex = toLineRegex(trimmed);
     const match = regex.exec('');
     if (match && match[0].length === 0) {
-      return '自定义分章正则不能匹配空字符串，否则会触发无限匹配。';
+      return '正则不能匹配空字符串';
     }
   } catch {
-    return '分章失败：自定义分章正则表达式无效';
+    return '正则表达式无效';
   }
 
   return null;
@@ -259,11 +259,11 @@ function splitNovel(text: string, regexPattern: string): ParsedChapter[] {
   while ((match = regex.exec(normalizedText)) !== null) {
     matchedCount += 1;
     if (matchedCount > SPLIT_MATCH_LIMIT) {
-      throw new Error(`分章失败：匹配次数超过安全阈值（${SPLIT_MATCH_LIMIT}），请简化正则。`);
+      throw new Error(`匹配次数超过安全阈值`);
     }
     const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt;
     if (elapsed > SPLIT_TIME_BUDGET_MS) {
-      throw new Error(`分章失败：正则执行超时（>${SPLIT_TIME_BUDGET_MS}ms），请简化规则后重试。`);
+      throw new Error(`正则执行超时`);
     }
 
     if (match[0].length === 0) {
@@ -662,13 +662,8 @@ export default function NovelUploader() {
   }, [chapters]);
 
   const needsSmartRepair = activeNovel?.splitStatus === 'needs_review';
-  const readyForDna = Boolean(activeNovel && !needsSmartRepair);
   const splitMeta = activeNovel?.splitMeta;
   const reviewReasons = splitMeta?.reviewReasons || [];
-  const shortChapterCount = chapters.filter((chapter) => chapter.wordCount < 500).length;
-  const longChapterCount = chapters.filter((chapter) => chapter.wordCount > 12000).length;
-  const splitOutputLabel = needsSmartRepair ? '章节结构待修复' : '章节结构完好，已就绪';
-  const nextActionLabel = needsSmartRepair ? '执行推荐修复' : '继续进入 DNA 提炼';
 
   const pushToast = (message: string, tone: ToastState['tone'] = 'info') => {
     setToast({ message, tone });
@@ -687,10 +682,10 @@ export default function NovelUploader() {
 
   const stageLabelMap: Record<UploadStage, string> = {
     idle: '待开始',
-    detecting: '编码检测中',
-    reading: '原稿文本读取',
-    splitting: '智能切章评估',
-    saving: '项目本地入库',
+    detecting: '编码检测',
+    reading: '读取文本',
+    splitting: '智能分章',
+    saving: '写入数据库',
   };
 
   const handleDrag = (e: React.DragEvent) => {
@@ -825,7 +820,7 @@ export default function NovelUploader() {
 
       return normalizedEncoding;
     } catch {
-      throw new Error('编码识别失败，请确保原稿为合规 TXT 小说');
+      throw new Error('编码识别失败');
     }
   };
 
@@ -835,12 +830,12 @@ export default function NovelUploader() {
       reader.onload = (ev) => {
         const result = ev.target?.result;
         if (typeof result !== 'string') {
-          reject(new Error('原稿解码结果为空'));
+          reject(new Error('解码结果为空'));
           return;
         }
         resolve(result);
       };
-      reader.onerror = () => reject(new Error(`无法按 ${encoding} 解码文本`));
+      reader.onerror = () => reject(new Error(`无法按 ${encoding} 解码`));
       reader.readAsText(file, getEncodingLabel(encoding));
     });
   };
@@ -860,10 +855,10 @@ export default function NovelUploader() {
       const freeBytes = quota - usage;
       const requiredBytes = Math.max(file.size * 2.2, 8 * 1024 * 1024);
       if (freeBytes < requiredBytes) {
-        throw new Error(`本地浏览器存储空间可能不足：可用约 ${formatSizeInMb(Math.max(0, freeBytes))}，预计需要 ${formatSizeInMb(requiredBytes)}。建议清理部分小说原稿后再试。`);
+        throw new Error(`存储空间不足：可用约 ${formatSizeInMb(Math.max(0, freeBytes))}，需要 ${formatSizeInMb(requiredBytes)}`);
       }
     } catch (err) {
-      if (err instanceof Error && err.message.includes('本地浏览器存储空间')) {
+      if (err instanceof Error && err.message.includes('存储空间')) {
         throw err;
       }
     }
@@ -871,7 +866,7 @@ export default function NovelUploader() {
 
   const readAndCleanLargeFile = async (file: File, encoding: Encoding): Promise<CleanedTextResult> => {
     setUploadStage('reading');
-    setUploadStageText(`大文件模式：分块加载 (${formatSizeInMb(file.size)})`);
+    setUploadStageText(`分块加载 (${formatSizeInMb(file.size)})`);
 
     const decoder = new TextDecoder(getEncodingLabel(encoding));
     const cleanedLines: string[] = [];
@@ -910,7 +905,7 @@ export default function NovelUploader() {
       splitByLine.forEach(pushLine);
 
       setUploadStage('reading');
-      setUploadStageText(`分块读取：${Math.min(100, Math.floor((totalRead / file.size) * 100))}%`);
+      setUploadStageText(`${Math.min(100, Math.floor((totalRead / file.size) * 100))}%`);
       await pauseToKeepUiResponsive();
     }
 
@@ -934,7 +929,7 @@ export default function NovelUploader() {
     }
 
     setUploadStage('reading');
-    setUploadStageText(`文本载入中 (${formatSizeInMb(file.size)})...`);
+    setUploadStageText(`载入中 (${formatSizeInMb(file.size)})`);
     const text = await readTextWithEncoding(file, encoding);
     return cleanText(text);
   };
@@ -961,18 +956,18 @@ export default function NovelUploader() {
     if (uploading || repairing) return;
 
     if (!file.name.toLowerCase().endsWith('.txt')) {
-      setErrorMsg('系统仅接受标准 .txt 小说文本原稿');
+      setErrorMsg('仅支持 .txt 文件');
       return;
     }
 
     if (file.size > MAX_UPLOAD_SIZE_BYTES) {
-      setErrorMsg(`原稿过大，工坊上限支持 ${MAX_UPLOAD_SIZE_MB}MB`);
+      setErrorMsg(`文件过大，上限 ${MAX_UPLOAD_SIZE_MB}MB`);
       return;
     }
 
     setUploading(true);
     setUploadStage('detecting');
-    setUploadStageText('编码校验中...');
+    setUploadStageText('检测编码...');
     setErrorMsg(null);
 
     const novelId = crypto.randomUUID();
@@ -984,15 +979,15 @@ export default function NovelUploader() {
       const { cleanedText, removedCount } = await loadAndCleanText(file, encoding);
 
       setUploadStage('splitting');
-      setUploadStageText('智能切章计算中...');
+      setUploadStageText('分章计算中...');
       const splitResult = await autoSplitAsync(cleanedText, (i, n) =>
-        setUploadStageText(`智能切章：策略 ${i}/${n}`),
+        setUploadStageText(`策略 ${i}/${n}`),
       );
       const chaptersToSave = chaptersToDbRows(novelId, splitResult.chapters);
       const totalWords = splitResult.chapters.reduce((sum, chapter) => sum + chapter.wordCount, 0);
 
       setUploadStage('saving');
-      setUploadStageText(`写入本地数据库 (${chaptersToSave.length} 章)...`);
+      setUploadStageText(`写入 ${chaptersToSave.length} 章...`);
 
       await db.transaction('rw', db.novels, db.chapters, async () => {
         await db.novels.add({
@@ -1014,7 +1009,7 @@ export default function NovelUploader() {
       setSelectedNovelId(novelId);
       resetChapterListView();
     } catch (err: any) {
-      setErrorMsg(err?.message || '文件解析与切章入库失败，请重试');
+      setErrorMsg(err?.message || '处理失败');
     } finally {
       setUploading(false);
       setUploadStage('idle');
@@ -1026,13 +1021,13 @@ export default function NovelUploader() {
     if (!activeNovel || repairing || uploading) return;
 
     if (!activeNovel.sourceTextCleaned.trim()) {
-      setErrorMsg('本地文本缓存缺失，重分需重新上传 TXT 原稿');
+      setErrorMsg('文本缓存缺失，请重新上传');
       return;
     }
 
     if (strategy === 'custom') {
       if (!repairRegex.trim()) {
-        setErrorMsg('请填写有效的自定义正则表达式');
+        setErrorMsg('请填写正则表达式');
         return;
       }
       const regexValidationError = validateLineRegex(repairRegex);
@@ -1045,20 +1040,20 @@ export default function NovelUploader() {
     setRepairing(true);
     setErrorMsg(null);
     setUploadStage('splitting');
-    setUploadStageText('重新划分章节中...');
+    setUploadStageText('重新分章...');
 
     try {
       const splitResult = await runSplitWithStrategy(
         activeNovel.sourceTextCleaned,
         strategy,
         strategy === 'custom' ? repairRegex : undefined,
-        (i, n) => setUploadStageText(`重新分章：策略 ${i}/${n}`),
+        (i, n) => setUploadStageText(`策略 ${i}/${n}`),
       );
       await persistSplitResult(activeNovel.id, splitResult);
       resetChapterListView();
-      pushToast('章节重切成功。', 'success');
+      pushToast('重分完成', 'success');
     } catch (err: any) {
-      setErrorMsg(err?.message || '章节重切失败，请检查规则');
+      setErrorMsg(err?.message || '重分失败');
     } finally {
       setRepairing(false);
       setUploadStage('idle');
@@ -1068,11 +1063,10 @@ export default function NovelUploader() {
 
   const runResplit = async (strategy: SplitStrategyId) => {
     if (!activeNovel || repairing || uploading) return;
-    const chapterCount = chapters.length;
     setConfirmDialog({
-      title: '确认重新章节划分',
-      description: `执行此重切将完全覆写当前《${activeNovel.name}》的章节数据，并清空所有已提取的 DNA 分析进度（共 ${chapterCount} 章）。`,
-      confirmText: '确认重切',
+      title: '确认重新分章',
+      description: `将覆盖《${activeNovel.name}》的所有章节数据并清空 DNA 进度`,
+      confirmText: '确认',
       danger: true,
       onConfirm: async () => {
         setConfirmDialog(null);
@@ -1085,556 +1079,302 @@ export default function NovelUploader() {
     chapter.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const pageSize = 12;
+  const pageSize = 15;
   const totalPages = Math.ceil(filteredChapters.length / pageSize) || 1;
   const safePage = Math.min(currentPage, totalPages);
   const startIndex = (safePage - 1) * pageSize;
   const paginatedChapters = filteredChapters.slice(startIndex, startIndex + pageSize);
 
+  // Upload View
+  if (!selectedNovelId) {
+    return (
+      <div
+        className="animate-fade-in space-y-6"
+        onDragEnter={handleDrag}
+        onDragOver={handleDrag}
+        onDragLeave={handleDrag}
+        onDrop={handleDrop}
+      >
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileChange}
+          accept=".txt"
+          className="hidden"
+        />
+
+        {dragActive && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90">
+            <div className="text-center">
+              <Upload className="mx-auto h-8 w-8 text-white/60" />
+              <p className="mt-4 text-sm">释放文件开始导入</p>
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <h1 className="text-xl font-semibold">导入原稿</h1>
+          <p className="text-sm text-secondary">上传 TXT 文件，系统将自动识别编码、清理噪音并智能分章</p>
+        </div>
+
+        <div
+          onClick={() => fileInputRef.current?.click()}
+          className="cursor-pointer rounded-lg border-2 border-dashed border-subtle bg-panel p-12 text-center transition-base hover:border-visible"
+        >
+          <Upload className="mx-auto h-6 w-6 text-muted" />
+          <p className="mt-4 text-sm">点击选择或拖拽文件到此处</p>
+          <p className="mt-1 text-xs text-muted">支持 UTF-8、GBK、Big5 等编码，最大 50MB</p>
+        </div>
+
+        {uploading && (
+          <div className="rounded-lg border border-subtle bg-panel p-4">
+            <div className="flex items-center justify-between text-sm">
+              <span className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {stageLabelMap[uploadStage]}
+              </span>
+              <span className="text-muted">{uploadStageText}</span>
+            </div>
+            <div className="mt-3 h-1 overflow-hidden rounded-full bg-card">
+              <div className="h-full w-1/3 animate-pulse rounded-full bg-white/20" />
+            </div>
+          </div>
+        )}
+
+        {errorMsg && (
+          <div className="flex items-start gap-2 rounded-lg border border-red-900/30 bg-red-950/20 p-3 text-sm text-red-300">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            {errorMsg}
+          </div>
+        )}
+
+        {/* Toast */}
+        {toast && (
+          <div className="fixed bottom-6 right-6 rounded-lg border border-subtle bg-panel px-4 py-3 text-sm shadow-lg">
+            {toast.message}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Chapter Review View
   return (
-    <div
-      className="relative flex h-full min-h-0 w-full flex-col gap-5 animate-fade-in"
-      onDragEnter={handleDrag}
-      onDragOver={handleDrag}
-      onDragLeave={handleDrag}
-      onDrop={handleDrop}
-    >
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileChange}
-        accept=".txt"
-        className="hidden"
-      />
-
-      {dragActive && (
-        <div className="pointer-events-none absolute inset-0 z-40 flex flex-col items-center justify-center rounded-xl border border-dashed border-white/20 bg-black/95 p-6 backdrop-blur-md transition-linear">
-          <Upload className="mb-3 h-6 w-6 text-white" />
-          <p className="text-sm font-semibold text-zinc-100">释手即刻导入，开启分析轨道</p>
-          <p className="mt-1 text-xs text-zinc-500">工坊将自动进行原稿降噪净化，生成可校验的树状章节结构。</p>
-        </div>
-      )}
-
-      {!selectedNovelId ? (
-        <>
-          <div className="glass-card rounded-xl p-7 border-hairline bg-surface-1">
-            <p className="text-[10px] font-mono tracking-widest text-zinc-600 uppercase">导入原稿 / 项目立项</p>
-            <h1 className="mt-3 text-2xl font-semibold text-zinc-100 tracking-tight">建立高可信度长篇创作项目</h1>
-            <p className="mt-2.5 max-w-3xl text-xs leading-relaxed text-zinc-400">
-              这里是智能流水线的物理起点。支持智能检测原稿多编码，对盗版水印、干扰小广告及特殊字符进行全自动化精密降噪净化，以生成整齐的章节列表。
-            </p>
-
-            <div className="mt-6 grid gap-3 md:grid-cols-4">
-              <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
-                <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">输入资产</p>
-                <p className="mt-2 text-xs leading-relaxed text-zinc-300">本地 TXT 纯文本原稿与项目命名。</p>
-              </div>
-              <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
-                <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">处理阶段</p>
-                <p className="mt-2 text-xs leading-relaxed text-zinc-300">自动多编码适配、水印净化、智能多策略分章。</p>
-              </div>
-              <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
-                <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">产出项目</p>
-                <p className="mt-2 text-xs leading-relaxed text-zinc-300">完全脱敏、极度干净的结构化树状章节目录。</p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-                <p className="text-[10px] font-mono tracking-wider text-zinc-400 uppercase">准入下一步</p>
-                <p className="mt-2 text-xs leading-relaxed text-zinc-200">立即进入校验台，对章节长短和连续性进行初筛。</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid gap-5 xl:grid-cols-[1.35fr_0.95fr]">
-            <div className="glass-card rounded-xl p-6 border-hairline bg-surface-1">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">立项入口</p>
-                  <h2 className="mt-2 text-base font-semibold text-zinc-200">选择文件，开始首次导入</h2>
-                  <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-                    支持一键点击选择或将文件拖曳入工作区。系统处理完毕后会自动重定向至校验控制台。
-                  </p>
-                </div>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading || repairing}
-                  className="rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5 text-xs font-medium text-zinc-200 transition-linear hover:border-white/20 hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <span className="flex items-center gap-2">
-                    <Upload className="h-3.5 w-3.5" />
-                    本地选择原稿 (.txt)
-                  </span>
-                </button>
-              </div>
-
-              <div className="mt-6 rounded-xl border border-dashed border-hairline bg-surface-2/40 px-6 py-10 text-center transition-linear hover:border-white/10">
-                <Upload className="mx-auto h-5 w-5 text-zinc-500" />
-                <p className="mt-4 text-xs font-medium text-zinc-300">拖拽 `.txt` 文本至此处</p>
-                <p className="mt-2 text-[11px] leading-5 text-zinc-500 max-w-sm mx-auto">
-                  最大支持 50MB。导入后系统会自动分析编码、过滤广告噪音并进行多策略智能分章评估。
-                </p>
-              </div>
-
-              {uploading && (
-                <div className="mt-5 rounded-xl border border-hairline bg-zinc-950/40 p-5">
-                  <div className="flex flex-col gap-3">
-                    <div className="flex items-center justify-between text-xs text-zinc-400 font-mono">
-                      <span className="flex items-center gap-2">
-                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                        {stageLabelMap[uploadStage].toUpperCase()}
-                      </span>
-                      <span className="text-zinc-500">{uploadStageText}</span>
-                    </div>
-                    <div className="linear-loader-container rounded-full">
-                      <div className="linear-loader-bar rounded-full" />
-                    </div>
-                    <div className="flex justify-between text-[10px] text-zinc-600 font-mono">
-                      <span>STAGE_RUNNING</span>
-                      <span>0{['detecting', 'reading', 'splitting', 'saving'].indexOf(uploadStage) + 1} / 04</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {!uploading && errorMsg && (
-                <div className="mt-5 rounded-xl border border-rose-950/50 bg-rose-950/10 px-4 py-3 text-xs text-rose-200">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-450" />
-                    <span className="leading-relaxed">{errorMsg}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-5">
-              <div className="linear-card rounded-xl p-5 border-hairline bg-surface-2/40">
-                <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">数据清洗流程</p>
-                <div className="mt-4 space-y-4 text-xs leading-relaxed text-zinc-400">
-                  <div>
-                    <p className="font-medium text-zinc-200">1. 多编码智能适配</p>
-                    <p className="mt-1 text-zinc-500">精确解构 GBK, UTF-8, BIG5, UTF-16 等在野中文编码，彻底杜绝乱码风险。</p>
-                  </div>
-                  <div>
-                    <p className="font-medium text-zinc-200">2. 自回归降噪规则</p>
-                    <p className="mt-1 text-zinc-500">精准切除小说中常见的 “点击下载APP”、“笔趣阁最新域名” 等在野抓取垃圾噪音。</p>
-                  </div>
-                  <div>
-                    <p className="font-medium text-zinc-200">3. 启发式分章评估</p>
-                    <p className="mt-1 text-zinc-500">对多种中文分章正则表达式做并列拟合评估，自动筛选出最优解，提交至校验台。</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="linear-card rounded-xl p-5 border-hairline bg-surface-2/40">
-                <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">工坊摘要数据</p>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
-                    <p className="text-[10px] font-mono text-zinc-500 uppercase">已入库作品</p>
-                    <p className="mt-2 text-xl font-mono font-semibold text-zinc-300">{novels.length}</p>
-                  </div>
-                  <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
-                    <p className="text-[10px] font-mono text-zinc-500 uppercase">待初校验数</p>
-                    <p className="mt-2 text-xl font-mono font-semibold text-zinc-300">
-                      {novels.filter((novel) => novel.splitStatus === 'needs_review').length}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="glass-card rounded-xl p-7 border-hairline bg-surface-1">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="max-w-3xl">
-                <p className="text-[10px] font-mono tracking-widest text-zinc-600 uppercase">章节树校验控制台</p>
-                <h1 className="mt-2 text-2xl font-semibold text-zinc-100 tracking-tight">{activeNovel?.name}</h1>
-                <p className="mt-2.5 text-xs leading-relaxed text-zinc-400">
-                  当前处于章节划分可信度校验阶段。请审查系统输出的统计离散度指标。如果系统给出风险警告（Needs Review），建议使用右侧的重分规则进行修正。
-                </p>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                {needsSmartRepair ? (
-                  <button
-                    onClick={() => void runResplit('auto_v2')}
-                    disabled={repairing}
-                    className="rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5 text-xs font-medium text-zinc-200 transition-linear hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {repairing ? '推荐章节修复中...' : '一键执行智能修复'}
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => setManageMode(false)}
-                    className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-xs font-medium text-white transition-linear hover:bg-white/[0.08]"
-                  >
-                    <span className="flex items-center gap-2">
-                      前去 DNA 提炼
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </span>
-                  </button>
-                )}
-                <button
-                  onClick={() => setAdvancedRepairOpen((prev) => !prev)}
-                  className="rounded-xl border border-hairline bg-white/[0.015] px-4 py-2.5 text-xs font-medium text-zinc-400 transition-linear hover:border-white/10 hover:text-zinc-200"
-                >
-                  {advancedRepairOpen ? '隐藏高级重划分' : '手动规则重划分'}
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-6 grid gap-3 md:grid-cols-4">
-              <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
-                <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">源数据输入</p>
-                <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">已载入净化文本与章节评估结构。</p>
-              </div>
-              <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
-                <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">校验评估项</p>
-                <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">异常短章节比例、超长篇章、标题序号递增单调性。</p>
-              </div>
-              <div className="rounded-xl border border-hairline bg-white/[0.01] p-4">
-                <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">评估质量状况</p>
-                <p className="mt-1.5 text-xs leading-relaxed text-zinc-300">{splitOutputLabel}</p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-                <p className="text-[10px] font-mono tracking-wider text-zinc-400 uppercase">建议下一步</p>
-                <p className="mt-1.5 text-xs leading-relaxed text-zinc-200">{nextActionLabel}</p>
-              </div>
-            </div>
-          </div>
-
-          {(uploading || repairing || errorMsg) && (
-            <div className={`rounded-xl border px-4 py-3.5 text-xs ${
-              errorMsg
-                ? 'border-rose-950/40 bg-rose-950/10 text-rose-200'
-                : 'border-hairline bg-zinc-950/40 text-zinc-300'
-            }`}>
-              <div className="flex items-center gap-2">
-                {errorMsg ? (
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-rose-450" />
-                ) : (
-                  <div className="linear-loader-container rounded-full flex-1 max-w-[200px] mr-2">
-                    <div className="linear-loader-bar rounded-full" />
-                  </div>
-                )}
-                <span className="leading-relaxed">
-                  {errorMsg || (repairing ? (uploadStageText || '重切分算法评估中...') : `${stageLabelMap[uploadStage]}${uploadStageText ? `：${uploadStageText}` : ''}`)}
-                </span>
-              </div>
-            </div>
-          )}
-
-          <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[1.45fr_0.95fr]">
-            <div className="flex min-h-0 flex-col gap-5">
-              <div className="linear-card rounded-xl p-5 border-hairline bg-surface-2/40">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">离散质量测算</p>
-                    <h2 className="mt-2 text-base font-semibold text-zinc-200">{splitOutputLabel}</h2>
-                    <p className="mt-1 text-xs text-zinc-500">
-                      总字数 {formatWordCount(activeNovel?.wordCount || 0)} · 共 {derivedStats?.chapterCount ?? chapters.length} 章 · 均章 {Math.round(derivedStats?.avgChapterChars ?? 0).toLocaleString()} 字
-                    </p>
-                  </div>
-                  {splitMeta && (
-                    <div className="flex items-center gap-1.5 rounded-full border border-hairline bg-white/[0.01] px-3 py-1 text-[10px] font-mono text-zinc-400">
-                      <span className={`h-1.5 w-1.5 rounded-full ${
-                        splitMeta.confidenceLevel === 'high' ? 'bg-emerald-500' : splitMeta.confidenceLevel === 'medium' ? 'bg-amber-500' : 'bg-rose-500'
-                      }`} />
-                      置信度 {Math.round(splitMeta.confidence * 100)}% ({splitMeta.confidenceLevel.toUpperCase()})
-                    </div>
-                  )}
-                </div>
-
-                <div className="mt-5 grid gap-3 grid-cols-2 md:grid-cols-5">
-                  <div className="rounded-xl border border-hairline bg-white/[0.01] p-4 text-center">
-                    <p className="text-[10px] font-mono text-zinc-500 uppercase">总章节</p>
-                    <p className="mt-2 text-lg font-mono font-semibold text-zinc-200">{chapters.length}</p>
-                  </div>
-                  <div className="rounded-xl border border-hairline bg-white/[0.01] p-4 text-center">
-                    <p className="text-[10px] font-mono text-zinc-500 uppercase">均章大小</p>
-                    <p className="mt-2 text-lg font-mono font-semibold text-zinc-200">{Math.round(derivedStats?.avgChapterChars ?? 0).toLocaleString()}</p>
-                  </div>
-                  <div className="rounded-xl border border-hairline bg-white/[0.01] p-4 text-center">
-                    <p className="text-[10px] font-mono text-zinc-500 uppercase">极短章</p>
-                    <p className="mt-2 text-lg font-mono font-semibold text-zinc-200">{shortChapterCount}</p>
-                  </div>
-                  <div className="rounded-xl border border-hairline bg-white/[0.01] p-4 text-center">
-                    <p className="text-[10px] font-mono text-zinc-500 uppercase">极长章</p>
-                    <p className="mt-2 text-lg font-mono font-semibold text-zinc-200">{longChapterCount}</p>
-                  </div>
-                  <div className="rounded-xl border border-hairline bg-white/[0.01] p-4 text-center">
-                    <p className="text-[10px] font-mono text-zinc-500 uppercase">降噪字符</p>
-                    <p className="mt-2 text-lg font-mono font-semibold text-zinc-200">{activeNovel?.purifiedCount?.toLocaleString() || 0}</p>
-                  </div>
-                </div>
-
-                <div className="mt-5 rounded-xl border border-hairline bg-white/[0.01] p-4">
-                  <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">结构异常校验原因（RISKS）</p>
-                  {reviewReasons.length > 0 ? (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {reviewReasons.map((reason) => (
-                        <span
-                          key={reason}
-                          className="flex items-center gap-1.5 rounded-full border border-rose-950/40 bg-rose-950/10 px-3 py-1 text-[11px] text-rose-300"
-                        >
-                          <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse" />
-                          {reason}
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="mt-3 text-xs leading-relaxed text-zinc-500">
-                      项目校验指标完美拟合自单调连续性，未检出序号漏缺或极端大小异常。
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="linear-card flex min-h-0 flex-1 flex-col rounded-xl p-5 border-hairline bg-surface-2/40">
-                <div className="flex flex-col gap-3 border-b border-hairline pb-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                    <div>
-                      <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">章节树检视列表</p>
-                      <h2 className="mt-1 text-sm font-semibold text-zinc-200">局部采样与结构核对</h2>
-                    </div>
-                  </div>
-
-                  <div className="relative w-full">
-                    <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
-                    <input
-                      value={searchQuery}
-                      onChange={(e) => {
-                        setSearchQuery(e.target.value);
-                        setCurrentPage(1);
-                      }}
-                      placeholder="搜索特定的章节名称、序号、后记或楔子..."
-                      className="w-full rounded-xl border border-hairline bg-zinc-950 py-2.5 pl-10 pr-4 text-xs text-zinc-100 placeholder:text-zinc-650 focus:outline-none focus:border-white/15 transition-linear"
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-4 flex-1 overflow-y-auto pr-0.5">
-                  {paginatedChapters.length === 0 ? (
-                    <div className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-hairline bg-white/[0.01] px-6 py-12 text-center">
-                      <p className="text-xs font-medium text-zinc-400">无过滤匹配结果</p>
-                      <p className="mt-1 text-xs text-zinc-600">更换过滤词，以辅助检查在野章节名称的合理性。</p>
-                    </div>
-                  ) : (
-                    <div className="overflow-hidden rounded-xl border border-hairline bg-[#080808]">
-                      <div className="grid grid-cols-12 gap-3 border-b border-hairline bg-white/[0.015] px-4 py-2.5 text-[9px] font-mono tracking-widest text-zinc-500 uppercase">
-                        <div className="col-span-2">章节标号</div>
-                        <div className="col-span-7">章节标题</div>
-                        <div className="col-span-3 text-right">篇幅字数</div>
-                      </div>
-
-                      <div className="divide-y divide-white/[0.02]">
-                        {paginatedChapters.map((chapter) => (
-                          <div
-                            key={chapter.id}
-                            className="grid grid-cols-12 gap-3 px-4 py-2.5 text-xs text-zinc-400 transition-linear hover:bg-white/[0.02]"
-                          >
-                            <div className="col-span-2 font-mono text-zinc-500">
-                              #{chapter.chapterIndex.toString().padStart(3, '0')}
-                            </div>
-                            <div className="col-span-7 truncate font-medium text-zinc-300" title={chapter.name}>
-                              {chapter.name}
-                            </div>
-                            <div className="col-span-3 text-right font-mono text-zinc-500">
-                              {chapter.wordCount.toLocaleString()}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {totalPages > 1 && (
-                  <div className="mt-4 flex items-center justify-between border-t border-hairline pt-4">
-                    <span className="text-[10px] font-mono text-zinc-500">
-                      PAGE {safePage} / {totalPages} · TOTAL {filteredChapters.length} CHAPTERS
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-                        disabled={safePage === 1}
-                        className="rounded-xl border border-hairline bg-white/[0.015] px-3 py-1.5 text-[11px] text-zinc-300 transition-linear hover:border-white/10 hover:bg-white/[0.03] disabled:opacity-30"
-                      >
-                        PREV
-                      </button>
-                      <button
-                        onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
-                        disabled={safePage === totalPages}
-                        className="rounded-xl border border-hairline bg-white/[0.015] px-3 py-1.5 text-[11px] text-zinc-300 transition-linear hover:border-white/10 hover:bg-white/[0.03] disabled:opacity-30"
-                      >
-                        NEXT
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-5">
-              <div className="glass-card rounded-xl p-5 border-hairline bg-surface-1">
-                <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">工坊行动指引</p>
-                <h3 className="mt-2.5 text-sm font-semibold text-zinc-200">{nextActionLabel}</h3>
-                <p className="mt-2 text-xs leading-relaxed text-zinc-400">
-                  {needsSmartRepair
-                    ? '系统检出章节切分模型发生了离散式断层。请首先执行一键修复，以矫正数据流输入。'
-                    : '本小说章节树指标完好，已锁定上游依赖。建议前去提取，点亮多维 DNA 看板。'}
-                </p>
-
-                <div className="mt-5 rounded-xl border border-hairline bg-white/[0.01] p-4 text-xs leading-relaxed text-zinc-450">
-                  <p className="font-medium text-zinc-300">本阶段任务完毕后可解锁</p>
-                  <p className="mt-1">
-                    {needsSmartRepair
-                      ? '通过最优算法重塑的章节目录，完全符合自单调性且置信度优秀。'
-                      : '整本书的母题、世界观代价、角色欲望灵魂原型、叙事组织形式与精细的笔触风格指纹。'}
-                  </p>
-                </div>
-
-                <div className="mt-5">
-                  {needsSmartRepair ? (
-                    <button
-                      onClick={() => void runResplit('auto_v2')}
-                      disabled={repairing}
-                      className="w-full rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5 text-xs font-semibold text-zinc-200 transition-linear hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      {repairing ? '推荐修复重塑中...' : '一键执行智能重塑'}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => setManageMode(false)}
-                      className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-xs font-semibold text-white transition-linear hover:bg-white/[0.08]"
-                    >
-                      <span className="flex items-center justify-center gap-2">
-                        开始提炼创作 DNA
-                        <ArrowRight className="h-3.5 w-3.5" />
-                      </span>
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="linear-card rounded-xl p-5 border-hairline bg-surface-2/40">
-                <button
-                  onClick={() => setAdvancedRepairOpen((prev) => !prev)}
-                  className="flex w-full items-center justify-between text-left"
-                >
-                  <div>
-                    <p className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase">专家手动划归</p>
-                    <h3 className="mt-1.5 text-sm font-semibold text-zinc-200">规则专家精细化干预</h3>
-                  </div>
-                  <span className="text-xs text-zinc-500">{advancedRepairOpen ? '收起' : '展开'}</span>
-                </button>
-
-                <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-                  如智能推荐方案与物理章节结构存在特异性出入，您可以在这里手动挑选切分策略或配置自定义正则规则。
-                </p>
-
-                {advancedRepairOpen && (
-                  <div className="mt-5 space-y-4">
-                    <div>
-                      <label className="mb-1 block text-[10px] font-mono text-zinc-500">CHOOSE STRATEGY</label>
-                      <select
-                        value={repairStrategy}
-                        onChange={(e) => setRepairStrategy(e.target.value as SplitStrategyId)}
-                        className="w-full rounded-xl border border-hairline bg-zinc-950 px-3 py-2.5 text-xs text-zinc-200 focus:outline-none"
-                      >
-                        <option value="zh_strict">中文标准 (第N章/节)</option>
-                        <option value="zh_extended">中文扩展 (楔子/尾声/番外)</option>
-                        <option value="mixed">中英混合</option>
-                        <option value="en_basic">英文标准 (Chapter)</option>
-                        <option value="custom">自定义正则表达式 (Line Regex)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      {repairStrategy === 'custom' ? (
-                        <div className="space-y-3">
-                          <div>
-                            <label className="mb-1 block text-[10px] font-mono text-zinc-500">LINE REGULAR EXPRESSION</label>
-                            <input
-                              type="text"
-                              value={repairRegex}
-                              onChange={(e) => setRepairRegex(e.target.value)}
-                              className="w-full rounded-xl border border-hairline bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none"
-                            />
-                          </div>
-                          <button
-                            onClick={() => void runResplit('custom')}
-                            disabled={repairing}
-                            className="w-full rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2 text-xs font-medium text-zinc-200 transition-linear hover:bg-white/[0.04] disabled:opacity-40"
-                          >
-                            {repairing ? '正规表达式重切中...' : '运行自定义正则重切'}
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => void runResplit(repairStrategy)}
-                          disabled={repairing}
-                          className="w-full rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5 text-xs font-medium text-zinc-200 transition-linear hover:bg-white/[0.04] disabled:opacity-40"
-                        >
-                          {repairing ? '正规策略应用中...' : '应用策略重新划归'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Toast Notifications */}
-      {toast && (
-        <div className="fixed top-4 right-4 z-[70] animate-fade-in">
-          <div className={`px-4 py-2.5 rounded border shadow-2xl text-xs flex items-center gap-2 font-mono ${
-            toast.tone === 'error'
-              ? 'bg-rose-950/90 border-rose-900/60 text-rose-200'
-              : toast.tone === 'success'
-                ? 'bg-emerald-950/90 border-emerald-900/60 text-emerald-200'
-                : 'bg-zinc-900/95 border-zinc-800 text-zinc-200'
-          }`}>
-            {toast.tone === 'error' ? <CircleX className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
-            <span className="font-medium">{toast.message}</span>
-          </div>
-        </div>
-      )}
-
+    <div className="animate-fade-in space-y-6">
       {/* Confirm Dialog */}
       {confirmDialog && (
-        <div className="fixed inset-0 z-[75] flex items-center justify-center p-4">
-          <button
-            type="button"
-            aria-label="关闭对话框"
-            className="absolute inset-0 bg-black/70 backdrop-blur-xs cursor-default"
-            onClick={() => setConfirmDialog(null)}
-          />
-          <div className="relative w-full max-w-sm rounded border border-hairline bg-[#0c0c0e] p-5 shadow-2xl z-10 animate-fade-in font-sans">
-            <h4 className="text-sm font-semibold text-zinc-200">{confirmDialog.title}</h4>
-            <p className="text-xs text-zinc-500 mt-2 leading-relaxed">{confirmDialog.description}</p>
-            <div className="mt-5 flex justify-end gap-2">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
+          <div className="w-full max-w-md rounded-lg border border-subtle bg-panel p-6">
+            <h3 className="text-lg font-medium">{confirmDialog.title}</h3>
+            <p className="mt-2 text-sm text-secondary">{confirmDialog.description}</p>
+            <div className="mt-6 flex justify-end gap-3">
               <button
                 onClick={() => setConfirmDialog(null)}
-                className="px-3 py-1.5 rounded border border-hairline text-zinc-400 hover:text-zinc-200 text-xs font-medium hover:bg-zinc-900 transition-linear active-press"
+                className="rounded-md px-4 py-2 text-sm text-secondary transition-base hover:text-primary"
               >
                 取消
               </button>
               <button
                 onClick={() => void confirmDialog.onConfirm()}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-linear active-press ${
+                className={`rounded-md px-4 py-2 text-sm font-medium transition-base ${
                   confirmDialog.danger
-                    ? 'bg-rose-900 hover:bg-rose-800 text-rose-100 border border-rose-850'
-                    : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-950'
+                    ? 'bg-red-600 text-white hover:bg-red-500'
+                    : 'bg-white text-black hover:bg-white/90'
                 }`}
               >
                 {confirmDialog.confirmText}
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <h1 className="text-xl font-semibold">{activeNovel?.name}</h1>
+          <p className="text-sm text-secondary">
+            {formatWordCount(activeNovel?.wordCount || 0)} · {chapters.length} 章 · 均章 {Math.round(derivedStats?.avgChapterChars ?? 0).toLocaleString()} 字
+          </p>
+        </div>
+        <div className="flex gap-2">
+          {needsSmartRepair ? (
+            <button
+              onClick={() => void runResplit('auto_v2')}
+              disabled={repairing}
+              className="rounded-md bg-white px-4 py-2 text-sm font-medium text-black transition-base hover:bg-white/90 disabled:opacity-50"
+            >
+              {repairing ? '修复中...' : '智能修复'}
+            </button>
+          ) : (
+            <button
+              onClick={() => setManageMode(false)}
+              className="flex items-center gap-2 rounded-md bg-white px-4 py-2 text-sm font-medium text-black transition-base hover:bg-white/90"
+            >
+              前往 DNA 提炼
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Status */}
+      <div className="rounded-lg border border-subtle p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className={`h-2 w-2 rounded-full ${needsSmartRepair ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+            <span className="text-sm font-medium">{needsSmartRepair ? '需要校验' : '结构完好'}</span>
+          </div>
+          {splitMeta && (
+            <span className="text-xs text-muted">
+              置信度 {Math.round(splitMeta.confidence * 100)}%
+            </span>
+          )}
+        </div>
+        {reviewReasons.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {reviewReasons.map((reason) => (
+              <span
+                key={reason}
+                className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-300"
+              >
+                {reason}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Error/Loading */}
+      {(uploading || repairing || errorMsg) && (
+        <div className={`rounded-lg border p-3 text-sm ${
+          errorMsg ? 'border-red-900/30 bg-red-950/20 text-red-300' : 'border-subtle bg-panel'
+        }`}>
+          {errorMsg ? (
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4" />
+              {errorMsg}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {uploadStageText || stageLabelMap[uploadStage]}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Advanced Repair */}
+      <div className="rounded-lg border border-subtle">
+        <button
+          onClick={() => setAdvancedRepairOpen(!advancedRepairOpen)}
+          className="flex w-full items-center justify-between p-4 text-sm transition-base hover:bg-card/50"
+        >
+          <span>手动分章规则</span>
+          <ChevronDown className={`h-4 w-4 text-muted transition-transform ${advancedRepairOpen ? 'rotate-180' : ''}`} />
+        </button>
+        {advancedRepairOpen && (
+          <div className="border-t border-subtle p-4 space-y-4">
+            <div className="space-y-2">
+              <label className="text-xs text-muted">分章策略</label>
+              <select
+                value={repairStrategy}
+                onChange={(e) => setRepairStrategy(e.target.value as SplitStrategyId)}
+                className="w-full rounded-md border border-subtle bg-card px-3 py-2 text-sm focus:outline-none focus:border-visible"
+              >
+                <option value="auto_v2">自动检测</option>
+                <option value="zh_strict">中文严格</option>
+                <option value="zh_extended">中文扩展</option>
+                <option value="mixed">混合模式</option>
+                <option value="en_basic">英文基础</option>
+                <option value="custom">自定义正则</option>
+              </select>
+            </div>
+            {repairStrategy === 'custom' && (
+              <div className="space-y-2">
+                <label className="text-xs text-muted">正则表达式</label>
+                <input
+                  type="text"
+                  value={repairRegex}
+                  onChange={(e) => setRepairRegex(e.target.value)}
+                  className="w-full rounded-md border border-subtle bg-card px-3 py-2 text-sm font-mono focus:outline-none focus:border-visible"
+                />
+              </div>
+            )}
+            <button
+              onClick={() => void runResplit(repairStrategy)}
+              disabled={repairing}
+              className="rounded-md border border-subtle px-4 py-2 text-sm transition-base hover:bg-card disabled:opacity-50"
+            >
+              执行重分
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Chapter List */}
+      <div className="space-y-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+          <input
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setCurrentPage(1);
+            }}
+            placeholder="搜索章节..."
+            className="w-full rounded-md border border-subtle bg-card py-2 pl-10 pr-4 text-sm focus:outline-none focus:border-visible"
+          />
+        </div>
+
+        <div className="rounded-lg border border-subtle overflow-hidden">
+          <div className="grid grid-cols-12 gap-4 border-b border-subtle bg-card/50 px-4 py-2 text-xs text-muted">
+            <div className="col-span-2">序号</div>
+            <div className="col-span-7">标题</div>
+            <div className="col-span-3 text-right">字数</div>
+          </div>
+          <div className="divide-y divide-subtle">
+            {paginatedChapters.length === 0 ? (
+              <div className="p-8 text-center text-sm text-muted">无匹配结果</div>
+            ) : (
+              paginatedChapters.map((chapter) => (
+                <div key={chapter.id} className="grid grid-cols-12 gap-4 px-4 py-3 text-sm transition-base hover:bg-card/30">
+                  <div className="col-span-2 text-muted">#{chapter.chapterIndex}</div>
+                  <div className="col-span-7 truncate">{chapter.name}</div>
+                  <div className="col-span-3 text-right text-muted">{chapter.wordCount.toLocaleString()}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted">第 {safePage} / {totalPages} 页</span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(p - 1, 1))}
+                disabled={safePage === 1}
+                className="rounded-md border border-subtle px-3 py-1 text-sm transition-base hover:bg-card disabled:opacity-30"
+              >
+                上一页
+              </button>
+              <button
+                onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))}
+                disabled={safePage === totalPages}
+                className="rounded-md border border-subtle px-3 py-1 text-sm transition-base hover:bg-card disabled:opacity-30"
+              >
+                下一页
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 rounded-lg border border-subtle bg-panel px-4 py-3 text-sm shadow-lg">
+          {toast.message}
         </div>
       )}
     </div>
