@@ -1,16 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import {
-  ArrowLeft,
-  Check,
-  ChevronDown,
-  Copy,
-  Download,
-  Loader2,
-  Send,
-} from 'lucide-react';
 import { db } from '../app/db';
 import { ensureLlmConfigReady, postWithLlmConfig, readApiErrorMessage, streamSse } from '../app/llmClient';
 import { useAppStore } from '../app/store';
@@ -42,12 +33,6 @@ const BLOCKS: { key: BlockKey; label: string }[] = [
   { key: 'narrativeTone', label: '叙事' },
 ];
 
-const PRESETS = [
-  { label: '加深冲突', cmd: '加深角色之间的核心冲突与命运张力' },
-  { label: '弱化幻想', cmd: '弱化科幻或奇幻设定，聚焦现实与人性' },
-  { label: '增加悬疑', cmd: '注入悬疑、冷峻的黑色电影色调' },
-];
-
 export default function FusionWorkshop() {
   const { setSelectedNovelId, setWorkshopOpen } = useAppStore((state) => ({
     setSelectedNovelId: state.setSelectedNovelId,
@@ -61,7 +46,6 @@ export default function FusionWorkshop() {
   const [step, setStep] = useState<'material' | 'directions' | 'creator'>('material');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [customPrompt, setCustomPrompt] = useState('');
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [colliding, setColliding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,7 +63,6 @@ export default function FusionWorkshop() {
   const [generatingBoard, setGeneratingBoard] = useState(false);
   const [sceneTexts, setSceneTexts] = useState<Record<number, string>>({});
   const [streamingScene, setStreamingScene] = useState<number | null>(null);
-  const [copied, setCopied] = useState<number | null>(null);
 
   const guardLlm = (): boolean => {
     const readiness = ensureLlmConfigReady();
@@ -193,14 +176,8 @@ export default function FusionWorkshop() {
     try {
       await streamSse(
         '/api/py/stream-scene-text',
-        {
-          selectedDirection: selectedDirection(),
-          currentScene: scene,
-          precedingTexts,
-        },
-        {
-          onDelta: (text) => setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + text })),
-        }
+        { selectedDirection: selectedDirection(), currentScene: scene, precedingTexts },
+        { onDelta: (text) => setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + text })) }
       );
     } catch (err) {
       setSceneTexts((prev) => ({
@@ -214,8 +191,6 @@ export default function FusionWorkshop() {
 
   const copyScene = (num: number) => {
     navigator.clipboard.writeText(sceneTexts[num] || '');
-    setCopied(num);
-    setTimeout(() => setCopied(null), 1500);
   };
 
   const saveScene = (scene: StoryboardScene) => {
@@ -231,21 +206,22 @@ export default function FusionWorkshop() {
   // Not enough ready novels
   if (readyNovels.length < 2) {
     return (
-      <div className="animate-fade-in flex flex-col items-center justify-center py-20 text-center">
-        <h2 className="text-xl font-semibold">需要更多 DNA 资产</h2>
-        <p className="mt-2 text-sm text-secondary max-w-md">
-          融合工坊需要至少 2 部 DNA 就绪的作品。当前有 {readyNovels.length} 部，还需 {missingReadyCount} 部。
+      <div className="max-w-xl space-y-4">
+        <h2 className="text-lg">融合工坊</h2>
+        <p className="text-secondary">
+          需要至少 2 部 DNA 就绪的作品。当前 {readyNovels.length} 部，还需 {missingReadyCount} 部。
         </p>
-        <button
-          onClick={() => {
-            if (!firstIncompleteNovel) return;
-            setWorkshopOpen(false);
-            setSelectedNovelId(firstIncompleteNovel.id);
-          }}
-          className="mt-6 rounded-md bg-white px-4 py-2 text-sm font-medium text-black transition-base hover:bg-white/90"
-        >
-          继续提取 DNA
-        </button>
+        {firstIncompleteNovel && (
+          <button
+            onClick={() => {
+              setWorkshopOpen(false);
+              setSelectedNovelId(firstIncompleteNovel.id);
+            }}
+            className="text-sm text-secondary hover:text-primary"
+          >
+            继续提取 DNA →
+          </button>
+        )}
       </div>
     );
   }
@@ -253,74 +229,48 @@ export default function FusionWorkshop() {
   // Step 1: Material Selection
   if (step === 'material') {
     return (
-      <div className="animate-fade-in space-y-6">
-        <div className="space-y-2">
-          <p className="text-xs text-muted">第 1 步</p>
-          <h1 className="text-xl font-semibold">选择碰撞作品</h1>
-          <p className="text-sm text-secondary">选择至少 2 部作品进行创意融合</p>
+      <div className="max-w-2xl space-y-6">
+        <div>
+          <p className="text-xs text-muted">1/3</p>
+          <h2 className="text-lg">选择素材</h2>
+          <p className="mt-1 text-sm text-secondary">选择 2 部以上作品进行碰撞</p>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
           {readyNovels.map((novel) => {
             const selected = selectedIds.includes(novel.id);
             return (
               <button
                 key={novel.id}
                 onClick={() => toggleNovel(novel.id)}
-                className={`rounded-lg border p-4 text-left transition-base ${
-                  selected ? 'border-white/30 bg-card' : 'border-subtle hover:border-visible'
-                }`}
+                className={`block w-full border p-3 text-left text-sm ${selected ? 'border-primary' : 'border-default hover:border-secondary'}`}
               >
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">{novel.name}</span>
-                  {selected && <Check className="h-4 w-4" />}
-                </div>
-                <p className="mt-2 text-xs text-muted line-clamp-2">{novel.dnaCard?.theme}</p>
+                <span className={selected ? 'text-primary' : 'text-secondary'}>{novel.name}</span>
+                {selected && <span className="ml-2 text-muted">✓</span>}
               </button>
             );
           })}
         </div>
 
-        <div className="rounded-lg border border-subtle">
-          <button
-            onClick={() => setAdvancedOpen(!advancedOpen)}
-            className="flex w-full items-center justify-between p-4 text-sm transition-base hover:bg-card/50"
-          >
-            <span>偏航指令（可选）</span>
-            <ChevronDown className={`h-4 w-4 text-muted transition-transform ${advancedOpen ? 'rotate-180' : ''}`} />
-          </button>
-          {advancedOpen && (
-            <div className="border-t border-subtle p-4">
-              <textarea
-                value={customPrompt}
-                onChange={(e) => setCustomPrompt(e.target.value)}
-                rows={3}
-                placeholder="输入自定义的碰撞方向引导..."
-                className="w-full rounded-md border border-subtle bg-card p-3 text-sm resize-none focus:outline-none focus:border-visible"
-              />
-            </div>
-          )}
+        <div className="space-y-2">
+          <p className="text-xs text-muted">偏航指令（可选）</p>
+          <textarea
+            value={customPrompt}
+            onChange={(e) => setCustomPrompt(e.target.value)}
+            rows={2}
+            placeholder="自定义碰撞方向..."
+            className="w-full border bg-transparent p-2 text-sm focus:outline-none"
+          />
         </div>
 
-        {error && (
-          <div className="rounded-lg border border-red-900/30 bg-red-950/20 p-3 text-sm text-red-300">
-            {error}
-          </div>
-        )}
+        {error && <p className="text-sm text-red-400">{error}</p>}
 
         <button
           onClick={collide}
           disabled={selectedIds.length < 2 || colliding}
-          className="w-full rounded-md bg-white py-3 text-sm font-medium text-black transition-base hover:bg-white/90 disabled:opacity-50"
+          className="text-sm disabled:text-muted disabled:cursor-not-allowed"
         >
-          {colliding ? (
-            <span className="flex items-center justify-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              碰撞计算中...
-            </span>
-          ) : (
-            `开始碰撞 (${selectedIds.length}/2+)`
-          )}
+          {colliding ? '碰撞中...' : `开始碰撞 (${selectedIds.length})`}
         </button>
       </div>
     );
@@ -329,17 +279,12 @@ export default function FusionWorkshop() {
   // Step 2: Direction Selection
   if (step === 'directions') {
     return (
-      <div className="animate-fade-in space-y-6">
+      <div className="max-w-2xl space-y-6">
         <div className="flex items-center gap-4">
-          <button
-            onClick={() => setStep('material')}
-            className="rounded-md p-2 transition-base hover:bg-card"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
-          <div className="space-y-1">
-            <p className="text-xs text-muted">第 2 步</p>
-            <h1 className="text-xl font-semibold">选择融合方向</h1>
+          <button onClick={() => setStep('material')} className="text-secondary hover:text-primary">←</button>
+          <div>
+            <p className="text-xs text-muted">2/3</p>
+            <h2 className="text-lg">选择方向</h2>
           </div>
         </div>
 
@@ -348,11 +293,11 @@ export default function FusionWorkshop() {
             <button
               key={idx}
               onClick={() => chooseDirection(dir)}
-              className="w-full rounded-lg border border-subtle p-5 text-left transition-base hover:border-visible"
+              className="block w-full border border-default p-4 text-left hover:border-secondary"
             >
-              <h3 className="font-medium">{dir.title}</h3>
+              <p className="text-sm">{dir.title}</p>
               <p className="mt-2 text-sm text-secondary">{dir.concept}</p>
-              <p className="mt-2 text-xs text-muted">{dir.catalyst}</p>
+              <p className="mt-1 text-xs text-muted">{dir.catalyst}</p>
             </button>
           ))}
         </div>
@@ -362,136 +307,86 @@ export default function FusionWorkshop() {
 
   // Step 3: Creator
   return (
-    <div className="animate-fade-in space-y-6">
+    <div className="max-w-3xl space-y-6">
       <div className="flex items-center gap-4">
-        <button
-          onClick={() => setStep('directions')}
-          className="rounded-md p-2 transition-base hover:bg-card"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </button>
-        <div className="space-y-1">
-          <p className="text-xs text-muted">第 3 步</p>
-          <h1 className="text-xl font-semibold">{directionTitle}</h1>
+        <button onClick={() => setStep('directions')} className="text-secondary hover:text-primary">←</button>
+        <div>
+          <p className="text-xs text-muted">3/3</p>
+          <h2 className="text-lg">{directionTitle}</h2>
         </div>
       </div>
 
       {/* Blocks */}
       <div className="grid gap-4 sm:grid-cols-2">
         {BLOCKS.map(({ key, label }) => (
-          <div key={key} className="rounded-lg border border-subtle p-4">
-            <p className="text-xs text-muted uppercase tracking-wide">{label}</p>
-            <p className="mt-2 text-sm text-secondary leading-relaxed">{blocks[key]}</p>
+          <div key={key} className="border border-default p-3">
+            <p className="text-xs text-muted">{label}</p>
+            <p className="mt-1 text-sm text-secondary leading-relaxed">{blocks[key]}</p>
           </div>
         ))}
       </div>
 
       {/* Tweak */}
-      <div className="space-y-3">
-        <div className="flex flex-wrap gap-2">
-          {PRESETS.map((preset) => (
-            <button
-              key={preset.label}
-              onClick={() => setCommand(preset.cmd)}
-              className="rounded-full border border-subtle px-3 py-1 text-xs transition-base hover:bg-card"
-            >
-              {preset.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex gap-2">
-          <input
-            value={command}
-            onChange={(e) => setCommand(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && runTweak()}
-            placeholder="输入调整指令..."
-            className="flex-1 rounded-md border border-subtle bg-card px-4 py-2 text-sm focus:outline-none focus:border-visible"
-          />
-          <button
-            onClick={runTweak}
-            disabled={tweaking || !command.trim()}
-            className="rounded-md border border-subtle px-4 py-2 transition-base hover:bg-card disabled:opacity-50"
-          >
-            {tweaking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          </button>
-        </div>
+      <div className="flex gap-2">
+        <input
+          value={command}
+          onChange={(e) => setCommand(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && runTweak()}
+          placeholder="调整指令..."
+          className="flex-1 border bg-transparent p-2 text-sm focus:outline-none"
+        />
+        <button
+          onClick={runTweak}
+          disabled={tweaking || !command.trim()}
+          className="px-3 text-sm text-secondary hover:text-primary disabled:text-muted"
+        >
+          {tweaking ? '...' : '发送'}
+        </button>
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-red-900/30 bg-red-950/20 p-3 text-sm text-red-300">
-          {error}
-        </div>
-      )}
+      {error && <p className="text-sm text-red-400">{error}</p>}
 
       {/* Storyboard */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium">故事板</h2>
+          <span className="text-sm">故事板</span>
           <button
             onClick={generateStoryboard}
             disabled={generatingBoard}
-            className="rounded-md border border-subtle px-3 py-1.5 text-xs transition-base hover:bg-card disabled:opacity-50"
+            className="text-sm text-secondary hover:text-primary disabled:text-muted"
           >
-            {generatingBoard ? (
-              <span className="flex items-center gap-2">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                生成中...
-              </span>
-            ) : (
-              '生成故事板'
-            )}
+            {generatingBoard ? '生成中...' : '生成'}
           </button>
         </div>
 
         {storyboard.length > 0 && (
           <div className="space-y-4">
             {storyboard.map((scene) => (
-              <div key={scene.sceneNumber} className="rounded-lg border border-subtle p-4">
+              <div key={scene.sceneNumber} className="border border-default p-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-medium">{scene.sceneTitle}</h3>
-                  <span className="text-xs text-muted">场景 {scene.sceneNumber}</span>
+                  <span className="text-sm">{scene.sceneTitle}</span>
+                  <span className="text-xs text-muted">#{scene.sceneNumber}</span>
                 </div>
                 <p className="mt-2 text-sm text-secondary">{scene.plotOutline}</p>
 
                 {sceneTexts[scene.sceneNumber] ? (
-                  <div className="mt-4 space-y-3">
-                    <div className="max-h-60 overflow-y-auto rounded-md border border-subtle bg-card p-3 text-sm leading-relaxed">
+                  <div className="mt-4 space-y-2">
+                    <div className="max-h-48 overflow-y-auto border border-default p-3 text-sm text-secondary leading-relaxed whitespace-pre-wrap">
                       {sceneTexts[scene.sceneNumber]}
-                      {streamingScene === scene.sceneNumber && (
-                        <span className="inline-block w-1 h-4 bg-white animate-pulse ml-1" />
-                      )}
+                      {streamingScene === scene.sceneNumber && <span className="inline-block w-1 h-3 bg-primary animate-pulse ml-0.5" />}
                     </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => copyScene(scene.sceneNumber)}
-                        className="flex items-center gap-1 rounded-md border border-subtle px-2 py-1 text-xs transition-base hover:bg-card"
-                      >
-                        {copied === scene.sceneNumber ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                        {copied === scene.sceneNumber ? '已复制' : '复制'}
-                      </button>
-                      <button
-                        onClick={() => saveScene(scene)}
-                        className="flex items-center gap-1 rounded-md border border-subtle px-2 py-1 text-xs transition-base hover:bg-card"
-                      >
-                        <Download className="h-3 w-3" />
-                        下载
-                      </button>
+                    <div className="flex gap-4 text-xs">
+                      <button onClick={() => copyScene(scene.sceneNumber)} className="text-muted hover:text-secondary">复制</button>
+                      <button onClick={() => saveScene(scene)} className="text-muted hover:text-secondary">下载</button>
                     </div>
                   </div>
                 ) : (
                   <button
                     onClick={() => generateScene(scene)}
                     disabled={streamingScene !== null}
-                    className="mt-4 rounded-md border border-subtle px-3 py-1.5 text-xs transition-base hover:bg-card disabled:opacity-50"
+                    className="mt-3 text-sm text-secondary hover:text-primary disabled:text-muted"
                   >
-                    {streamingScene === scene.sceneNumber ? (
-                      <span className="flex items-center gap-2">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        生成中...
-                      </span>
-                    ) : (
-                      '生成正文'
-                    )}
+                    {streamingScene === scene.sceneNumber ? '生成中...' : '生成正文'}
                   </button>
                 )}
               </div>
