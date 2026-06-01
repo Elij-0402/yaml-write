@@ -9,12 +9,124 @@ import { useAppStore } from './store';
 
 export type DnaProgressListener = (current: number, total: number) => void;
 
+// === 前端 429 抖动指数退避护航 ===
+// 后端 run_structured 已内置 429/502/503/504 退避（api/index.py:279-298），耗尽后透出
+// 真实 HTTP 429（{error:{code:'rate_limited'}}，无 Retry-After / retryAfterSeconds）。
+// 这里在前端再加一层「静默退避重排」：429 不计失败、不标 error，只把该单元推回重试，并点亮
+// store.rateLimited 让双螺旋测序仪「限速变黄 0.2x 呼吸」护航，绝不中断队列。
+const RL_BASE_MS = 1000; // 退避基数
+const RL_JITTER = 0.5; // 抖动比例：delay = base · 2^n · (1 + random·0.5)
+const RL_MAX_MS = 30_000; // 单次退避上限
+const RL_MAX_ATTEMPTS = 5; // 同一单元最多退避次数；耗尽作为真实失败兜底（防活锁 / 防额度耗尽空转）
+
+// 模块内哨兵错误：让调用方把 429 与普通错误 / abort 严格区分（严禁 any / 字符串判型）。
+class RateLimitSignal extends Error {
+  constructor() {
+    super('rate_limited');
+    this.name = 'RateLimitSignal';
+  }
+}
+
+// 当前卡在 429 退避中的 worker 数。点亮规则：第一个进入退避时点亮，最后一个恢复才熄灯，
+// 避免多 worker 并发退避时护航灯频闪。
+let rateLimitWaiting = 0;
+
+function enterRateLimitWait(): void {
+  rateLimitWaiting += 1;
+  if (rateLimitWaiting === 1) {
+    useAppStore.getState().setRateLimited(true);
+  }
+}
+
+function leaveRateLimitWait(): void {
+  rateLimitWaiting = Math.max(0, rateLimitWaiting - 1);
+  if (rateLimitWaiting === 0) {
+    useAppStore.getState().setRateLimited(false);
+  }
+}
+
+// 可被打断的退避 sleep：等待期间 signal 一旦 abort 立即解除（事件驱动 + 150ms 轮询兜底，
+// 严禁裸 await sleep() 阻断手刹）。关键：Map 阶段传入 linkedSignal——「暂停」与「阶段汇总」
+// 都会经既有订阅（L199-209：shouldReduceEarly → mappingAbortController.abort()）同步 abort 它，
+// 故只观察 signal.aborted 即同时覆盖两类手刹；Reduce 阶段传入父 signal，仅「暂停」可中断退避，
+// 从而保证 early-reduce 后的 Reduce 仍能穿越 429 续测（AC5）。
+function interruptibleSleep(ms: number, signal: AbortSignal): Promise<'ok' | 'aborted'> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve('aborted');
+      return;
+    }
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve('ok');
+    }, ms);
+    const poll = setInterval(() => {
+      if (signal.aborted) {
+        cleanup();
+        resolve('aborted');
+      }
+    }, 150);
+    const onAbort = () => {
+      cleanup();
+      resolve('aborted');
+    };
+    function cleanup(): void {
+      clearTimeout(timeout);
+      clearInterval(poll);
+      signal.removeEventListener('abort', onAbort);
+    }
+    signal.addEventListener('abort', onAbort);
+  });
+}
+
+// 单一共享退避 helper（Map 与 Reduce 复用，勿重复造轮子）：捕获 RateLimitSignal → 点亮护航灯
+// → 抖动指数退避 → 重试；退避被 abort 抢占则重抛哨兵，交由调用方既有 catch 走「回滚 pending」
+// 路径（与基线 abort 语义一致，零回归）；退避次数耗尽抛友好终态错误，作为真实失败兜底。
+async function withRateLimitRetry<T>(
+  fn: () => Promise<T>,
+  opts: { signal: AbortSignal }
+): Promise<T> {
+  const { signal } = opts;
+  let parked = false;
+  try {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await fn();
+      } catch (err) {
+        if (!(err instanceof RateLimitSignal)) {
+          throw err; // 非 429：原样上抛，沿用既有 abort 回滚 / 失败标记逻辑
+        }
+        if (attempt >= RL_MAX_ATTEMPTS) {
+          // 退避预算耗尽 → 作为真实失败兜底（调用方据此标 error / 计入 failures）
+          throw new Error('云端持续繁忙，已自动退避重试多次仍未成功，请稍后再试或调低测序档速。');
+        }
+        if (!parked) {
+          parked = true;
+          enterRateLimitWait();
+        }
+        const delay = Math.min(RL_BASE_MS * 2 ** attempt * (1 + Math.random() * RL_JITTER), RL_MAX_MS);
+        const outcome = await interruptibleSleep(delay, signal);
+        if (outcome === 'aborted') {
+          throw err; // 手刹抢占：重抛哨兵，调用方 catch 见 signal.aborted → 回滚 pending
+        }
+      }
+    }
+  } finally {
+    if (parked) {
+      leaveRateLimitWait();
+    }
+  }
+}
+
 async function mapOneChapter(chapter: Chapter, signal: AbortSignal): Promise<void> {
   const response = await postWithLlmConfig(
     '/api/py/extract-chapter-map',
     { title: chapter.name, content: chapter.content },
     { signal }
   );
+  if (response.status === 429) {
+    throw new RateLimitSignal(); // 交给 withRateLimitRetry 静默退避重排，绝不标失败
+  }
   if (!response.ok) {
     throw new Error(await readApiErrorMessage(response));
   }
@@ -157,7 +269,7 @@ export async function runDnaExtraction(
         const chapter = targets[i];
         try {
           await db.chapters.update(chapter.id, { mapStatus: 'mapping' });
-          await mapOneChapter(chapter, linkedSignal);
+          await withRateLimitRetry(() => mapOneChapter(chapter, linkedSignal), { signal: linkedSignal });
           // O(1) atomic increment instead of re-querying + sorting every chapter per completion
           completed += 1;
           await db.novels.update(novelId, { mapProgress: { total: progressTotal, current: completed } });
@@ -170,6 +282,8 @@ export async function runDnaExtraction(
             checkFinished();
             return;
           }
+          // 429 频限已在 withRateLimitRetry 内静默退避重试；能落到这里的只有非 429 错误，
+          // 或退避次数耗尽的兜底失败——此时才计入 failures 并标 error。
           failures += 1;
           await db.chapters.update(chapter.id, {
             mapStatus: 'error',
@@ -246,15 +360,20 @@ export async function runDnaExtraction(
     }
 
     try {
-      const response = await postWithLlmConfig(
-        '/api/py/extract-book-reduce',
-        { novelName: novel?.name ?? '', mapSummaries },
-        { signal }
-      );
-      if (!response.ok) {
-        throw new Error(await readApiErrorMessage(response));
-      }
-      const dnaCard = (await response.json()) as NovelDNACard;
+      const dnaCard = await withRateLimitRetry(async () => {
+        const response = await postWithLlmConfig(
+          '/api/py/extract-book-reduce',
+          { novelName: novel?.name ?? '', mapSummaries },
+          { signal }
+        );
+        if (response.status === 429) {
+          throw new RateLimitSignal(); // Reduce 同样护航退避，保证端到端「测序绝不中断」
+        }
+        if (!response.ok) {
+          throw new Error(await readApiErrorMessage(response));
+        }
+        return (await response.json()) as NovelDNACard;
+      }, { signal });
       await db.novels.update(novelId, { dnaCard, analysisStatus: 'done' });
     } catch (err) {
       if (signal.aborted) {
@@ -265,6 +384,9 @@ export async function runDnaExtraction(
       throw err;
     }
   } finally {
+    // 每轮提取结束熄灭护航灯（resetSequencingState 复位 rateLimited）。退避计数 rateLimitWaiting
+    // 由 withRateLimitRetry 的 enter/leave 平衡门自行归零——此处不再强制清零，以免跨轮重叠运行时
+    // 误清另一轮仍在退避的 worker 计数、令护航灯失同步。
     useAppStore.getState().resetSequencingState();
   }
 }

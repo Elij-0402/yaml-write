@@ -66,14 +66,16 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
     setWorkshopOpen,
     sequencingGear,
     setSequencingGear,
-    setShouldReduceEarly
+    setShouldReduceEarly,
+    rateLimited
   } = useAppStore((state) => ({
     llmConfig: state.llmConfig,
     setManageMode: state.setManageMode,
     setWorkshopOpen: state.setWorkshopOpen,
     sequencingGear: state.sequencingGear,
     setSequencingGear: state.setSequencingGear,
-    setShouldReduceEarly: state.setShouldReduceEarly
+    setShouldReduceEarly: state.setShouldReduceEarly,
+    rateLimited: state.rateLimited
   }));
 
   const novel = useLiveQuery(() => db.novels.get(novelId), [novelId]);
@@ -396,7 +398,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
                 <div className="border border-zinc-800/80 bg-zinc-950/40 rounded-xl p-6 shadow-2xl relative overflow-hidden space-y-6">
                   {/* Dynamic 0-CPU 3D Rotating Double Helix SVG */}
                   <div className="py-4 relative flex justify-center items-center">
-                    <svg width="180" height="120" viewBox="0 0 180 120" className="select-none overflow-visible">
+                    <svg width="180" height="120" viewBox="0 0 180 120" className={`select-none overflow-visible${rateLimited ? ' helix-throttled' : ''}`}>
                       <style>{`
                         @keyframes orbit-a {
                           0%, 100% { transform: translateX(-35px) scale(0.7); opacity: 0.4; fill: #5e6ad2; }
@@ -414,6 +416,29 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
                         .helix-dot-a { animation: orbit-a 2.5s ease-in-out infinite; transform-origin: center; will-change: transform; }
                         .helix-dot-b { animation: orbit-b 2.5s ease-in-out infinite; transform-origin: center; will-change: transform; }
                         .helix-bar { animation: line-scale 2.5s ease-in-out infinite; transform-origin: center; will-change: transform; }
+
+                        /* 限速变黄护航：同一螺旋运动放缓至 0.2x（2.5s → 12.5s）并切到警告黄 #f59e0b 呼吸；
+                           class 瞬时切换天然满足「100ms 内变黄变慢」，每章 animationDelay 内联保留相位错落。 */
+                        @keyframes orbit-a-warn {
+                          0%, 100% { transform: translateX(-35px) scale(0.7); opacity: 0.45; fill: #f59e0b; }
+                          50% { transform: translateX(35px) scale(1.3); opacity: 1; fill: #fbbf24; }
+                        }
+                        @keyframes orbit-b-warn {
+                          0%, 100% { transform: translateX(35px) scale(1.3); opacity: 1; fill: #fbbf24; }
+                          50% { transform: translateX(-35px) scale(0.7); opacity: 0.45; fill: #f59e0b; }
+                        }
+                        .helix-throttled .helix-dot-a { animation-name: orbit-a-warn; animation-duration: 12.5s; }
+                        .helix-throttled .helix-dot-b { animation-name: orbit-b-warn; animation-duration: 12.5s; }
+                        .helix-throttled .helix-bar { animation-duration: 12.5s; }
+
+                        /* ♿ NFR5：限速态尊重 reduced-motion——关停呼吸脉冲，降级为静态黄色着色（无位移、无闪烁）。 */
+                        @media (prefers-reduced-motion: reduce) {
+                          .helix-throttled .helix-dot-a,
+                          .helix-throttled .helix-dot-b,
+                          .helix-throttled .helix-bar { animation: none !important; }
+                          .helix-throttled .helix-dot-a,
+                          .helix-throttled .helix-dot-b { fill: #f59e0b; }
+                        }
                       `}</style>
                       <g transform="translate(90, 0)">
                         {Array.from({ length: 8 }).map((_, idx) => {
@@ -449,6 +474,16 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
                       </p>
                     )}
                   </div>
+
+                  {/* 429 限速护航气泡：至少一章进入退避（rateLimited）时即时浮现，复用既有 amber 警告范式 */}
+                  {rateLimited && (
+                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 text-amber-400">
+                      <span className="mt-0.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-400 animate-pulse motion-reduce:animate-none" />
+                      <p className="text-[11px] leading-relaxed">
+                        云端有些拥挤，我们已自动放缓测序呼吸频率进行补测，请您放心，测序绝不中断。
+                      </p>
+                    </div>
+                  )}
 
                   {/* Glowing Progress Bar */}
                   <div className="space-y-1">

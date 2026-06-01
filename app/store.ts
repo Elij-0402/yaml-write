@@ -80,6 +80,8 @@ interface AppState {
   setSequencingGear: (gear: 'safe' | 'balanced' | 'speed') => void;
   shouldReduceEarly: boolean;
   setShouldReduceEarly: (reduce: boolean) => void;
+  rateLimited: boolean;
+  setRateLimited: (limited: boolean) => void;
   resetSequencingState: () => void;
   setActiveProvider: (provider: ProviderId) => void;
   updateActiveProviderProfile: (patch: Partial<ProviderProfile>) => void;
@@ -170,9 +172,11 @@ export const useAppStore = create<AppState>()(
       manageMode: false,
       sequencingGear: 'balanced',
       shouldReduceEarly: false,
+      rateLimited: false,
       setSequencingGear: (gear) => set({ sequencingGear: gear }),
       setShouldReduceEarly: (reduce) => set({ shouldReduceEarly: reduce }),
-      resetSequencingState: () => set({ shouldReduceEarly: false }),
+      setRateLimited: (limited) => set({ rateLimited: limited }),
+      resetSequencingState: () => set({ shouldReduceEarly: false, rateLimited: false }),
       setActiveProvider: (provider) =>
         set((state) => {
           if (provider === state.llmConfig.activeProvider) return state;
@@ -229,6 +233,7 @@ export const useAppStore = create<AppState>()(
           manageMode: false,
           sequencingGear: (gear === 'safe' || gear === 'balanced' || gear === 'speed') ? gear : 'balanced',
           shouldReduceEarly: false,
+          rateLimited: false,
         };
       },
     }
