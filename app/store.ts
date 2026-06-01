@@ -85,6 +85,8 @@ interface AppState {
   resetSequencingState: () => void;
   setActiveProvider: (provider: ProviderId) => void;
   updateActiveProviderProfile: (patch: Partial<ProviderProfile>) => void;
+  fusionBias: number;
+  setFusionBias: (bias: number) => void;
   setSelectedNovelId: (id: string | null) => void;
   setWorkshopOpen: (open: boolean) => void;
   setManageMode: (on: boolean) => void;
@@ -206,6 +208,8 @@ export const useAppStore = create<AppState>()(
             },
           };
         }),
+      fusionBias: 0.5,
+      setFusionBias: (bias) => set({ fusionBias: Math.max(0.01, Math.min(0.99, bias)) }),
       setSelectedNovelId: (id) => set({ selectedNovelId: id, workshopOpen: false, manageMode: false }),
       setWorkshopOpen: (open) => set({ workshopOpen: open }),
       setManageMode: (on) => set({ manageMode: on }),
@@ -234,6 +238,7 @@ export const useAppStore = create<AppState>()(
           sequencingGear: (gear === 'safe' || gear === 'balanced' || gear === 'speed') ? gear : 'balanced',
           shouldReduceEarly: false,
           rateLimited: false,
+          fusionBias: typeof state.fusionBias === 'number' ? state.fusionBias : 0.5,
         };
       },
     }

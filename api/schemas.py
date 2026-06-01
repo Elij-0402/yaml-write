@@ -79,6 +79,7 @@ class FusionDirectionsInput(BaseModel):
     dnaCards: List[DNACardItem] = Field(..., min_length=1)
     userCustomPrompt: Optional[str] = Field(None, max_length=2000)
     adversarialRules: Optional[str] = Field(None, max_length=2000)
+    fusionBias: float = Field(0.5, ge=0.01, le=0.99)
     apiKey: str = Field(..., min_length=1, max_length=512)
     baseUrl: str = Field(..., min_length=1, max_length=512)
     model: str = Field(..., min_length=1, max_length=200)

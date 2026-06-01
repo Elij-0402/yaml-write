@@ -6,6 +6,30 @@ import { db } from '../app/db';
 import { ensureLlmConfigReady, postWithLlmConfig, readApiErrorMessage, streamSse } from '../app/llmClient';
 import { useAppStore } from '../app/store';
 
+const interpolateColor = (color1: string, color2: string, factor: number) => {
+  const f = typeof factor === 'number' && !isNaN(factor) ? factor : 0.5;
+  
+  const parseHex = (hex: string, start: number, end: number) => {
+    if (!hex || hex.length < end) return 0;
+    const val = parseInt(hex.substring(start, end), 16);
+    return isNaN(val) ? 0 : val;
+  };
+
+  const r1 = parseHex(color1, 1, 3);
+  const g1 = parseHex(color1, 3, 5);
+  const b1 = parseHex(color1, 5, 7);
+
+  const r2 = parseHex(color2, 1, 3);
+  const g2 = parseHex(color2, 3, 5);
+  const b2 = parseHex(color2, 5, 7);
+
+  const r = Math.round(r1 + f * (r2 - r1));
+  const g = Math.round(g1 + f * (g2 - g1));
+  const b = Math.round(b1 + f * (b2 - b1));
+
+  return `rgb(${r}, ${g}, ${b})`;
+};
+
 interface FusionDirection {
   title: string;
   concept: string;
@@ -34,9 +58,11 @@ const BLOCKS: { key: BlockKey; label: string }[] = [
 ];
 
 export default function FusionWorkshop() {
-  const { setSelectedNovelId, setWorkshopOpen } = useAppStore((state) => ({
+  const { setSelectedNovelId, setWorkshopOpen, fusionBias, setFusionBias } = useAppStore((state) => ({
     setSelectedNovelId: state.setSelectedNovelId,
     setWorkshopOpen: state.setWorkshopOpen,
+    fusionBias: state.fusionBias,
+    setFusionBias: state.setFusionBias,
   }));
   const novels = useLiveQuery(() => db.novels.reverse().toArray(), []) || [];
   const readyNovels = novels.filter((novel) => novel.analysisStatus === 'done' && novel.dnaCard);
@@ -89,6 +115,7 @@ export default function FusionWorkshop() {
       const response = await postWithLlmConfig('/api/py/generate-fusion-directions', {
         dnaCards,
         userCustomPrompt: customPrompt.trim() || undefined,
+        fusionBias: selectedIds.length === 2 ? fusionBias : 0.5,
       });
       if (!response.ok) throw new Error(await readApiErrorMessage(response));
       const data = (await response.json()) as { directions: FusionDirection[] };
@@ -228,8 +255,53 @@ export default function FusionWorkshop() {
 
   // Step 1: Material Selection
   if (step === 'material') {
+    const selectedNovels = selectedIds
+      .map((id) => readyNovels.find((novel) => novel.id === id))
+      .filter(Boolean);
+    const showOrbit = selectedIds.length === 2 && selectedNovels.length === 2;
+
     return (
       <div className="max-w-2xl space-y-6">
+        <style>{`
+          @keyframes orbit-rotate-anim {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+          }
+          .animate-orbit-rotate {
+            animation: orbit-rotate-anim 12s linear infinite;
+          }
+          .will-change-transform {
+            will-change: transform;
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .animate-orbit-rotate {
+              animation: none !important;
+            }
+          }
+          .glowing-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 4px;
+            border-radius: 9999px;
+            outline: none;
+          }
+          .glowing-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #ffffff;
+            box-shadow: 0 0 8px rgba(6, 182, 212, 0.9);
+            cursor: pointer;
+            transition: transform 0.1s ease;
+          }
+          .glowing-slider::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+          }
+        `}</style>
+
         <div>
           <p className="text-xs text-muted">1/3</p>
           <h2 className="text-lg">选择素材</h2>
@@ -251,6 +323,93 @@ export default function FusionWorkshop() {
             );
           })}
         </div>
+
+        {showOrbit && (
+          <div className="border border-[#1b1e36] bg-[#0c0e20]/60 p-6 rounded-lg backdrop-blur-md space-y-6">
+
+            <div className="text-center">
+              <span className="text-xs font-semibold tracking-wider text-[#5e6ad2] uppercase">引力公轨视图 (Gravity Orbit)</span>
+            </div>
+
+            {/* Celestial Orbit View */}
+            <div className="relative w-64 h-64 mx-auto my-4 border border-[#1b1e36]/30 rounded-full [perspective:800px] flex items-center justify-center overflow-hidden bg-black/40">
+              {/* Dashed Orbit Ring */}
+              <div 
+                className="absolute inset-4 border border-dashed rounded-full will-change-transform animate-orbit-rotate"
+                style={{
+                  borderColor: interpolateColor('#06b6d4', '#5e6ad2', fusionBias),
+                  boxShadow: `0 0 10px ${interpolateColor('#06b6d4', '#5e6ad2', fusionBias)}`,
+                  opacity: 0.4
+                }}
+              />
+
+              {/* Center Black Hole Collision Core */}
+              <div 
+                className="relative z-10 w-10 h-10 rounded-full bg-black border border-[#1b1e36] flex items-center justify-center transition-all duration-300"
+                style={{
+                  boxShadow: `0 0 20px ${interpolateColor('#06b6d4', '#5e6ad2', fusionBias)}`
+                }}
+              >
+                <span className="text-xs animate-pulse">💥</span>
+              </div>
+
+              {/* Orbit Rotating Planets Container (GPU offloaded rotation) */}
+              <div className="absolute inset-0 flex items-center justify-center animate-orbit-rotate will-change-transform">
+                {/* Planet A (Cyan #06b6d4) at opposite end (-80px) */}
+                <div 
+                  className="absolute rounded-full will-change-transform transition-all duration-300 shadow-[0_0_15px_#06b6d4]"
+                  style={{
+                    left: 'calc(50% - 80px)',
+                    transform: 'translateX(-50%)',
+                    width: `${16 + (1 - fusionBias) * 16}px`,
+                    height: `${16 + (1 - fusionBias) * 16}px`,
+                    backgroundColor: '#06b6d4',
+                    opacity: 1 - fusionBias + 0.15,
+                    boxShadow: `0 0 ${10 + (1 - fusionBias) * 20}px #06b6d4`
+                  }}
+                />
+
+                {/* Planet B (Blue #5e6ad2) at end (+80px) */}
+                <div 
+                  className="absolute rounded-full will-change-transform transition-all duration-300 shadow-[0_0_15px_#5e6ad2]"
+                  style={{
+                    left: 'calc(50% + 80px)',
+                    transform: 'translateX(-50%)',
+                    width: `${16 + fusionBias * 16}px`,
+                    height: `${16 + fusionBias * 16}px`,
+                    backgroundColor: '#5e6ad2',
+                    opacity: fusionBias + 0.15,
+                    boxShadow: `0 0 ${10 + fusionBias * 20}px #5e6ad2`
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Sliders and Labels */}
+            <div className="space-y-3">
+              <div className="flex justify-between text-xs text-muted">
+                <span className="text-[#06b6d4] font-medium">偏向 《{selectedNovels[0]?.name}》</span>
+                <span className="text-[#5e6ad2] font-medium">偏向 《{selectedNovels[1]?.name}》</span>
+              </div>
+
+              <input 
+                type="range"
+                min="0.01"
+                max="0.99"
+                step="0.01"
+                value={fusionBias ?? 0.5}
+                onChange={(e) => setFusionBias(parseFloat(e.target.value))}
+                className="glowing-slider bg-[#1b1e36] cursor-pointer"
+              />
+
+              <div className="text-center font-mono text-xs tracking-wide text-secondary leading-relaxed bg-[#05060f]/60 p-2.5 rounded border border-[#1b1e36]/40">
+                《{selectedNovels[0]?.name}》: <span className="text-[#06b6d4] font-semibold">{Math.round((1 - fusionBias) * 100)}%</span> 
+                <span className="mx-2 text-muted">|</span> 
+                《{selectedNovels[1]?.name}》: <span className="text-[#5e6ad2] font-semibold">{Math.round(fusionBias * 100)}%</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="space-y-2">
           <p className="text-xs text-muted">偏航指令（可选）</p>

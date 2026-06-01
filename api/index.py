@@ -425,8 +425,14 @@ async def generate_fusion_directions(data: FusionDirectionsInput, request: Reque
         "· 反套路批评家（红队）：清扫一切宏大空泛叙事与煽情辞藻，强制冷白描与高信息密度物理细节。\n"
         "第三步·红队自查：逐条核对每个方向——是否只是名字替换式的机械缝合？是否违反用户红队规则？是否含黑名单陈词滥调？不合格者就地重写直至通过。\n"
         "3 个方向之间必须在母题与机制上显著不同，禁止换皮。\n"
-        + ANTI_SLOP_CONSTRAINT
     )
+    if len(data.dnaCards) == 2:
+        system_prompt += (
+            f"\n\n【融合偏航倾向】：参与融合的两部作品中，"
+            f"小说 1 的比重权重为 {data.fusionBias:.2f}，小说 2 的比重权重为 {1.0 - data.fusionBias:.2f}。"
+            f"请在小说融合理念设计、世界观、主角和叙事风格的变体生成中，严格遵循此权重比例主导倾向，进行深层的语义插值合成。"
+        )
+    system_prompt += ANTI_SLOP_CONSTRAINT
     user_prompt = f"以下是参与碰撞的小说创作 DNA：\n\n{dna_block}{extra}\n\n请输出 3 个深度融合的原创变体方向。"
     return await run_structured(
         api_key=api_key, base_url=data.baseUrl, model=model,
