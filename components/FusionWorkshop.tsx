@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../app/db';
 import { ensureLlmConfigReady, postWithLlmConfig, readApiErrorMessage, streamSse } from '../app/llmClient';
@@ -56,6 +56,7 @@ const BLOCKS: { key: BlockKey; label: string }[] = [
   { key: 'antagonistBlock', label: '对手' },
   { key: 'narrativeTone', label: '叙事' },
 ];
+const COLLISION_PARTICLES = 16;
 
 export default function FusionWorkshop() {
   const { setSelectedNovelId, setWorkshopOpen, fusionBias, setFusionBias } = useAppStore((state) => ({
@@ -89,6 +90,32 @@ export default function FusionWorkshop() {
   const [generatingBoard, setGeneratingBoard] = useState(false);
   const [sceneTexts, setSceneTexts] = useState<Record<number, string>>({});
   const [streamingScene, setStreamingScene] = useState<number | null>(null);
+  const [collisionPhase, setCollisionPhase] = useState<'idle' | 'igniting' | 'charging'>('idle');
+  const [showParticles, setShowParticles] = useState(false);
+  const [directionsRevealNonce, setDirectionsRevealNonce] = useState(0);
+
+  const collisionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const collisionResolveRef = useRef<(() => void) | null>(null);
+  const mountedRef = useRef(true);
+
+  const clearCollisionTimer = () => {
+    if (collisionTimerRef.current) {
+      clearTimeout(collisionTimerRef.current);
+      collisionTimerRef.current = null;
+    }
+    if (collisionResolveRef.current) {
+      const resolve = collisionResolveRef.current;
+      collisionResolveRef.current = null;
+      resolve();
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      clearCollisionTimer();
+    };
+  }, []);
 
   const guardLlm = (): boolean => {
     const readiness = ensureLlmConfigReady();
@@ -104,10 +131,31 @@ export default function FusionWorkshop() {
   };
 
   const collide = async () => {
-    if (!guardLlm() || selectedIds.length < 2) return;
+    if (!guardLlm() || selectedIds.length < 2 || colliding) return;
+    const reduceMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const cinematicCollision = selectedIds.length === 2;
+    const collisionDurationMs = cinematicCollision ? (reduceMotion ? 100 : 1500) : 100;
+
     setError(null);
     setColliding(true);
+    clearCollisionTimer();
+    setCollisionPhase(cinematicCollision ? 'igniting' : 'idle');
+    setShowParticles(cinematicCollision && !reduceMotion);
+
     try {
+      const animationDone = new Promise<void>((resolve) => {
+        collisionResolveRef.current = resolve;
+        collisionTimerRef.current = setTimeout(() => {
+          collisionTimerRef.current = null;
+          const done = collisionResolveRef.current;
+          collisionResolveRef.current = null;
+          if (mountedRef.current) {
+            setShowParticles(false);
+            setCollisionPhase(cinematicCollision && !reduceMotion ? 'charging' : 'idle');
+          }
+          done?.();
+        }, collisionDurationMs);
+      });
       const dnaCards = selectedIds
         .map((id) => readyNovels.find((novel) => novel.id === id))
         .filter(Boolean)
@@ -119,12 +167,24 @@ export default function FusionWorkshop() {
       });
       if (!response.ok) throw new Error(await readApiErrorMessage(response));
       const data = (await response.json()) as { directions: FusionDirection[] };
+      await animationDone;
+      if (!mountedRef.current) return;
+
       setDirections(data.directions || []);
+      setDirectionsRevealNonce((prev) => prev + 1);
       setStep('directions');
+      setCollisionPhase('idle');
+      setShowParticles(false);
     } catch (err) {
+      clearCollisionTimer();
+      if (!mountedRef.current) return;
+      setCollisionPhase('idle');
+      setShowParticles(false);
       setError(err instanceof Error ? err.message : '碰撞失败');
     } finally {
-      setColliding(false);
+      if (mountedRef.current) {
+        setColliding(false);
+      }
     }
   };
 
@@ -267,8 +327,53 @@ export default function FusionWorkshop() {
             from { transform: rotate(0deg); }
             to { transform: rotate(360deg); }
           }
+          @keyframes orbit-ignite-anim {
+            0% { transform: rotate(0deg) scale(1); }
+            60% { transform: rotate(540deg) scale(0.92); }
+            100% { transform: rotate(960deg) scale(0.82); }
+          }
+          @keyframes orbit-ring-collapse-anim {
+            0% { transform: scale(1); opacity: 0.4; }
+            70% { transform: scale(0.7); opacity: 0.68; }
+            100% { transform: scale(0.5); opacity: 0; }
+          }
+          @keyframes planet-a-collision-anim {
+            0% { transform: translateX(-50%) translateX(0) scale(1); opacity: 1; }
+            100% { transform: translateX(-50%) translateX(80px) scale(0.35); opacity: 0; }
+          }
+          @keyframes planet-b-collision-anim {
+            0% { transform: translateX(-50%) translateX(0) scale(1); opacity: 1; }
+            100% { transform: translateX(-50%) translateX(-80px) scale(0.35); opacity: 0; }
+          }
+          @keyframes core-charge-anim {
+            0%, 100% { opacity: 0.95; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.04); }
+          }
+          @keyframes gravity-wave-particle-anim {
+            0% { opacity: 1; transform: translateX(0) scale(1); }
+            100% { opacity: 0; transform: translateX(78px) scale(0.2); }
+          }
           .animate-orbit-rotate {
             animation: orbit-rotate-anim 12s linear infinite;
+          }
+          .animate-orbit-ignite {
+            animation: orbit-ignite-anim 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          }
+          .animate-orbit-ring-collapse {
+            animation: orbit-ring-collapse-anim 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          }
+          .animate-planet-a-collision {
+            animation: planet-a-collision-anim 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          }
+          .animate-planet-b-collision {
+            animation: planet-b-collision-anim 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          }
+          .animate-core-charge {
+            animation: core-charge-anim 1.2s ease-in-out infinite;
+          }
+          .gravity-wave-particle {
+            will-change: transform, opacity;
+            animation: gravity-wave-particle-anim 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
           }
           .will-change-transform {
             will-change: transform;
@@ -276,6 +381,17 @@ export default function FusionWorkshop() {
           @media (prefers-reduced-motion: reduce) {
             .animate-orbit-rotate {
               animation: none !important;
+            }
+            .animate-orbit-ignite,
+            .animate-orbit-ring-collapse,
+            .animate-planet-a-collision,
+            .animate-planet-b-collision,
+            .animate-core-charge,
+            .gravity-wave-particle {
+              animation: none !important;
+            }
+            .gravity-wave-layer {
+              opacity: 0 !important;
             }
           }
           .glowing-slider {
@@ -335,7 +451,7 @@ export default function FusionWorkshop() {
             <div className="relative w-64 h-64 mx-auto my-4 border border-[#1b1e36]/30 rounded-full [perspective:800px] flex items-center justify-center overflow-hidden bg-black/40">
               {/* Dashed Orbit Ring */}
               <div 
-                className="absolute inset-4 border border-dashed rounded-full will-change-transform animate-orbit-rotate"
+                className={`absolute inset-4 border border-dashed rounded-full will-change-transform ${collisionPhase === 'igniting' ? 'animate-orbit-ring-collapse' : 'animate-orbit-rotate'}`}
                 style={{
                   borderColor: interpolateColor('#06b6d4', '#5e6ad2', fusionBias),
                   boxShadow: `0 0 10px ${interpolateColor('#06b6d4', '#5e6ad2', fusionBias)}`,
@@ -345,7 +461,24 @@ export default function FusionWorkshop() {
 
               {/* Center Black Hole Collision Core */}
               <div 
-                className="relative z-10 w-10 h-10 rounded-full bg-black border border-[#1b1e36] flex items-center justify-center transition-all duration-300"
+                role="button"
+                aria-label="触发星体碰撞"
+                aria-disabled={selectedIds.length < 2 || colliding}
+                tabIndex={selectedIds.length < 2 || colliding ? -1 : 0}
+                onClick={() => {
+                  if (!colliding) {
+                    void collide();
+                  }
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    if (!colliding) {
+                      void collide();
+                    }
+                  }
+                }}
+                className={`relative z-10 w-10 h-10 rounded-full bg-black border border-[#1b1e36] flex items-center justify-center transition-all duration-300 ${selectedIds.length < 2 || colliding ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'} ${collisionPhase === 'charging' ? 'animate-core-charge' : ''}`}
                 style={{
                   boxShadow: `0 0 20px ${interpolateColor('#06b6d4', '#5e6ad2', fusionBias)}`
                 }}
@@ -353,11 +486,40 @@ export default function FusionWorkshop() {
                 <span className="text-xs animate-pulse">💥</span>
               </div>
 
+              {showParticles && (
+                <div className="gravity-wave-layer pointer-events-none absolute inset-0 z-20">
+                  {Array.from({ length: COLLISION_PARTICLES }).map((_, index) => {
+                    const angle = (360 / COLLISION_PARTICLES) * index;
+                    const delay = (index % 4) * 0.04;
+                    return (
+                      <div
+                        key={`particle-${index}`}
+                        className="absolute left-1/2 top-1/2 will-change-transform"
+                        style={{ transform: `translate(-50%, -50%) rotate(${angle}deg)` }}
+                      >
+                        <svg width="4" height="4" viewBox="0 0 4 4" className="overflow-visible">
+                          <circle
+                            cx="2"
+                            cy="2"
+                            r={index % 3 === 0 ? 2 : 1.5}
+                            className="gravity-wave-particle"
+                            style={{
+                              animationDelay: `${delay}s`,
+                              fill: index % 2 === 0 ? '#e2e8f0' : interpolateColor('#06b6d4', '#5e6ad2', fusionBias)
+                            }}
+                          />
+                        </svg>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               {/* Orbit Rotating Planets Container (GPU offloaded rotation) */}
-              <div className="absolute inset-0 flex items-center justify-center animate-orbit-rotate will-change-transform">
+              <div className={`absolute inset-0 flex items-center justify-center will-change-transform ${collisionPhase === 'igniting' ? 'animate-orbit-ignite' : 'animate-orbit-rotate'}`}>
                 {/* Planet A (Cyan #06b6d4) at opposite end (-80px) */}
                 <div 
-                  className="absolute rounded-full will-change-transform transition-all duration-300 shadow-[0_0_15px_#06b6d4]"
+                  className={`absolute rounded-full will-change-transform transition-all duration-300 shadow-[0_0_15px_#06b6d4] ${collisionPhase === 'igniting' ? 'animate-planet-a-collision' : ''}`}
                   style={{
                     left: 'calc(50% - 80px)',
                     transform: 'translateX(-50%)',
@@ -371,7 +533,7 @@ export default function FusionWorkshop() {
 
                 {/* Planet B (Blue #5e6ad2) at end (+80px) */}
                 <div 
-                  className="absolute rounded-full will-change-transform transition-all duration-300 shadow-[0_0_15px_#5e6ad2]"
+                  className={`absolute rounded-full will-change-transform transition-all duration-300 shadow-[0_0_15px_#5e6ad2] ${collisionPhase === 'igniting' ? 'animate-planet-b-collision' : ''}`}
                   style={{
                     left: 'calc(50% + 80px)',
                     transform: 'translateX(-50%)',
@@ -384,6 +546,10 @@ export default function FusionWorkshop() {
                 />
               </div>
             </div>
+
+            {collisionPhase === 'charging' && (
+              <p className="text-center text-xs text-[#e2e8f0]">星轨能量充能中...</p>
+            )}
 
             {/* Sliders and Labels */}
             <div className="space-y-3">
@@ -429,7 +595,7 @@ export default function FusionWorkshop() {
           disabled={selectedIds.length < 2 || colliding}
           className="text-sm disabled:text-muted disabled:cursor-not-allowed"
         >
-          {colliding ? '碰撞中...' : `开始碰撞 (${selectedIds.length})`}
+          {colliding ? '碰撞中...' : `触发星体碰撞 💥 (${selectedIds.length})`}
         </button>
       </div>
     );
@@ -439,6 +605,23 @@ export default function FusionWorkshop() {
   if (step === 'directions') {
     return (
       <div className="max-w-2xl space-y-6">
+        <style>{`
+          @keyframes direction-card-reveal-anim {
+            0% { opacity: 0; transform: translateY(8px) scale(0.99); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+          }
+          .direction-card-reveal {
+            opacity: 0;
+            animation: direction-card-reveal-anim 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            will-change: transform, opacity;
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .direction-card-reveal {
+              animation-duration: 100ms !important;
+              animation-timing-function: ease-out !important;
+            }
+          }
+        `}</style>
         <div className="flex items-center gap-4">
           <button onClick={() => setStep('material')} className="text-secondary hover:text-primary">←</button>
           <div>
@@ -447,16 +630,20 @@ export default function FusionWorkshop() {
           </div>
         </div>
 
-        <div className="space-y-4">
+        <div key={`directions-${directionsRevealNonce}`} className="space-y-4">
           {directions.map((dir, idx) => (
             <button
               key={idx}
               onClick={() => chooseDirection(dir)}
-              className="block w-full border border-default p-4 text-left hover:border-secondary"
+              className="direction-card-reveal block w-full border border-[#1b1e36] bg-[#0c0e20] p-4 text-left text-white hover:border-[#e2e8f0]/70"
+              style={{
+                animationDelay: `${idx * 90}ms`,
+                boxShadow: 'inset 0 0 0 1px rgba(226,232,240,0.35), 0 10px 26px rgba(6,8,20,0.45)',
+              }}
             >
               <p className="text-sm">{dir.title}</p>
-              <p className="mt-2 text-sm text-secondary">{dir.concept}</p>
-              <p className="mt-1 text-xs text-muted">{dir.catalyst}</p>
+              <p className="mt-2 text-sm text-[#e2e8f0]">{dir.concept}</p>
+              <p className="mt-1 text-xs text-[#8a8f98]">{dir.catalyst}</p>
             </button>
           ))}
         </div>
