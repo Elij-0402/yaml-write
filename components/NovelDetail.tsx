@@ -84,20 +84,34 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
 
   const [extracting, setExtracting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [editKey, setEditKey] = useState<keyof NovelDNACard | null>(null);
+  const [activeTab, setActiveTab] = useState<keyof NovelDNACard>(DNA_FIELDS[0].key);
+  const [flipped, setFlipped] = useState(false);
   const [draft, setDraft] = useState('');
+  const [savedToast, setSavedToast] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [liveFeed, setLiveFeed] = useState<LiveFeedItem[]>([]);
   const renderedIdsRef = useRef<Set<string>>(new Set());
   const feedContainerRef = useRef<HTMLDivElement>(null);
   const userScrollingRef = useRef(false);
   const autoScrollingRef = useRef(false);
+  // Story 2.5: 五维 Tabs + 3D 翻转编辑——背面输入框 ref（Safari autofocus）与定时器 ref（卸载需清理）
+  const backTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const flipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Reset feed on novelId change
+  // Reset feed + DNA codex view on novelId change
   useEffect(() => {
     setLiveFeed([]);
     renderedIdsRef.current = new Set();
+    setFlipped(false);
+    setActiveTab(DNA_FIELDS[0].key);
   }, [novelId]);
+
+  // Story 2.5: 卸载时清理翻转 autofocus / toast 定时器，防内存泄漏与跨小说串扰
+  useEffect(() => () => {
+    if (flipTimerRef.current) clearTimeout(flipTimerRef.current);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
 
   // Track finished chapters and build the live feed in true completion order
   useEffect(() => {
@@ -202,10 +216,48 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
     setShouldReduceEarly(true);
   };
 
+  // Story 2.5: 打开背面表单（预填当前值），翻转后与 150ms 翻转对齐对背面输入框 autofocus（Safari 3D 防护）
+  const openEdit = (key: keyof NovelDNACard) => {
+    setActiveTab(key);
+    setDraft(novel.dnaCard?.[key] ?? '');
+    setFlipped(true);
+    if (flipTimerRef.current) clearTimeout(flipTimerRef.current);
+    flipTimerRef.current = setTimeout(() => backTextareaRef.current?.focus(), 150);
+  };
+
+  // 切换维度 Tab：先复位翻转，避免把上一维度的 draft 带到新维度
+  const selectTab = (key: keyof NovelDNACard) => {
+    if (key === activeTab) return;
+    setFlipped(false);
+    setActiveTab(key);
+    if (flipTimerRef.current) {
+      clearTimeout(flipTimerRef.current);
+      flipTimerRef.current = null;
+    }
+  };
+
+  const cancelEdit = () => {
+    setFlipped(false);
+    setDraft('');
+    if (flipTimerRef.current) {
+      clearTimeout(flipTimerRef.current);
+      flipTimerRef.current = null;
+    }
+  };
+
+  // 保存：复用既有原子写回 novel.dnaCard（非新建 dnaCards 表）；翻回正面 + 生机绿成功 Toast（~2.5s 自动消隐）
   const saveField = async (key: keyof NovelDNACard) => {
     if (!novel.dnaCard) return;
-    await db.novels.update(novelId, { dnaCard: { ...novel.dnaCard, [key]: draft } });
-    setEditKey(null);
+    try {
+      await db.novels.update(novelId, { dnaCard: { ...novel.dnaCard, [key]: draft } });
+      setFlipped(false);
+      setSavedToast('已保存微调 ✓');
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = setTimeout(() => setSavedToast(null), 2500);
+    } catch (err) {
+      console.error('Failed to save DNA card:', err);
+      setError(err instanceof Error ? err.message : '保存修改失败，请重试');
+    }
   };
 
   const gearOptions = [
@@ -286,15 +338,40 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
 
       {/* DNA Ready */}
       {dnaReady ? (
-        <div className="space-y-6">
+        <div className="dna-codex space-y-6">
+          {/* Story 2.5: 五维 Tabs + 3D 翻转编辑 / Tab 切换 / 面板绽放 / reduced-motion 降级（组件内联 <style>，勿动 globals.css） */}
+          <style>{`
+            .dna-codex { animation: dnaBloom 300ms ease-out; }
+            @keyframes dnaBloom {
+              0% { opacity: 0; transform: translateY(8px) scale(0.99); }
+              100% { opacity: 1; transform: none; }
+            }
+            .dna-flip-inner { transition: transform 150ms ease-in-out; transform-style: preserve-3d; -webkit-transform-style: preserve-3d; }
+            .dna-flip-inner.is-flipped { transform: rotateY(180deg); -webkit-transform: rotateY(180deg); }
+            .dna-face { -webkit-backface-visibility: hidden; backface-visibility: hidden; }
+            .dna-face-front { transform: rotateY(0deg); -webkit-transform: rotateY(0deg); }
+            .dna-face-back { transform: rotateY(180deg); -webkit-transform: rotateY(180deg); }
+            .dna-panel-content { animation: dnaTabFade 150ms ease-in-out; }
+            @keyframes dnaTabFade { 0% { opacity: 0.35; } 100% { opacity: 1; } }
+            /* ♿ NFR5：reduced-motion 下屏蔽 rotateY 3D 与绽放，正/背面以 display 即时替换（≤0.1s） */
+            @media (prefers-reduced-motion: reduce) {
+              .dna-codex { animation: none !important; }
+              .dna-flip-inner { transition: none !important; transform: none !important; }
+              .dna-flip-inner .dna-face-back { position: relative; transform: none; }
+              .dna-flip-inner:not(.is-flipped) .dna-face-back { display: none; }
+              .dna-flip-inner.is-flipped .dna-face-front { display: none; }
+              .dna-panel-content { animation: none !important; }
+            }
+          `}</style>
+
           <div className="flex items-center justify-between border-b border-zinc-850 pb-4">
             <span className="flex items-center gap-2 text-sm text-emerald-400 font-medium">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse motion-reduce:animate-none" />
               DNA 基因组图谱已固化就绪
             </span>
             {readyNovelCount >= 2 && (
-              <button 
-                onClick={() => setWorkshopOpen(true)} 
+              <button
+                onClick={() => setWorkshopOpen(true)}
                 className="text-xs px-3 py-1.5 rounded bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-medium shadow-lg hover:shadow-indigo-500/10 transition-all duration-300"
               >
                 进入双星融合工坊 →
@@ -302,47 +379,84 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
             )}
           </div>
 
-          {DNA_FIELDS.map(({ key, label }) => (
-            <div key={key} className="border-b border-zinc-900 pb-6 group">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted font-semibold tracking-wider uppercase">{label}</span>
-                {editKey !== key && (
-                  <button
-                    onClick={() => { setEditKey(key); setDraft(novel.dnaCard?.[key] || ''); }}
-                    className="text-xs text-muted hover:text-secondary opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    修改微调
-                  </button>
-                )}
-              </div>
-              {editKey === key ? (
-                <div className="mt-2 space-y-2">
+          {/* 五维高奢 Tabs（母题/世界观/角色/叙事/风格），同一时刻仅显选中维度卡 */}
+          <div role="tablist" aria-label="五维 DNA 结晶报告" className="flex flex-wrap gap-2">
+            {DNA_FIELDS.map(({ key, label }) => {
+              const isActive = key === activeTab;
+              return (
+                <button
+                  key={key}
+                  role="tab"
+                  id={`dna-tab-${key}`}
+                  aria-selected={isActive}
+                  aria-controls={`dna-panel-${key}`}
+                  onClick={() => selectTab(key)}
+                  className={`px-4 py-2 rounded-lg text-xs font-semibold tracking-wide border transition-all duration-150 ease-in-out ${
+                    isActive
+                      ? 'border-[#06b6d4]/50 bg-[#06b6d4]/10 text-[#06b6d4] shadow-[0_0_12px_rgba(6,182,212,0.15)]'
+                      : 'border-[#1b1e36] bg-[#0c0e20]/40 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* 当前维度 3D 翻转卡：正面展示 / 背面发丝描边毛玻璃编辑表单 */}
+          {DNA_FIELDS.filter((f) => f.key === activeTab).map(({ key, label }) => (
+            <div
+              key={key}
+              role="tabpanel"
+              id={`dna-panel-${key}`}
+              aria-labelledby={`dna-tab-${key}`}
+              className="dna-panel-content [perspective:1600px]"
+            >
+              <div className={`dna-flip-inner relative min-h-[220px] ${flipped ? 'is-flipped' : ''}`}>
+                {/* 正面：翻转时 pointer-events:none + 不可聚焦 + aria-hidden（Safari 3D 防穿透 / 防焦点落到不可见正面） */}
+                <div aria-hidden={flipped} className={`dna-face dna-face-front border border-[#1b1e36] bg-[#0c0e20]/60 backdrop-blur-md rounded-xl p-6 ${flipped ? 'pointer-events-none' : ''}`}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[#8a8f98] font-semibold tracking-wider uppercase">{label}</span>
+                    <button
+                      onClick={() => openEdit(key)}
+                      tabIndex={flipped ? -1 : 0}
+                      className="text-xs px-2.5 py-1 rounded border border-[#1b1e36] text-zinc-400 hover:text-[#06b6d4] hover:border-[#06b6d4]/40 transition-colors"
+                    >
+                      微调 ✎
+                    </button>
+                  </div>
+                  <p className="mt-3 text-sm text-[#e2e8f0] leading-relaxed whitespace-pre-wrap">
+                    {novel.dnaCard?.[key] || '—'}
+                  </p>
+                </div>
+                {/* 背面：发丝描边毛玻璃修改表单（textarea 复用 draft，保存复用 saveField）；未翻转时禁用指针/焦点/读屏 */}
+                <div aria-hidden={!flipped} className={`dna-face dna-face-back absolute inset-0 flex flex-col border border-[#1b1e36] bg-[#0c0e20]/70 backdrop-blur-md rounded-xl p-6 ${flipped ? '' : 'pointer-events-none'}`}>
+                  <span className="text-xs text-[#06b6d4] font-semibold tracking-wider uppercase">微调 · {label}</span>
                   <textarea
+                    ref={backTextareaRef}
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
-                    rows={4}
-                    className="w-full rounded border border-zinc-800 bg-zinc-950/80 p-3 text-sm text-white focus:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-zinc-700 transition-all font-sans"
+                    tabIndex={flipped ? 0 : -1}
+                    className="mt-3 min-h-[120px] flex-1 w-full resize-none rounded-lg border border-[#1b1e36] bg-[#05060f]/80 p-3 text-sm text-white leading-relaxed font-sans focus:border-[#06b6d4]/50 focus:outline-none focus:ring-1 focus:ring-[#06b6d4]/30 transition-all"
                   />
-                  <div className="flex gap-3 text-xs justify-end">
-                    <button 
-                      onClick={() => setEditKey(null)} 
-                      className="px-3 py-1.5 rounded border border-zinc-800 text-secondary hover:text-white transition-colors"
+                  <div className="mt-3 flex gap-3 text-xs justify-end">
+                    <button
+                      onClick={cancelEdit}
+                      tabIndex={flipped ? 0 : -1}
+                      className="px-3 py-1.5 rounded border border-[#1b1e36] text-zinc-400 hover:text-white transition-colors"
                     >
                       取消
                     </button>
-                    <button 
-                      onClick={() => void saveField(key)} 
-                      className="px-3 py-1.5 rounded bg-zinc-100 text-zinc-950 hover:bg-white font-medium transition-colors"
+                    <button
+                      onClick={() => void saveField(key)}
+                      tabIndex={flipped ? 0 : -1}
+                      className="px-3 py-1.5 rounded bg-[#10b981] text-[#05060f] hover:bg-[#0ea371] font-semibold transition-colors"
                     >
-                      保存更改
+                      保存
                     </button>
                   </div>
                 </div>
-              ) : (
-                <p className="mt-2 text-sm text-secondary leading-relaxed whitespace-pre-wrap">
-                  {novel.dnaCard?.[key] || '—'}
-                </p>
-              )}
+              </div>
             </div>
           ))}
         </div>
@@ -617,6 +731,18 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
             <span>短章 (&lt;500字): {chapters.filter((c) => c.wordCount < 500).length} 章</span>
             <span>长章 (&gt;12000字): {chapters.filter((c) => c.wordCount > 12000).length} 章</span>
           </div>
+        </div>
+      )}
+
+      {/* Story 2.5: 保存成功生机绿 Toast（页面底部固定，~2.5s 自动消隐；置于变换祖先之外以保证 viewport 定位） */}
+      {savedToast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-[#0c0e20]/90 backdrop-blur-md px-4 py-2.5 text-emerald-400 text-xs font-medium shadow-2xl"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse motion-reduce:animate-none" />
+          {savedToast}
         </div>
       )}
     </div>
