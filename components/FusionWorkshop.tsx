@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../app/db';
-import { ensureLlmConfigReady, postWithLlmConfig, readApiErrorMessage, streamSse } from '../app/llmClient';
+import { StreamSseError, ensureLlmConfigReady, postWithLlmConfig, readApiErrorMessage, streamSse } from '../app/llmClient';
 import { useAppStore } from '../app/store';
 
 const interpolateColor = (color1: string, color2: string, factor: number) => {
@@ -49,6 +49,7 @@ interface StoryboardScene {
 }
 
 type BlockKey = 'worldviewBlock' | 'protagonistBlock' | 'antagonistBlock' | 'narrativeTone';
+type SceneResumeStatus = 'idle' | 'failed-resumable' | 'resuming' | 'done';
 
 const BLOCKS: { key: BlockKey; label: string }[] = [
   { key: 'worldviewBlock', label: '世界观' },
@@ -56,6 +57,7 @@ const BLOCKS: { key: BlockKey; label: string }[] = [
   { key: 'antagonistBlock', label: '对手' },
   { key: 'narrativeTone', label: '叙事' },
 ];
+const isBlockKey = (value: string): value is BlockKey => BLOCKS.some((block) => block.key === value);
 const COLLISION_PARTICLES = 16;
 const ANTI_SLOP_PHRASES = [
   '命运的齿轮',
@@ -154,11 +156,14 @@ export default function FusionWorkshop() {
   const [directionTitle, setDirectionTitle] = useState('');
   const [command, setCommand] = useState('');
   const [tweaking, setTweaking] = useState(false);
+  const [tweakingTarget, setTweakingTarget] = useState<BlockKey | null>(null);
+  const [tweakTarget, setTweakTarget] = useState<BlockKey>('worldviewBlock');
   const [storyboard, setStoryboard] = useState<StoryboardScene[]>([]);
   const [storyboardStreamText, setStoryboardStreamText] = useState('');
   const [generatingBoard, setGeneratingBoard] = useState(false);
   const [sceneTexts, setSceneTexts] = useState<Record<number, string>>({});
   const [streamingScene, setStreamingScene] = useState<number | null>(null);
+  const [sceneResumeStatus, setSceneResumeStatus] = useState<Record<number, SceneResumeStatus>>({});
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [collisionPhase, setCollisionPhase] = useState<'idle' | 'igniting' | 'charging'>('idle');
   const [showParticles, setShowParticles] = useState(false);
@@ -282,23 +287,31 @@ export default function FusionWorkshop() {
     setStoryboard([]);
     setStoryboardStreamText('');
     setSceneTexts({});
+    setSceneResumeStatus({});
+    setTweakTarget('worldviewBlock');
     setStep('creator');
   };
 
   const runTweak = async () => {
     if (!guardLlm() || !command.trim() || tweaking) return;
+    const snapshot = { ...blocks };
     setError(null);
     setTweaking(true);
+    setTweakingTarget(tweakTarget);
     try {
       const response = await postWithLlmConfig('/api/py/tweak-fusion-blocks', {
         ...blocks,
+        targetBlock: tweakTarget,
         userInstruction: command.trim(),
       });
       if (!response.ok) throw new Error(await readApiErrorMessage(response));
       const data = (await response.json()) as Partial<Record<BlockKey, string>> & { modifiedBlocks: BlockKey[] };
       setBlocks((prev) => {
         const next = { ...prev };
-        (data.modifiedBlocks || []).forEach((key) => {
+        const reported = (data.modifiedBlocks || []).filter((key): key is BlockKey => isBlockKey(key));
+        const targetOnly = reported.filter((key) => key === tweakTarget);
+        const effectiveKeys = targetOnly.length > 0 ? targetOnly : [];
+        effectiveKeys.forEach((key) => {
           if (typeof data[key] === 'string') {
             next[key] = data[key] as string;
           }
@@ -307,9 +320,11 @@ export default function FusionWorkshop() {
       });
       setCommand('');
     } catch (err) {
+      setBlocks(snapshot);
       setError(err instanceof Error ? err.message : '调整失败');
     } finally {
       setTweaking(false);
+      setTweakingTarget(null);
     }
   };
 
@@ -321,6 +336,7 @@ export default function FusionWorkshop() {
     setGeneratingBoard(true);
     setStoryboard([]);
     setSceneTexts({});
+    setSceneResumeStatus({});
     setStoryboardStreamText('');
     let streamedText = '';
     let hasParsedScenes = false;
@@ -354,32 +370,59 @@ export default function FusionWorkshop() {
     }
   };
 
-  const generateScene = async (scene: StoryboardScene) => {
+  const generateScene = async (scene: StoryboardScene, mode: 'fresh' | 'resume' = 'fresh') => {
     if (!guardLlm() || streamingScene !== null) return;
+    setError(null);
     const num = scene.sceneNumber;
+    const existingDraft = sceneTexts[num] || '';
+    let receivedSceneText = mode === 'resume' ? existingDraft : '';
     const precedingTexts: Record<number, string> = {};
     [num - 2, num - 1].forEach((n) => {
       if (n >= 1 && sceneTexts[n]) precedingTexts[n] = sceneTexts[n];
     });
-    setSceneTexts((prev) => ({ ...prev, [num]: '' }));
+    setSceneResumeStatus((prev) => ({ ...prev, [num]: mode === 'resume' ? 'resuming' : 'idle' }));
+    if (mode === 'fresh') {
+      setSceneTexts((prev) => ({ ...prev, [num]: '' }));
+    }
     setStreamingScene(num);
     try {
       await streamSse(
         '/api/py/stream-scene-text',
-        { selectedDirection: selectedDirection(), currentScene: scene, precedingTexts },
+        {
+          selectedDirection: selectedDirection(),
+          currentScene: scene,
+          precedingTexts,
+          currentDraft: mode === 'resume' ? existingDraft : undefined,
+          resumeFromText: mode === 'resume' ? existingDraft : undefined,
+        },
         {
           onDelta: (text) =>
-            setSceneTexts((prev) => ({
-              ...prev,
-              [num]: (prev[num] || '') + applyAntiSlopFallback(text),
-            })),
+            {
+              const sanitized = applyAntiSlopFallback(text);
+              receivedSceneText += sanitized;
+              setSceneTexts((prev) => ({
+                ...prev,
+                [num]: (prev[num] || '') + sanitized,
+              }));
+            },
         }
       );
+      setSceneResumeStatus((prev) => ({ ...prev, [num]: 'done' }));
     } catch (err) {
-      setSceneTexts((prev) => ({
-        ...prev,
-        [num]: `${prev[num] || ''}\n\n[生成失败: ${err instanceof Error ? err.message : err}]`,
-      }));
+      const reason = err instanceof StreamSseError ? err.code : 'unknown_stream_error';
+      const message = err instanceof Error ? err.message : String(err);
+      const hasText = receivedSceneText.trim().length > 0 || existingDraft.trim().length > 0;
+      const resumable = (err instanceof StreamSseError && err.resumable) || hasText;
+      if (resumable) {
+        setSceneResumeStatus((prev) => ({ ...prev, [num]: 'failed-resumable' }));
+        setError(`第 ${num} 分镜中断（${reason}）：${message}，可继续接写。`);
+      } else {
+        setSceneResumeStatus((prev) => ({ ...prev, [num]: 'idle' }));
+        setSceneTexts((prev) => ({
+          ...prev,
+          [num]: `${prev[num] || ''}\n\n[生成失败: ${message}]`,
+        }));
+      }
     } finally {
       setStreamingScene(null);
     }
@@ -763,6 +806,21 @@ export default function FusionWorkshop() {
   // Step 3: Creator
   return (
     <div className="max-w-3xl space-y-6">
+      <style>{`
+        .tweak-glow-pulse {
+          animation: tweak-glow-pulse-anim 1.1s ease-in-out infinite;
+        }
+        @keyframes tweak-glow-pulse-anim {
+          0%, 100% { box-shadow: 0 0 0 rgba(94,106,210,0.0); }
+          50% { box-shadow: 0 0 16px rgba(94,106,210,0.55); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .tweak-glow-pulse {
+            animation: none !important;
+            transition: opacity 100ms ease-out;
+          }
+        }
+      `}</style>
       <div className="flex items-center gap-4">
         <button onClick={() => setStep('directions')} className="text-secondary hover:text-primary">←</button>
         <div>
@@ -774,29 +832,58 @@ export default function FusionWorkshop() {
       {/* Blocks */}
       <div className="grid gap-4 sm:grid-cols-2">
         {BLOCKS.map(({ key, label }) => (
-          <div key={key} className="border border-default p-3">
-            <p className="text-xs text-muted">{label}</p>
+          <div
+            key={key}
+            className={`border p-3 transition-all ${tweakTarget === key ? 'border-primary' : 'border-default'} ${
+              tweakingTarget && tweakingTarget !== key ? 'opacity-65' : 'opacity-100'
+            } ${tweakingTarget === key && !prefersReducedMotion ? 'tweak-glow-pulse' : ''}`}
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted">{label}</p>
+              {tweakingTarget === key ? (
+                <span className="text-[11px] text-primary">{prefersReducedMotion ? '更新中' : '脉冲更新中'}</span>
+              ) : tweakingTarget && tweakingTarget !== key ? (
+                <span className="text-[11px] text-muted">只读锁</span>
+              ) : null}
+            </div>
             <p className="mt-1 text-sm text-secondary leading-relaxed">{blocks[key]}</p>
           </div>
         ))}
       </div>
 
       {/* Tweak */}
+      <div className="space-y-2">
+        <div className="flex flex-wrap gap-2 text-xs">
+          {BLOCKS.map(({ key, label }) => (
+            <button
+              key={`tweak-target-${key}`}
+              onClick={() => setTweakTarget(key)}
+              disabled={tweaking}
+              className={`border px-2 py-1 ${
+                tweakTarget === key ? 'border-primary text-primary' : 'border-default text-secondary'
+              } disabled:opacity-60`}
+            >
+              微调目标: {label}
+            </button>
+          ))}
+        </div>
       <div className="flex gap-2">
         <input
           value={command}
           onChange={(e) => setCommand(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && runTweak()}
-          placeholder="调整指令..."
+          placeholder={`对「${BLOCKS.find((block) => block.key === tweakTarget)?.label || '当前卡'}」输入调整指令...`}
           className="flex-1 border bg-transparent p-2 text-sm focus:outline-none"
+          disabled={tweaking}
         />
         <button
           onClick={runTweak}
           disabled={tweaking || !command.trim()}
           className="px-3 text-sm text-secondary hover:text-primary disabled:text-muted"
         >
-          {tweaking ? '...' : '发送'}
+          {tweaking ? '发送中...' : '发送'}
         </button>
+      </div>
       </div>
 
       <p className="sr-only" aria-live="polite">
@@ -804,6 +891,8 @@ export default function FusionWorkshop() {
           ? '故事板生成中'
           : streamingScene !== null
             ? `正在流式生成第 ${streamingScene} 分镜正文`
+            : Object.values(sceneResumeStatus).some((status) => status === 'failed-resumable')
+              ? '检测到中断，可点击继续接写'
             : error
               ? `发生错误：${error}`
               : '创作流程就绪'}
@@ -864,11 +953,21 @@ export default function FusionWorkshop() {
                     <div className="flex gap-4 text-xs">
                       <button onClick={() => copyScene(scene.sceneNumber)} className="text-muted hover:text-secondary">复制</button>
                       <button onClick={() => saveScene(scene)} className="text-muted hover:text-secondary">下载</button>
+      {sceneResumeStatus[scene.sceneNumber] === 'failed-resumable' && (
+        <button
+          onClick={() => generateScene(scene, 'resume')}
+          disabled={streamingScene !== null}
+          className="rounded border border-white/20 bg-white/10 px-2 py-0.5 text-primary backdrop-blur-sm hover:text-white disabled:text-muted"
+          aria-live="polite"
+        >
+                          {sceneResumeStatus[scene.sceneNumber] === 'resuming' ? '续写中...' : '继续接写 ↩️'}
+                        </button>
+                      )}
                     </div>
                   </div>
                 ) : (
                   <button
-                    onClick={() => generateScene(scene)}
+                    onClick={() => generateScene(scene, 'fresh')}
                     disabled={streamingScene !== null}
                     className="mt-3 text-sm text-secondary hover:text-primary disabled:text-muted"
                   >

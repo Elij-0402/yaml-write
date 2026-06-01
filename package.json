@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "scripts": {
-    "fastapi-dev": "python -m pip install -r requirements.txt && python -m uvicorn api.index:app --reload",
+    "fastapi-dev": "python -m pip install -r requirements.txt && python -m uvicorn api.index:app --reload --reload-exclude \"*test*\"",
     "next-dev": "next dev",
     "dev": "concurrently \"npm run next-dev\" \"npm run fastapi-dev\"",
     "build": "next build",

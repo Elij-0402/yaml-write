@@ -102,6 +102,7 @@ class TweakBlocksInput(BaseModel):
     protagonistBlock: str = ""
     antagonistBlock: str = ""
     narrativeTone: str = ""
+    targetBlock: Optional[str] = Field(None, pattern="^(worldviewBlock|protagonistBlock|antagonistBlock|narrativeTone)$")
     userInstruction: str = Field(..., min_length=1, max_length=2000)
     adversarialRules: Optional[str] = Field(None, max_length=2000)
     apiKey: str = Field(..., min_length=1, max_length=512)
@@ -147,6 +148,8 @@ class SceneTextInput(BaseModel):
     selectedDirection: SelectedDirection
     currentScene: StoryboardScene
     precedingTexts: Dict[int, str] = Field(default_factory=dict)
+    currentDraft: Optional[str] = Field(None, max_length=24000)
+    resumeFromText: Optional[str] = Field(None, max_length=24000)
     adversarialRules: Optional[str] = Field(None, max_length=2000)
     apiKey: str = Field(..., min_length=1, max_length=512)
     baseUrl: str = Field(..., min_length=1, max_length=512)

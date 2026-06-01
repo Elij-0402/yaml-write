@@ -250,6 +250,48 @@ def sanitize_text(value: str) -> str:
     return value.strip()
 
 
+def trim_text_tail(value: str, max_chars: int) -> str:
+    normalized = sanitize_text(value)
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[-max_chars:]
+
+
+def build_scene_user_prompt(data: SceneTextInput) -> str:
+    d = data.selectedDirection
+    scene = data.currentScene
+
+    ordered = sorted(data.precedingTexts.items())
+    preceding = "\n\n".join(text for _, text in ordered if text and text.strip())
+    preceding = trim_text_tail(preceding, MAX_SCENE_CONTEXT_CHARS)
+    preceding_block = preceding if preceding.strip() else "（这是开篇第一个分镜，无前文。）"
+
+    current_draft_raw = data.currentDraft or data.resumeFromText or ""
+    current_draft = trim_text_tail(current_draft_raw, MAX_SCENE_CONTEXT_CHARS)
+    resume_block = ""
+    resume_instruction = "请紧密承接前置分镜最后一句话的语气、环境与角色站位，继续创作当前分镜。"
+    if current_draft:
+        resume_block = (
+            f"\n【当前分镜已生成正文（不要重复）】\n"
+            f"----- 当前分镜草稿（续写基线） -----\n{current_draft}\n-------------------\n"
+        )
+        resume_instruction = (
+            "请严格从“当前分镜草稿”的最后一句继续接写，延续语气、角色站位与环境细节。"
+            "严禁复述草稿中已出现的句段。"
+        )
+
+    return (
+        f"【角色设定与世界观积木】\n世界观：{d.worldviewBlock}\n主角：{d.protagonistBlock}\n"
+        f"对手：{d.antagonistBlock}\n叙事色调：{d.narrativeTone}\n\n"
+        f"【当前要写作的分镜】\n标题：{scene.sceneTitle}\n情节走向：{scene.plotOutline}\n"
+        f"张力：{scene.tensionLevel}\n画面意象：{scene.visualCues}\n\n"
+        f"【前置分镜已写出的实际正文（供承上启下）】\n----- 前情回顾 -----\n{preceding_block}\n-------------------\n"
+        f"{resume_block}"
+        f"{resume_instruction}"
+        "严禁剧情断层或设定漂移。直接开始输出正文，不要重复前文。"
+    )
+
+
 _STORYBOARD_SCENE_PATTERN = re.compile(
     r"\[SCENE-(\d+)\]\s*"
     r"title:\s*(.*?)\s*"
@@ -487,6 +529,14 @@ async def tweak_fusion_blocks(data: TweakBlocksInput, request: Request):
     validate_llm_creds(api_key, model, data.temperature)
     logger.info("tweak_fusion_blocks ip=%s model=%s", get_client_ip(request), model)
 
+    target_guard = ""
+    if data.targetBlock:
+        target_guard = (
+            f"\n【本次目标卡片】{data.targetBlock}。"
+            f"本次仅允许修改该卡片；modifiedBlocks 只能包含 {data.targetBlock}。"
+            "其他卡片必须返回 null 且不得改写。"
+        )
+
     adv = ""
     if data.adversarialRules and data.adversarialRules.strip():
         adv = f"\n【用户红队对抗规则（必须遵守）】：{data.adversarialRules.strip()}"
@@ -496,6 +546,7 @@ async def tweak_fusion_blocks(data: TweakBlocksInput, request: Request):
         "请判断该指令意图修改哪些积木（可一个或多个），仅重写被影响的积木，未受影响的积木在返回中保持为 null。"
         "重写时必须与其余积木保持设定自洽，绝不能引入唯心套路或廉价拼贴。"
         "modifiedBlocks 必须准确列出你实际修改的积木 ID。\n"
+        + target_guard
         + ANTI_SLOP_CONSTRAINT
     )
     user_prompt = (
@@ -632,15 +683,8 @@ async def stream_scene_text(data: SceneTextInput, request: Request):
     api_key = sanitize_text(data.apiKey)
     validate_llm_creds(api_key, model, data.temperature)
     client = build_openai_client(api_key, data.baseUrl, timeout=STREAM_TIMEOUT_SECONDS)
-    d = data.selectedDirection
     scene = data.currentScene
     logger.info("stream_scene_text ip=%s model=%s scene=%s", get_client_ip(request), model, scene.sceneNumber)
-
-    ordered = sorted(data.precedingTexts.items())
-    preceding = "\n\n".join(text for _, text in ordered if text and text.strip())
-    if len(preceding) > MAX_SCENE_CONTEXT_CHARS:
-        preceding = preceding[-MAX_SCENE_CONTEXT_CHARS:]
-    preceding_block = preceding if preceding.strip() else "（这是开篇第一个分镜，无前文。）"
 
     adv = ANTI_SLOP_CONSTRAINT
     if data.adversarialRules and data.adversarialRules.strip():
@@ -651,15 +695,7 @@ async def stream_scene_text(data: SceneTextInput, request: Request):
         + adv
         + "\n直接输出正文，不要任何前言、标题或解释。"
     )
-    user_prompt = (
-        f"【角色设定与世界观积木】\n世界观：{d.worldviewBlock}\n主角：{d.protagonistBlock}\n"
-        f"对手：{d.antagonistBlock}\n叙事色调：{d.narrativeTone}\n\n"
-        f"【当前要写作的分镜】\n标题：{scene.sceneTitle}\n情节走向：{scene.plotOutline}\n"
-        f"张力：{scene.tensionLevel}\n画面意象：{scene.visualCues}\n\n"
-        f"【前置分镜已写出的实际正文（供承上启下）】\n----- 前情回顾 -----\n{preceding_block}\n-------------------\n"
-        "请紧密承接前置分镜最后一句话的语气、环境与角色站位，继续创作当前分镜。"
-        "严禁剧情断层或设定漂移。直接开始输出正文，不要重复前文。"
-    )
+    user_prompt = build_scene_user_prompt(data)
 
     async def event_generator():
         try:

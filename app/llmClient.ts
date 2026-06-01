@@ -162,6 +162,18 @@ export interface StreamSseHandlers {
   signal?: AbortSignal;
 }
 
+export class StreamSseError extends Error {
+  code: string;
+  resumable: boolean;
+
+  constructor(message: string, code: string, resumable: boolean) {
+    super(message);
+    this.name = 'StreamSseError';
+    this.code = code;
+    this.resumable = resumable;
+  }
+}
+
 /**
  * POST to a streaming endpoint and dispatch each `delta` text chunk to onDelta.
  * Throws on a non-ok response, an `error` frame, or a stream that ends with no output.
@@ -200,7 +212,11 @@ export async function streamSse<T extends Record<string, unknown>>(
         receivedDelta = true;
         handlers.onDelta(event.payload.text);
       } else if (event.event === 'error') {
-        throw new Error(event.payload.message || '流式生成失败');
+        throw new StreamSseError(
+          event.payload.message || '流式生成失败',
+          event.payload.code || 'stream_error',
+          receivedDelta
+        );
       } else if (event.event === 'done') {
         gotDoneEvent = true;
         handlers.onDone?.(event.payload);
@@ -208,7 +224,10 @@ export async function streamSse<T extends Record<string, unknown>>(
     }
   }
 
-  if (!gotDoneEvent && !receivedDelta) {
-    throw new Error('生成提前结束，请重试。');
+  if (!gotDoneEvent) {
+    if (receivedDelta) {
+      throw new StreamSseError('流式连接中断，可继续接写。', 'stream_ended_without_done', true);
+    }
+    throw new StreamSseError('生成提前结束，请重试。', 'stream_ended_early', false);
   }
 }
