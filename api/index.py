@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 from collections import defaultdict, deque
 from typing import Deque
@@ -32,6 +33,8 @@ from api.schemas import (
     FusionDirectionsResponse,
     NovelDNACardResponse,
     SceneTextInput,
+    SplitRecommendInput,
+    SplitRecommendResponse,
     StoryboardInput,
     StoryboardResponse,
     TweakBlocksInput,
@@ -50,6 +53,7 @@ MAX_PARSE_RETRIES = 2
 MAX_CHAPTER_CONTENT_CHARS = 30000
 MAX_REDUCE_INPUT_CHARS = 200000
 MAX_SCENE_CONTEXT_CHARS = 24000
+MAX_SPLIT_RECOMMEND_CHARS = 20000
 RATE_LIMIT_RULES = {
     "/api/py/extract-chapter-map": (60, 120),
     "/api/py/extract-book-reduce": (60, 10),
@@ -57,6 +61,7 @@ RATE_LIMIT_RULES = {
     "/api/py/tweak-fusion-blocks": (60, 20),
     "/api/py/generate-storyboard": (60, 12),
     "/api/py/stream-scene-text": (60, 12),
+    "/api/py/split-recommend": (60, 20),
 }
 
 # 反 AI 套路硬约束（各创作 prompt 复用）
@@ -94,6 +99,23 @@ class ApiError(Exception):
 
 def error_payload(code: str, message: str) -> dict:
     return {"error": {"code": code, "message": message}}
+
+
+# === API Key 脱敏防线（AC2）：杜绝任何明文密钥流入 stdout/stderr 日志 ===
+_SENSITIVE_KEY_RE = re.compile(r'(?i)("?api_?key"?\s*[:=]\s*")([^"]+)(")')
+
+
+def mask_api_key(api_key: str) -> str:
+    """将 API Key 掩码为 sk-***[后四位]，仅保留可辨识的前缀与末四位。"""
+    key = (api_key or "").strip()
+    if len(key) <= 7:
+        return "***"
+    return f"{key[:3]}***{key[-4:]}"
+
+
+def scrub_sensitive(text: str) -> str:
+    """正则 (?i)api_?key 捕获敏感字段并掩码其值，用于任何对外文本/日志。"""
+    return _SENSITIVE_KEY_RE.sub(lambda m: f"{m.group(1)}{mask_api_key(m.group(2))}{m.group(3)}", text)
 
 
 def resolve_allowed_base_urls() -> list[str]:
@@ -285,7 +307,7 @@ async def api_error_handler(_: Request, exc: ApiError):
 async def validation_error_handler(_: Request, exc: RequestValidationError):
     return JSONResponse(
         status_code=422,
-        content=error_payload("invalid_request", f"参数校验失败：{exc.errors()[0].get('msg', '请求参数不合法。')}"),
+        content=error_payload("invalid_request", scrub_sensitive(f"参数校验失败：{exc.errors()[0].get('msg', '请求参数不合法。')}")),
     )
 
 
@@ -545,3 +567,55 @@ async def stream_scene_text(data: SceneTextInput, request: Request):
             yield sse_event("error", {"code": code, "message": message})
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.post("/api/py/split-recommend")
+async def split_recommend(data: SplitRecommendInput, request: Request):
+    await ensure_rate_limit(request, "/api/py/split-recommend")
+    model = sanitize_text(data.model)
+    api_key = sanitize_text(data.apiKey)
+    validate_llm_creds(api_key, model, data.temperature)
+
+    # 截断到前 ~2 万字，控制单次结构化调用规模；保持与前端段落下标严格对齐。
+    paragraphs: list[str] = []
+    total = 0
+    for raw in data.paragraphs:
+        para = raw.strip()
+        if not para:
+            continue
+        if paragraphs and total + len(para) > MAX_SPLIT_RECOMMEND_CHARS:
+            break
+        paragraphs.append(para)
+        total += len(para)
+    if not paragraphs:
+        raise ApiError(status_code=400, code="invalid_request", message="正文内容不能为空。")
+
+    # AC2：日志一律使用脱敏后的 Key（sk-***[后四位]），严禁明文外泄。
+    logger.info(
+        "split_recommend ip=%s model=%s paragraphs=%s chars=%s key=%s",
+        get_client_ip(request), model, len(paragraphs), total, mask_api_key(api_key),
+    )
+
+    numbered = "\n".join(f"[{idx}] {p}" for idx, p in enumerate(paragraphs))
+    last_index = len(paragraphs) - 1
+    system_prompt = (
+        "你是一位资深的中文小说结构编辑。下面是一段“分章失败、被当作单一长章”的小说正文，"
+        "已按自然段拆分并以 [序号] 前缀编号（序号 0 基）。\n"
+        "请基于语义收束、场景转换、时间跳跃或视角切换，找出最合理的若干处“章节切分点”。\n"
+        "对每一处推荐给出：\n"
+        "1. splitParagraphIndex：在“该序号自然段之后”切开（此段归上半章，下一段进入下半章）；必须是输入中真实存在的序号。\n"
+        "2. suggestedTitle：切分出的“下半章”推荐标题（简洁、具体、贴合该段起始内容）。\n"
+        "3. reason：为何在此切分（一句话，具象克制）。\n"
+        "约束：按序号从小到大返回；只在确有清晰语义边界处推荐，宁缺毋滥；"
+        f"序号必须落在 0..{last_index} 范围内，且不要在最后一段（{last_index}）之后切分；"
+        "若全文确实没有明显边界，请返回空列表。\n"
+        + ANTI_SLOP_CONSTRAINT
+    )
+    user_prompt = f"小说名：{data.novelName or '（未命名）'}\n\n【按自然段编号的正文】\n{numbered}"
+    return await run_structured(
+        api_key=api_key, base_url=data.baseUrl, model=model,
+        response_model=SplitRecommendResponse,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        temperature=data.temperature, request=request, label="split_recommend",
+        instructor_retries=1,
+    )

@@ -151,3 +151,36 @@ class SceneTextInput(BaseModel):
     baseUrl: str = Field(..., min_length=1, max_length=512)
     model: str = Field(..., min_length=1, max_length=200)
     temperature: float = Field(0.7, ge=0.0, le=1.5)
+
+
+# ============================================================
+# 阶段 1.5：JIT 智能语义拆分推荐（分章失败的巨型单章 → 推荐裁切点）
+# 注：沿用本文件既有约定——字段直接手写 camelCase，不用 alias_generator。
+# ============================================================
+MAX_SPLIT_RECOMMEND_PARAGRAPHS = 4000
+
+
+class SplitRecommendation(BaseModel):
+    splitParagraphIndex: int = Field(
+        ...,
+        ge=0,
+        description="建议在该自然段“之后”切分；0 基索引，对应传入 paragraphs 列表的下标。",
+    )
+    suggestedTitle: str = Field(..., description="切分出的“下半章”推荐标题（简洁、具体、贴合内容）。")
+    reason: str = Field(..., description="为何建议在此切分（一句话，具象、克制、无陈词滥调）。")
+
+
+class SplitRecommendResponse(BaseModel):
+    recommendations: List[SplitRecommendation] = Field(
+        default_factory=list,
+        description="推荐裁切点列表，按段落先后顺序排列；若无明显语义边界则返回空列表。",
+    )
+
+
+class SplitRecommendInput(BaseModel):
+    paragraphs: List[str] = Field(..., min_length=1, max_length=MAX_SPLIT_RECOMMEND_PARAGRAPHS)
+    novelName: str = Field("", max_length=300)
+    apiKey: str = Field(..., min_length=1, max_length=512)
+    baseUrl: str = Field(..., min_length=1, max_length=512)
+    model: str = Field(..., min_length=1, max_length=200)
+    temperature: float = Field(0.7, ge=0.0, le=1.5)

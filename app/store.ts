@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import {
   createDefaultProviderProfiles,
   isProviderId,
@@ -9,6 +9,45 @@ import {
 
 const STORE_VERSION = 3;
 const DEFAULT_TEMPERATURE = 0.7;
+
+function xorEncryptDecrypt(input: string): string {
+  const isAscii = /^[\x00-\x7F]*$/.test(input);
+  if (!isAscii) return input; // Safe fallback for non-ASCII key entries
+
+  const key = 'dna_crystal_key_mask_99';
+  let output = '';
+  for (let i = 0; i < input.length; i++) {
+    output += String.fromCharCode(input.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+  }
+  return output;
+}
+
+// Sentinel marking an obfuscated key at rest. Lets us distinguish ciphertext
+// from legacy plaintext on read (so migration is lossless and verifiable).
+const KEY_CIPHER_PREFIX = 'x1:';
+
+export function encryptKey(key: string): string {
+  if (!key) return '';
+  const xored = xorEncryptDecrypt(key);
+  const b64 = typeof btoa !== 'undefined'
+    ? btoa(xored)
+    : Buffer.from(xored, 'binary').toString('base64');
+  return KEY_CIPHER_PREFIX + b64;
+}
+
+export function decryptKey(encrypted: string): string {
+  if (!encrypted) return '';
+  if (!encrypted.startsWith(KEY_CIPHER_PREFIX)) return encrypted; // legacy plaintext — leave as-is
+  const b64 = encrypted.slice(KEY_CIPHER_PREFIX.length);
+  try {
+    const raw = typeof atob !== 'undefined'
+      ? atob(b64)
+      : Buffer.from(b64, 'base64').toString('binary');
+    return xorEncryptDecrypt(raw);
+  } catch {
+    return encrypted;
+  }
+}
 
 export interface LLMConfig {
   activeProvider: ProviderId;
@@ -27,6 +66,11 @@ interface AppState {
   selectedNovelId: string | null;
   workshopOpen: boolean; // creative fusion workshop view
   manageMode: boolean; // show NovelUploader (chapters + re-split) for the selected novel
+  sequencingGear: 'safe' | 'balanced' | 'speed';
+  setSequencingGear: (gear: 'safe' | 'balanced' | 'speed') => void;
+  shouldReduceEarly: boolean;
+  setShouldReduceEarly: (reduce: boolean) => void;
+  resetSequencingState: () => void;
   setActiveProvider: (provider: ProviderId) => void;
   updateActiveProviderProfile: (patch: Partial<ProviderProfile>) => void;
   setSelectedNovelId: (id: string | null) => void;
@@ -114,6 +158,11 @@ export const useAppStore = create<AppState>()(
       selectedNovelId: null,
       workshopOpen: false,
       manageMode: false,
+      sequencingGear: 'balanced',
+      shouldReduceEarly: false,
+      setSequencingGear: (gear) => set({ sequencingGear: gear }),
+      setShouldReduceEarly: (reduce) => set({ shouldReduceEarly: reduce }),
+      resetSequencingState: () => set({ shouldReduceEarly: false }),
       setActiveProvider: (provider) =>
         set((state) => {
           if (provider === state.llmConfig.activeProvider) return state;
@@ -150,14 +199,25 @@ export const useAppStore = create<AppState>()(
     {
       name: 'novel-fusion-store', // name of the item in the storage (must be unique)
       version: STORE_VERSION,
+      // AC2: obfuscate every `apiKey` on its way to localStorage and restore it on read.
+      // In-memory state always holds the plaintext key, so llmClient.ts needs no changes.
+      storage: createJSONStorage(() => localStorage, {
+        replacer: (key, value) =>
+          key === 'apiKey' && typeof value === 'string' && value ? encryptKey(value) : value,
+        reviver: (key, value) =>
+          key === 'apiKey' && typeof value === 'string' && value ? decryptKey(value) : value,
+      }),
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState;
         const state = persistedState as Record<string, unknown>;
+        const gear = state.sequencingGear;
         return {
           llmConfig: normalizeLLMConfig(state.llmConfig),
           selectedNovelId: typeof state.selectedNovelId === 'string' ? state.selectedNovelId : null,
           workshopOpen: false,
           manageMode: false,
+          sequencingGear: (gear === 'safe' || gear === 'balanced' || gear === 'speed') ? gear : 'balanced',
+          shouldReduceEarly: false,
         };
       },
     }

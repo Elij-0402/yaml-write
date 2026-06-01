@@ -97,6 +97,7 @@ export interface Chapter {
   name: string;
   wordCount: number;
   content: string;
+  contentSha256?: string; // 增量测序校验哈希；由 Story 1.2 写入 / 2.2 精测时按需填充
   status: 'unparsed' | 'parsing' | 'done' | 'error';
   analysis?: ChapterAnalysis; // deprecated since v5 — replaced by mapSummary
   errorMsg?: string;
@@ -108,8 +109,8 @@ export interface Chapter {
 }
 
 class NovelFusionDB extends Dexie {
-  novels!: Table<Novel>;
-  chapters!: Table<Chapter>;
+  novels!: Table<Novel, string>;
+  chapters!: Table<Chapter, string>;
 
   constructor() {
     super('NovelFusionDB');
@@ -235,6 +236,16 @@ class NovelFusionDB extends Dexie {
         await tx.table('chapters').toCollection().modify((chapter: Partial<Chapter>) => {
           chapter.mapStatus = chapter.mapStatus || 'pending';
         });
+      });
+    // v6: 新增 Chapter.contentSha256（可选、非索引）——遵循仓库铁律为形状变更显式登记版本。
+    // 索引串与 v5 完全一致；contentSha256 非索引，故不出现在 stores 串中。
+    this.version(6)
+      .stores({
+        novels: 'id, name, createdAt, splitStatus, analysisStatus',
+        chapters: 'id, novelId, chapterIndex, status, mapStatus',
+      })
+      .upgrade(async () => {
+        /* contentSha256 为可选字段，存量章节留空，由后续写入(1.2)/精测(2.2)按需回填；此处严禁全量重算以免启动时阻塞主线程 */
       });
   }
 }
