@@ -57,6 +57,74 @@ const BLOCKS: { key: BlockKey; label: string }[] = [
   { key: 'narrativeTone', label: '叙事' },
 ];
 const COLLISION_PARTICLES = 16;
+const ANTI_SLOP_PHRASES = [
+  '命运的齿轮',
+  '那一刻',
+  '逆天改命',
+  '眼神变得坚定',
+  '嘴角勾起一抹弧度',
+  '仿佛整个世界都安静了',
+  '空气仿佛凝固',
+  '心中一紧',
+  '缓缓睁开眼',
+  '不知为何',
+];
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Frontend filter is only a fallback guardrail; source-of-truth constraints remain in backend prompts.
+const applyAntiSlopFallback = (text: string): string => {
+  return ANTI_SLOP_PHRASES.reduce((acc, phrase, idx) => {
+    const reg = new RegExp(escapeRegExp(phrase), 'g');
+    return acc.replace(reg, `[已过滤陈词滥调#${idx + 1}]`);
+  }, text);
+};
+
+const STORYBOARD_BLOCK_RE =
+  /\[SCENE-(\d+)\]\s*title:\s*([\s\S]*?)\s*plot:\s*([\s\S]*?)\s*tension:\s*([\s\S]*?)\s*visual:\s*([\s\S]*?)\s*\[\/SCENE-\1\]/gi;
+
+const parseStoryboardStreamText = (raw: string): StoryboardScene[] => {
+  const scenes: StoryboardScene[] = [];
+  STORYBOARD_BLOCK_RE.lastIndex = 0;
+  let match: RegExpExecArray | null = STORYBOARD_BLOCK_RE.exec(raw);
+  while (match) {
+    scenes.push({
+      sceneNumber: Number(match[1] || scenes.length + 1),
+      sceneTitle: applyAntiSlopFallback(match[2]?.trim() || `分镜 ${match[1]}`),
+      plotOutline: applyAntiSlopFallback(match[3]?.trim() || ''),
+      tensionLevel: applyAntiSlopFallback(match[4]?.trim() || ''),
+      visualCues: applyAntiSlopFallback(match[5]?.trim() || ''),
+    });
+    match = STORYBOARD_BLOCK_RE.exec(raw);
+  }
+  return scenes
+    .filter((scene) => scene.sceneTitle && scene.plotOutline)
+    .sort((a, b) => a.sceneNumber - b.sceneNumber);
+};
+
+const normalizeScenesPayload = (value: unknown): StoryboardScene[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const scene = item as Record<string, unknown>;
+      const sceneNumber = Number(scene.sceneNumber);
+      const sceneTitle = typeof scene.sceneTitle === 'string' ? scene.sceneTitle : '';
+      const plotOutline = typeof scene.plotOutline === 'string' ? scene.plotOutline : '';
+      const tensionLevel = typeof scene.tensionLevel === 'string' ? scene.tensionLevel : '';
+      const visualCues = typeof scene.visualCues === 'string' ? scene.visualCues : '';
+      if (!Number.isFinite(sceneNumber) || !sceneTitle || !plotOutline) return null;
+      return {
+        sceneNumber,
+        sceneTitle: applyAntiSlopFallback(sceneTitle),
+        plotOutline: applyAntiSlopFallback(plotOutline),
+        tensionLevel: applyAntiSlopFallback(tensionLevel),
+        visualCues: applyAntiSlopFallback(visualCues),
+      };
+    })
+    .filter((scene): scene is StoryboardScene => Boolean(scene))
+    .sort((a, b) => a.sceneNumber - b.sceneNumber);
+};
 
 export default function FusionWorkshop() {
   const { setSelectedNovelId, setWorkshopOpen, fusionBias, setFusionBias } = useAppStore((state) => ({
@@ -87,9 +155,11 @@ export default function FusionWorkshop() {
   const [command, setCommand] = useState('');
   const [tweaking, setTweaking] = useState(false);
   const [storyboard, setStoryboard] = useState<StoryboardScene[]>([]);
+  const [storyboardStreamText, setStoryboardStreamText] = useState('');
   const [generatingBoard, setGeneratingBoard] = useState(false);
   const [sceneTexts, setSceneTexts] = useState<Record<number, string>>({});
   const [streamingScene, setStreamingScene] = useState<number | null>(null);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [collisionPhase, setCollisionPhase] = useState<'idle' | 'igniting' | 'charging'>('idle');
   const [showParticles, setShowParticles] = useState(false);
   const [directionsRevealNonce, setDirectionsRevealNonce] = useState(0);
@@ -115,6 +185,19 @@ export default function FusionWorkshop() {
       mountedRef.current = false;
       clearCollisionTimer();
     };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const sync = () => setPrefersReducedMotion(mediaQuery.matches);
+    sync();
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', sync);
+      return () => mediaQuery.removeEventListener('change', sync);
+    }
+    mediaQuery.addListener(sync);
+    return () => mediaQuery.removeListener(sync);
   }, []);
 
   const guardLlm = (): boolean => {
@@ -197,6 +280,7 @@ export default function FusionWorkshop() {
       narrativeTone: direction.narrativeTone,
     });
     setStoryboard([]);
+    setStoryboardStreamText('');
     setSceneTexts({});
     setStep('creator');
   };
@@ -232,18 +316,37 @@ export default function FusionWorkshop() {
   const selectedDirection = () => ({ title: directionTitle, ...blocks });
 
   const generateStoryboard = async () => {
-    if (!guardLlm()) return;
+    if (!guardLlm() || generatingBoard || streamingScene !== null) return;
     setError(null);
     setGeneratingBoard(true);
+    setStoryboard([]);
+    setSceneTexts({});
+    setStoryboardStreamText('');
+    let streamedText = '';
+    let hasParsedScenes = false;
     try {
-      const response = await postWithLlmConfig('/api/py/generate-storyboard', {
-        selectedDirection: selectedDirection(),
-        sceneCount: 3,
-      });
-      if (!response.ok) throw new Error(await readApiErrorMessage(response));
-      const data = (await response.json()) as { scenes: StoryboardScene[] };
-      setStoryboard(data.scenes || []);
-      setSceneTexts({});
+      await streamSse(
+        '/api/py/stream-storyboard',
+        { selectedDirection: selectedDirection(), sceneCount: 3 },
+        {
+          onDelta: (text) => {
+            streamedText += text;
+            setStoryboardStreamText((prev) => prev + applyAntiSlopFallback(text));
+          },
+          onDone: (payload) => {
+            const fromDone = normalizeScenesPayload(payload.scenes);
+            const fromText = parseStoryboardStreamText(streamedText);
+            const finalScenes = fromDone.length > 0 ? fromDone : fromText;
+            if (finalScenes.length > 0) {
+              hasParsedScenes = true;
+              setStoryboard(finalScenes);
+            }
+          },
+        }
+      );
+      if (!hasParsedScenes && parseStoryboardStreamText(streamedText).length === 0) {
+        setError('故事板流式完成，但未能解析分镜结构，请重试。');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '生成故事板失败');
     } finally {
@@ -264,7 +367,13 @@ export default function FusionWorkshop() {
       await streamSse(
         '/api/py/stream-scene-text',
         { selectedDirection: selectedDirection(), currentScene: scene, precedingTexts },
-        { onDelta: (text) => setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + text })) }
+        {
+          onDelta: (text) =>
+            setSceneTexts((prev) => ({
+              ...prev,
+              [num]: (prev[num] || '') + applyAntiSlopFallback(text),
+            })),
+        }
       );
     } catch (err) {
       setSceneTexts((prev) => ({
@@ -690,20 +799,49 @@ export default function FusionWorkshop() {
         </button>
       </div>
 
+      <p className="sr-only" aria-live="polite">
+        {generatingBoard
+          ? '故事板生成中'
+          : streamingScene !== null
+            ? `正在流式生成第 ${streamingScene} 分镜正文`
+            : error
+              ? `发生错误：${error}`
+              : '创作流程就绪'}
+      </p>
+
       {error && <p className="text-sm text-red-400">{error}</p>}
 
       {/* Storyboard */}
       <div className="space-y-4">
+        <style>{`
+          .storyboard-stream-panel {
+            transition: opacity 100ms ease-out;
+          }
+        `}</style>
         <div className="flex items-center justify-between">
           <span className="text-sm">故事板</span>
           <button
             onClick={generateStoryboard}
-            disabled={generatingBoard}
+            disabled={generatingBoard || streamingScene !== null}
             className="text-sm text-secondary hover:text-primary disabled:text-muted"
           >
-            {generatingBoard ? '生成中...' : '生成'}
+            {generatingBoard ? '流式生成中...' : '生成故事板'}
           </button>
         </div>
+
+        {(generatingBoard || storyboardStreamText) && (
+          <div
+            aria-live="polite"
+            className={`storyboard-stream-panel border border-default p-3 text-sm text-secondary leading-relaxed whitespace-pre-wrap ${
+              prefersReducedMotion ? 'opacity-95' : 'opacity-100'
+            }`}
+          >
+            {storyboardStreamText || '正在构建故事板流...'}
+            {generatingBoard && !prefersReducedMotion && (
+              <span className="inline-block w-1 h-3 bg-primary animate-pulse ml-0.5" />
+            )}
+          </div>
+        )}
 
         {storyboard.length > 0 && (
           <div className="space-y-4">
@@ -719,7 +857,9 @@ export default function FusionWorkshop() {
                   <div className="mt-4 space-y-2">
                     <div className="max-h-48 overflow-y-auto border border-default p-3 text-sm text-secondary leading-relaxed whitespace-pre-wrap">
                       {sceneTexts[scene.sceneNumber]}
-                      {streamingScene === scene.sceneNumber && <span className="inline-block w-1 h-3 bg-primary animate-pulse ml-0.5" />}
+                      {streamingScene === scene.sceneNumber && (
+                        <span className={`inline-block w-1 h-3 bg-primary ml-0.5 ${prefersReducedMotion ? 'opacity-80' : 'animate-pulse'}`} />
+                      )}
                     </div>
                     <div className="flex gap-4 text-xs">
                       <button onClick={() => copyScene(scene.sceneNumber)} className="text-muted hover:text-secondary">复制</button>

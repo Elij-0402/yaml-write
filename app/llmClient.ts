@@ -125,6 +125,8 @@ interface SseEventPayload {
   text?: string;
   code?: string;
   message?: string;
+  ok?: boolean;
+  [key: string]: unknown;
 }
 
 function parseSseBuffer(buffer: string): { events: { event: string; payload: SseEventPayload }[]; rest: string } {
@@ -156,6 +158,7 @@ function parseSseBuffer(buffer: string): { events: { event: string; payload: Sse
 
 export interface StreamSseHandlers {
   onDelta: (text: string) => void;
+  onDone?: (payload: SseEventPayload) => void;
   signal?: AbortSignal;
 }
 
@@ -200,6 +203,7 @@ export async function streamSse<T extends Record<string, unknown>>(
         throw new Error(event.payload.message || '流式生成失败');
       } else if (event.event === 'done') {
         gotDoneEvent = true;
+        handlers.onDone?.(event.payload);
       }
     }
   }
