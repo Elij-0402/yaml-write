@@ -4,6 +4,7 @@ import { db, type Chapter, type Novel, type SplitMeta, type SplitStrategyId } fr
 import { useAppStore } from '../app/store';
 import { listProviderMetas, getProviderMeta } from '../app/llmProviders';
 import { getLlmConfigError, postWithLlmConfig, readApiErrorMessage } from '../app/llmClient';
+import { runDnaExtraction } from '../app/dnaEngine';
 
 const MAX_UPLOAD_SIZE_MB = 50;
 const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
@@ -99,10 +100,12 @@ export default function NovelUploader() {
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   const [selectedChapterIds, setSelectedChapterIds] = useState<Set<string>>(new Set());
   const [processing, setProcessing] = useState(false);
+  const [localExtractingMap, setLocalExtractingMap] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState<{
     show: boolean;
     message: string;
     countdown: number;
+    type?: 'stitch' | 'success';
   } | null>(null);
   const [showBulkModal, setShowBulkModal] = useState(false);
 
@@ -131,6 +134,7 @@ export default function NovelUploader() {
     setSplittingIndex(null);
     setIsCrystalOpen(false);
     setSplitRecommendations([]);
+    setLocalExtractingMap({});
   }, [selectedNovelId]);
 
   useEffect(() => {
@@ -303,15 +307,19 @@ export default function NovelUploader() {
 
       await new Promise((resolve) => setTimeout(resolve, 200));
 
+      const mergedContent = prev.content + '\n\n' + curr.content;
+      const sha = await computeSha256(mergedContent);
+
       await db.transaction('rw', [db.chapters, db.novels], async () => {
         const dbPrev = await db.chapters.get(prev.id);
         const dbCurr = await db.chapters.get(curr.id);
         if (!dbPrev || !dbCurr) return;
 
-        const mergedContent = dbPrev.content + '\n\n' + dbCurr.content;
         await db.chapters.update(prev.id, {
           content: mergedContent,
           wordCount: mergedContent.length,
+          contentSha256: sha,
+          mapStatus: 'pending'
         });
 
         await db.chapters.delete(curr.id);
@@ -344,6 +352,7 @@ export default function NovelUploader() {
         show: true,
         message: `已将章节【${curr.name}】合并至上一章`,
         countdown: 6000,
+        type: 'stitch',
       });
 
     } catch (err: unknown) {
@@ -433,6 +442,29 @@ export default function NovelUploader() {
 
       await new Promise((resolve) => setTimeout(resolve, 200));
 
+      const mergedMap = new Map<string, { content: string; sha: string }>();
+      let lastKeepMem: Chapter | null = null;
+
+      for (const ch of chapters) {
+        const isSelected = selectedChapterIds.has(ch.id) && ch.id !== chapters[0]?.id;
+        if (!isSelected) {
+          lastKeepMem = ch;
+        } else if (lastKeepMem) {
+          const currentData: { content: string; sha: string } = mergedMap.get(lastKeepMem.id) || { content: lastKeepMem.content, sha: '' };
+          const newContent: string = currentData.content + '\n\n' + ch.content;
+          mergedMap.set(lastKeepMem.id, { content: newContent, sha: '' });
+          lastKeepMem = Object.assign({}, lastKeepMem, { content: newContent }) as Chapter;
+        }
+      }
+
+      const mergedKeys = Array.from(mergedMap.keys());
+      for (const key of mergedKeys) {
+        const value = mergedMap.get(key);
+        if (value) {
+          value.sha = await computeSha256(value.content);
+        }
+      }
+
       await db.transaction('rw', [db.chapters, db.novels], async () => {
         let lastKeepDb: Chapter | null = null;
 
@@ -443,13 +475,17 @@ export default function NovelUploader() {
           } else if (lastKeepDb) {
             const dbCurr = await db.chapters.get(ch.id);
             if (dbCurr) {
-              const mergedContent = lastKeepDb.content + '\n\n' + dbCurr.content;
-              await db.chapters.update(lastKeepDb.id, {
-                content: mergedContent,
-                wordCount: mergedContent.length,
-              });
-              lastKeepDb.content = mergedContent;
-              lastKeepDb.wordCount = mergedContent.length;
+              const mergedData = mergedMap.get(lastKeepDb.id);
+              if (mergedData) {
+                await db.chapters.update(lastKeepDb.id, {
+                  content: mergedData.content,
+                  wordCount: mergedData.content.length,
+                  contentSha256: mergedData.sha,
+                  mapStatus: 'pending'
+                });
+                lastKeepDb.content = mergedData.content;
+                lastKeepDb.wordCount = mergedData.content.length;
+              }
 
               await db.chapters.delete(ch.id);
             }
@@ -480,12 +516,80 @@ export default function NovelUploader() {
         show: true,
         message: `已批量缝合选中的 ${sortedSelected.length} 个章节`,
         countdown: 6000,
+        type: 'stitch',
       });
 
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : '批量合并操作失败');
     } finally {
       await new Promise((resolve) => setTimeout(resolve, 300));
+      setProcessing(false);
+    }
+  };
+
+  const handleSingleChapterExtract = async (chapterId: string) => {
+    if (processing || !selectedNovelId) return;
+
+    if (activeNovel?.analysisStatus === 'mapping' || activeNovel?.analysisStatus === 'reducing') {
+      setToast({
+        show: true,
+        message: '已有一个全局分析任务在后台运行中，请等待其完成后再进行单章精测。',
+        countdown: 6000,
+      });
+      return;
+    }
+
+    if (!crystalReady || getLlmConfigError(llmConfig)) {
+      setIsCrystalOpen(true);
+      return;
+    }
+
+    const chapter = chapters.find((c) => c.id === chapterId);
+    if (!chapter) return;
+
+    if (chapter.wordCount > 30000) {
+      setToast({
+        show: true,
+        message: '本章字数已超过 30,000 字上限，为了保护大模型上下文及本地 IndexedDB 性能，请先用剪刀裁剪成小章。',
+        countdown: 6000,
+      });
+      return;
+    }
+
+    setProcessing(true);
+    setLocalExtractingMap((prev) => ({ ...prev, [chapterId]: true }));
+    setErrorMsg(null);
+
+    const controller = new AbortController();
+
+    try {
+      await runDnaExtraction(selectedNovelId, {
+        targetChapterId: chapterId,
+        signal: controller.signal,
+      });
+
+      setToast({
+        show: true,
+        message: '本章基因精测成功，小说全书 DNA 已增量固化重组。',
+        countdown: 6000,
+        type: 'success',
+      });
+    } catch (err: unknown) {
+      const isAbort = err instanceof Error && err.name === 'AbortError';
+      if (isAbort) {
+        await db.chapters.update(chapterId, {
+          mapStatus: 'pending',
+          errorMsg: undefined,
+        });
+      } else {
+        await db.chapters.update(chapterId, {
+          mapStatus: 'error',
+          errorMsg: err instanceof Error ? err.message : String(err),
+        });
+        setErrorMsg(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      setLocalExtractingMap((prev) => ({ ...prev, [chapterId]: false }));
       setProcessing(false);
     }
   };
@@ -1312,6 +1416,67 @@ export default function NovelUploader() {
                     <span className={`truncate ${textClass}`}>{chapter.name}</span>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0 pl-2">
+                    {/* DNA Sequencing State Badge or Hover Action */}
+                    { (chapter.mapStatus === 'mapping' || localExtractingMap[chapter.id]) ? (
+                      <div className="flex items-center gap-1 text-cyan-400 font-mono text-[10px]">
+                        <svg className="w-3 h-3 animate-spin text-cyan-400" viewBox="0 0 100 100">
+                          <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="12" strokeDasharray="160 80" fill="none" />
+                        </svg>
+                        <span>[🧬 测序中...]</span>
+                      </div>
+                    ) : chapter.mapStatus === 'done' ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" title="已完成 DNA 提炼">
+                          🧬
+                        </span>
+                        <button
+                          disabled={processing}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSingleChapterExtract(chapter.id);
+                          }}
+                          className="hidden group-hover:flex items-center gap-0.5 rounded bg-[#06b6d4]/10 hover:bg-[#06b6d4]/20 border border-[#06b6d4]/30 px-1 py-0.5 text-[9px] text-[#67e8f9] transition-all"
+                          title="重新精测本章"
+                        >
+                          🧬 精测
+                        </button>
+                      </div>
+                    ) : chapter.mapStatus === 'error' ? (
+                      <div className="flex items-center gap-1.5">
+                        <div className="relative group/error shrink-0">
+                          <span className="text-red-500 cursor-help" title={chapter.errorMsg || '解析失败'}>⚠️</span>
+                          {chapter.errorMsg && (
+                            <div className="absolute bottom-full right-0 mb-1 hidden group-hover/error:block w-48 p-2 rounded-lg bg-[#0c0e20]/90 border border-red-500/30 backdrop-blur-md shadow-xl text-[10px] text-red-200 z-50 whitespace-normal break-all">
+                              {chapter.errorMsg}
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          disabled={processing}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSingleChapterExtract(chapter.id);
+                          }}
+                          className="hidden group-hover:flex items-center gap-0.5 rounded bg-[#06b6d4]/10 hover:bg-[#06b6d4]/20 border border-[#06b6d4]/30 px-1 py-0.5 text-[9px] text-[#67e8f9] transition-all"
+                          title="重试精测本章"
+                        >
+                          🧬 精测
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        disabled={processing}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSingleChapterExtract(chapter.id);
+                        }}
+                        className="hidden group-hover:flex items-center gap-1 rounded bg-[#06b6d4]/10 hover:bg-[#06b6d4]/20 border border-[#06b6d4]/30 px-1.5 py-0.5 text-[10px] text-[#67e8f9] transition-all"
+                        title="对本章单独执行 [🧬 精测]"
+                      >
+                        🧬 精测
+                      </button>
+                    )}
+
                     {warningType === 'short' && (
                       <button
                         disabled={chapter.id === chapters[0]?.id || processing}
@@ -1856,22 +2021,32 @@ export default function NovelUploader() {
         </div>
       </div>
 
-      {/* Undo Toast component (AC4, AC5) */}
+      {/* Undo/Success Toast component (AC4, AC5) */}
       {toast && toast.show && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 flex flex-col p-4 rounded-xl bg-[#0c0e20]/90 border border-[#5e6ad2]/30 backdrop-blur-md shadow-2xl text-xs text-slate-200 min-w-[320px] max-w-md animate-[fadeIn_150ms_ease-out]">
+        <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-50 flex flex-col p-4 rounded-xl backdrop-blur-md shadow-2xl text-xs min-w-[320px] max-w-md animate-[fadeIn_150ms_ease-out] ${
+          toast.type === 'success'
+            ? 'bg-[#0c0e20]/95 border border-[#10b981]/30 text-emerald-100 shadow-[0_0_20px_rgba(16,185,129,0.15)]'
+            : 'bg-[#0c0e20]/90 border border-[#5e6ad2]/30 text-slate-200 shadow-[0_0_20px_rgba(94,106,210,0.15)]'
+        }`}>
           <div className="flex items-center justify-between gap-4">
-            <span className="font-medium text-slate-300">{toast.message}</span>
-            <button
-              onClick={handleUndo}
-              className="text-[#06b6d4] hover:text-[#5e6ad2] font-semibold flex items-center gap-1 transition-colors px-2 py-1 rounded hover:bg-[#06b6d4]/10 shrink-0"
-              aria-label="撤销操作"
-            >
-              撤销 ↩️
-            </button>
+            <span className={`font-medium ${toast.type === 'success' ? 'text-emerald-300' : 'text-slate-300'}`}>
+              {toast.message}
+            </span>
+            {toast.type === 'stitch' && (
+              <button
+                onClick={handleUndo}
+                className="text-[#06b6d4] hover:text-[#5e6ad2] font-semibold flex items-center gap-1 transition-colors px-2 py-1 rounded hover:bg-[#06b6d4]/10 shrink-0"
+                aria-label="撤销操作"
+              >
+                撤销 ↩️
+              </button>
+            )}
           </div>
           <div className="mt-2.5 w-full bg-[#1b1e36] h-1 rounded-full overflow-hidden">
             <div
-              className="bg-[#06b6d4] h-full transition-all duration-100 ease-linear"
+              className={`h-full transition-all duration-100 ease-linear ${
+                toast.type === 'success' ? 'bg-[#10b981]' : 'bg-[#06b6d4]'
+              }`}
               style={{ width: `${(toast.countdown / 6000) * 100}%` }}
             />
           </div>

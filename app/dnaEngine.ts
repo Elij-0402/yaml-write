@@ -19,7 +19,36 @@ async function mapOneChapter(chapter: Chapter, signal: AbortSignal): Promise<voi
     throw new Error(await readApiErrorMessage(response));
   }
   const summary = (await response.json()) as ChapterMapSummary;
-  await db.chapters.update(chapter.id, { mapStatus: 'done', mapSummary: summary, errorMsg: undefined });
+  await db.chapters.update(chapter.id, { mapStatus: 'done', mapSummary: summary, mapCompletedAt: Date.now(), errorMsg: undefined });
+}
+
+async function computeSha256(text: string): Promise<string> {
+  const msgBuffer = new TextEncoder().encode(text);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+export async function ensureIncrementalHashes(
+  novelId: string,
+  opts: { onlyChapterId?: string; signal?: AbortSignal } = {}
+): Promise<void> {
+  const { onlyChapterId, signal } = opts;
+  const chapters = await db.chapters.where('novelId').equals(novelId).toArray();
+  for (const c of chapters) {
+    if (signal?.aborted) return;
+    // Single-chapter 精测 only self-heals the target chapter, so other done
+    // chapters keep their cached summaries for the Reduce phase (AC3).
+    if (onlyChapterId && c.id !== onlyChapterId) continue;
+    const currentSha = c.contentSha256;
+    const computedSha = await computeSha256(c.content);
+    if (!currentSha || currentSha !== computedSha) {
+      await db.chapters.update(c.id, {
+        contentSha256: computedSha,
+        mapStatus: 'pending'
+      });
+    }
+  }
 }
 
 /**
@@ -28,11 +57,13 @@ async function mapOneChapter(chapter: Chapter, signal: AbortSignal): Promise<voi
  */
 export async function runDnaExtraction(
   novelId: string,
-  opts: { limit?: number; signal: AbortSignal }
+  opts: { limit?: number; targetChapterId?: string; signal: AbortSignal }
 ): Promise<void> {
-  const { limit, signal } = opts;
+  const { limit, targetChapterId, signal } = opts;
 
   try {
+    await ensureIncrementalHashes(novelId, { onlyChapterId: targetChapterId, signal });
+
     const all = await db.chapters.where('novelId').equals(novelId).sortBy('chapterIndex');
     const scope = typeof limit === 'number' ? all.slice(0, limit) : all;
     if (scope.length === 0) {
@@ -40,18 +71,47 @@ export async function runDnaExtraction(
       throw new Error('该小说还没有切分出章节，请先切分。');
     }
 
+    let targets: Chapter[] = [];
+    if (targetChapterId) {
+      const targetCh = scope.find((c) => c.id === targetChapterId);
+      if (!targetCh) {
+        throw new Error('未找到指定章节。');
+      }
+      if (targetCh.wordCount > 30000) {
+        throw new Error('本章字数已超过 30,000 字上限，为了保护大模型上下文及本地 IndexedDB 性能，请先用剪刀裁剪成小章。');
+      }
+      targets = [targetCh];
+    } else {
+      const overlimitChapters = scope.filter((c) => c.wordCount > 30000);
+      if (overlimitChapters.length > 0) {
+        throw new Error(`章节「${overlimitChapters[0].name}」字数已超过 30,000 字上限，为了保护大模型上下文及本地 IndexedDB 性能，请先用剪刀裁剪成小章。`);
+      }
+      targets = scope.filter((c) => c.mapStatus !== 'done');
+    }
+
     const doneCount = scope.filter((c) => c.mapStatus === 'done').length;
+    // Single-chapter 精测 reports progress for just the targeted chapter, not the whole scope.
+    const progressTotal = targetChapterId ? targets.length : scope.length;
+    const progressBase = targetChapterId ? 0 : doneCount;
     await db.novels.update(novelId, {
       analysisStatus: 'mapping',
-      mapProgress: { total: scope.length, current: doneCount },
+      mapProgress: { total: progressTotal, current: progressBase },
     });
-
-    // --- Map phase: concurrency-limited worker pool over not-yet-done chapters ---
-    const targets = scope.filter((c) => c.mapStatus !== 'done');
+    
+    // Linked abort controller for the mapping phase to support immediate soft-abort on early reduce
+    const mappingAbortController = new AbortController();
+    const linkedSignal = mappingAbortController.signal;
+    
+    const onParentAbort = () => {
+      mappingAbortController.abort();
+    };
+    if (signal) {
+      signal.addEventListener('abort', onParentAbort);
+    }
     
     let activeWorkers = 0;
     let nextIndex = 0;
-    let completed = doneCount;
+    let completed = progressBase;
     let failures = 0;
 
     const getConcurrencyLimit = () => {
@@ -67,13 +127,13 @@ export async function runDnaExtraction(
     });
 
     const checkFinished = () => {
-      if (activeWorkers === 0 && (nextIndex >= targets.length || signal.aborted || useAppStore.getState().shouldReduceEarly)) {
+      if (activeWorkers === 0 && (nextIndex >= targets.length || linkedSignal.aborted || useAppStore.getState().shouldReduceEarly)) {
         resolveMapPhase?.();
       }
     };
 
     const runWorker = async () => {
-      while (!signal.aborted) {
+      while (!linkedSignal.aborted) {
         if (useAppStore.getState().shouldReduceEarly) {
           activeWorkers--;
           checkFinished();
@@ -97,11 +157,15 @@ export async function runDnaExtraction(
         const chapter = targets[i];
         try {
           await db.chapters.update(chapter.id, { mapStatus: 'mapping' });
-          await mapOneChapter(chapter, signal);
+          await mapOneChapter(chapter, linkedSignal);
+          // O(1) atomic increment instead of re-querying + sorting every chapter per completion
           completed += 1;
-          await db.novels.update(novelId, { mapProgress: { total: scope.length, current: completed } });
+          await db.novels.update(novelId, { mapProgress: { total: progressTotal, current: completed } });
         } catch (err) {
-          if (signal.aborted) {
+          if (linkedSignal.aborted) {
+            // Roll back the in-flight chapter so it isn't left stuck in 'mapping'
+            // (covers both plain pause and early-reduce); it re-analyzes next run.
+            await db.chapters.update(chapter.id, { mapStatus: 'pending' });
             activeWorkers--;
             checkFinished();
             return;
@@ -121,7 +185,7 @@ export async function runDnaExtraction(
 
     const spawnWorkersIfNeeded = () => {
       const currentLimit = getConcurrencyLimit();
-      while (activeWorkers < currentLimit && nextIndex < targets.length && !signal.aborted && !useAppStore.getState().shouldReduceEarly) {
+      while (activeWorkers < currentLimit && nextIndex < targets.length && !linkedSignal.aborted && !useAppStore.getState().shouldReduceEarly) {
         activeWorkers++;
         runWorker();
       }
@@ -136,7 +200,11 @@ export async function runDnaExtraction(
       if (state.sequencingGear !== lastGear || state.shouldReduceEarly !== lastReduce) {
         lastGear = state.sequencingGear;
         lastReduce = state.shouldReduceEarly;
-        spawnWorkersIfNeeded();
+        if (state.shouldReduceEarly) {
+          mappingAbortController.abort();
+        } else {
+          spawnWorkersIfNeeded();
+        }
       }
     });
 
@@ -147,6 +215,9 @@ export async function runDnaExtraction(
       isReduceEarly = useAppStore.getState().shouldReduceEarly;
     } finally {
       unsubscribe();
+      if (signal) {
+        signal.removeEventListener('abort', onParentAbort);
+      }
     }
 
     if (signal.aborted) {

@@ -11,9 +11,6 @@ const STORE_VERSION = 3;
 const DEFAULT_TEMPERATURE = 0.7;
 
 function xorEncryptDecrypt(input: string): string {
-  const isAscii = /^[\x00-\x7F]*$/.test(input);
-  if (!isAscii) return input; // Safe fallback for non-ASCII key entries
-
   const key = 'dna_crystal_key_mask_99';
   let output = '';
   for (let i = 0; i < input.length; i++) {
@@ -28,11 +25,17 @@ const KEY_CIPHER_PREFIX = 'x1:';
 
 export function encryptKey(key: string): string {
   if (!key) return '';
-  const xored = xorEncryptDecrypt(key);
-  const b64 = typeof btoa !== 'undefined'
-    ? btoa(xored)
-    : Buffer.from(xored, 'binary').toString('base64');
-  return KEY_CIPHER_PREFIX + b64;
+  try {
+    // Convert UTF-8 string to a safe 8-bit representation to prevent btoa crash on non-ASCII characters
+    const latin1 = unescape(encodeURIComponent(key));
+    const xored = xorEncryptDecrypt(latin1);
+    const b64 = typeof btoa !== 'undefined'
+      ? btoa(xored)
+      : Buffer.from(xored, 'binary').toString('base64');
+    return KEY_CIPHER_PREFIX + b64;
+  } catch {
+    return key;
+  }
 }
 
 export function decryptKey(encrypted: string): string {
@@ -43,7 +46,14 @@ export function decryptKey(encrypted: string): string {
     const raw = typeof atob !== 'undefined'
       ? atob(b64)
       : Buffer.from(b64, 'base64').toString('binary');
-    return xorEncryptDecrypt(raw);
+    const xored = xorEncryptDecrypt(raw);
+    try {
+      // New format: undo the UTF-8 → 8-bit wrap applied by encryptKey
+      return decodeURIComponent(escape(xored));
+    } catch {
+      // Legacy keys stored before the UTF-8 wrap: the raw XOR result IS the key
+      return xored;
+    }
   } catch {
     return encrypted;
   }
@@ -212,6 +222,7 @@ export const useAppStore = create<AppState>()(
         const state = persistedState as Record<string, unknown>;
         const gear = state.sequencingGear;
         return {
+          ...state,
           llmConfig: normalizeLLMConfig(state.llmConfig),
           selectedNovelId: typeof state.selectedNovelId === 'string' ? state.selectedNovelId : null,
           workshopOpen: false,

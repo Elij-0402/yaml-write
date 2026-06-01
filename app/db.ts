@@ -106,6 +106,7 @@ export interface Chapter {
   // v5 Map phase
   mapStatus: MapStatus;
   mapSummary?: ChapterMapSummary;
+  mapCompletedAt?: number; // epoch ms when this chapter's Map finished — drives Live Feed completion order
 }
 
 class NovelFusionDB extends Dexie {
