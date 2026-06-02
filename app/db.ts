@@ -129,7 +129,9 @@ export interface StoryboardSceneRecord {
 }
 
 export interface FusionSession {
-  id: string; // singleton 'current' — 当前只有一个全局工坊会话
+  id: string; // v8 起为按 id 的多记录「创作库」（不再单例 'current'）；每开一轮新融合即一条新记录
+  name: string; // 创作名（DB 为单一真相源，侧栏可重命名；回写前 get 既有记录以保留）
+  createdAt: number; // 创建时刻（epoch ms，驱动创作库排序；回写前 get 既有记录以保留）
   selectedIds: string[];
   customPrompt: string;
   adversarialRules: string;
@@ -293,6 +295,24 @@ class NovelFusionDB extends Dexie {
       })
       .upgrade(async () => {
         /* 新表无存量数据；不回填以免启动时阻塞主线程 */
+      });
+    // v8: fusionSessions 由单例升级为按 id 的多记录「创作库」——新增 createdAt 索引并回填 name/createdAt，
+    // 把旧 'current' 单例会话平滑保留为库的一条创作（零数据丢失）。novels/chapters 索引串与 v7 一致。
+    this.version(8)
+      .stores({
+        novels: 'id, name, createdAt, splitStatus, analysisStatus',
+        chapters: 'id, novelId, chapterIndex, status, mapStatus',
+        fusionSessions: 'id, updatedAt, createdAt',
+      })
+      .upgrade(async (tx) => {
+        await tx.table('fusionSessions').toCollection().modify((s: Partial<FusionSession>) => {
+          if (typeof s.name !== 'string' || !s.name) {
+            s.name = s.directionTitle?.trim() || '未命名创作';
+          }
+          if (typeof s.createdAt !== 'number') {
+            s.createdAt = s.updatedAt || Date.now();
+          }
+        });
       });
   }
 }
