@@ -37,10 +37,3 @@ next-env.d.ts
 # python
 __pycache__/
 venv
-
-# bmad / agent tooling
-/_bmad
-/_bmad-output
-/.agent
-/.agents
-/.claude
