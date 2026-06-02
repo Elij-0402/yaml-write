@@ -241,6 +241,8 @@ function computeContinuityScore(chapters) {
   return clamp(score / pairs, 0, 1);
 }
 
+// 纯评分逻辑已双拷贝至 app/splitQuality.ts（bundled TS，供组件在手动剪/合并/撤销后即时重算 splitStatus）。
+// 改动此处权重/阈值须同步那份，否则「上传切分」与「手动重算」结果会漂移；由 app/splitQuality.test.ts 黄金向量对拍守护。
 function evaluateSplitQuality(chapters, totalChars) {
   const chapterCount = chapters.length;
   const totalWords = chapters.reduce((sum, chapter) => sum + chapter.wordCount, 0);

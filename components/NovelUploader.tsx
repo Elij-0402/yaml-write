@@ -5,6 +5,7 @@ import { useAppStore } from '../app/store';
 import { listProviderMetas, getProviderMeta } from '../app/llmProviders';
 import { getLlmConfigError, postWithLlmConfig, readApiErrorMessage } from '../app/llmClient';
 import { runDnaExtraction } from '../app/dnaEngine';
+import { rescoreSplit } from '../app/splitQuality';
 
 const MAX_UPLOAD_SIZE_MB = 50;
 const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
@@ -345,6 +346,8 @@ export default function NovelUploader() {
         const updatedChapters = await db.chapters.where('novelId').equals(selectedNovelId).toArray();
         await db.novels.update(selectedNovelId, {
           wordCount: updatedChapters.reduce((sum, c) => sum + c.wordCount, 0),
+          // 手动剪/合并后即时重算切分质量 —— 否则 needs_review 永不刷新（死门 + 删数据陷阱）。同事务内写以保原子。
+          ...rescoreSplit(updatedChapters, activeNovel?.splitMeta),
         });
       });
 
@@ -405,6 +408,8 @@ export default function NovelUploader() {
         const restoredChapters = await db.chapters.where('novelId').equals(backup.novelId).toArray();
         await db.novels.update(backup.novelId, {
           wordCount: restoredChapters.reduce((sum, c) => sum + c.wordCount, 0),
+          // 撤销后同样重算，否则 splitStatus 会停留在前向操作写入的值。
+          ...rescoreSplit(restoredChapters, activeNovel?.splitMeta),
         });
       });
 
@@ -513,6 +518,8 @@ export default function NovelUploader() {
         const updatedChapters = await db.chapters.where('novelId').equals(selectedNovelId).toArray();
         await db.novels.update(selectedNovelId, {
           wordCount: updatedChapters.reduce((sum, c) => sum + c.wordCount, 0),
+          // 手动剪/合并后即时重算切分质量 —— 否则 needs_review 永不刷新（死门 + 删数据陷阱）。同事务内写以保原子。
+          ...rescoreSplit(updatedChapters, activeNovel?.splitMeta),
         });
       });
 
@@ -756,10 +763,8 @@ export default function NovelUploader() {
 
             setSelectedNovelId(novelId);
             resetChapterListView();
-            // 切分置信度低 → 直接落到「校验切分」管理视图修复，而非把坏切分引向 DNA 提取。
-            if (computedSplitMeta.confidenceLevel === 'low') {
-              setManageMode(true);
-            }
+            // 导入后永远落到「校验切分」管理视图：先看见章节+质量再显式进 DNA —— 导入↔切分合为一条连续流。
+            setManageMode(true);
           } catch (err: unknown) {
             setErrorMsg(err instanceof Error ? err.message : '保存至本地数据库失败');
           } finally {
@@ -892,6 +897,13 @@ export default function NovelUploader() {
                 show: true,
                 message: '重切后置信度仍偏低，可改用「分章规则」自定义正则，或用 ✨ 智能语义拆分。',
                 countdown: 6000,
+              });
+            } else {
+              setToast({
+                show: true,
+                message: `重切完成：${computedSplitMeta.chapterCount} 章，置信度 ${Math.round(computedSplitMeta.confidence * 100)}%。`,
+                countdown: 4000,
+                type: 'success',
               });
             }
           } catch (err: unknown) {
@@ -1054,6 +1066,8 @@ export default function NovelUploader() {
         const updatedChapters = await db.chapters.where('novelId').equals(selectedNovelId).toArray();
         await db.novels.update(selectedNovelId, {
           wordCount: updatedChapters.reduce((sum, c) => sum + c.wordCount, 0),
+          // 手动剪/合并后即时重算切分质量 —— 否则 needs_review 永不刷新（死门 + 删数据陷阱）。同事务内写以保原子。
+          ...rescoreSplit(updatedChapters, activeNovel?.splitMeta),
         });
       });
 
@@ -1241,6 +1255,21 @@ export default function NovelUploader() {
             {!!activeNovel?.purifiedCount && activeNovel.purifiedCount > 0 && (
               <div className="text-[#10b981]/80">已净化 {activeNovel.purifiedCount.toLocaleString()} 字噪点</div>
             )}
+            {splitMeta && (
+              <div className="mt-1.5">
+                <span
+                  className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                    splitMeta.confidenceLevel === 'high'
+                      ? 'bg-emerald-500/10 text-emerald-400'
+                      : splitMeta.confidenceLevel === 'medium'
+                      ? 'bg-amber-500/10 text-amber-400'
+                      : 'bg-rose-500/10 text-rose-400'
+                  }`}
+                >
+                  切分置信度 {splitMeta.confidenceLevel === 'high' ? '高' : splitMeta.confidenceLevel === 'medium' ? '中' : '低'} · {Math.round(splitMeta.confidence * 100)}%
+                </span>
+              </div>
+            )}
           </div>
 
           {/* AC1: 分章置信度极低时滑入的智能语义拆分入口 */}
@@ -1258,13 +1287,22 @@ export default function NovelUploader() {
           {/* Actions */}
           <div className="flex gap-2">
             {needsSmartRepair ? (
-              <button
-                onClick={() => void runResplit('auto_v2')}
-                disabled={repairing}
-                className="flex-1 text-center py-1.5 px-2 rounded text-xs font-medium bg-[#06b6d4]/10 hover:bg-[#06b6d4]/20 text-[#06b6d4] border border-[#06b6d4]/20 transition-all disabled:opacity-50"
-              >
-                {repairing ? '修复中...' : '⚠️ 智能修复'}
-              </button>
+              <>
+                <button
+                  onClick={() => void runResplit('auto_v2')}
+                  disabled={repairing}
+                  className="flex-1 text-center py-1.5 px-2 rounded text-xs font-medium bg-[#06b6d4]/10 hover:bg-[#06b6d4]/20 text-[#06b6d4] border border-[#06b6d4]/20 transition-all disabled:opacity-50"
+                >
+                  {repairing ? '修复中...' : '⚠️ 智能修复'}
+                </button>
+                <button
+                  onClick={() => setManageMode(false)}
+                  className="shrink-0 px-2 py-1.5 rounded text-xs font-medium text-slate-400 hover:text-slate-200 border border-[#1b1e36] hover:border-[#34343a] transition-all"
+                  title="切分质量偏低，但仍直接进入 DNA 提取"
+                >
+                  仍要继续 →
+                </button>
+              </>
             ) : (
               <button
                 onClick={() => setManageMode(false)}

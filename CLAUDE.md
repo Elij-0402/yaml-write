@@ -18,10 +18,11 @@ npm run next-dev     # frontend only
 npm run fastapi-dev  # backend only — pip installs requirements.txt, then uvicorn --reload
 npm run build        # next build (full type-check)
 npm run lint         # next lint
-npx tsc --noEmit     # type-check only (fast; there is no test suite)
+npx tsc --noEmit     # type-check only (fast)
+npm test             # vitest run — pure-logic unit tests (app/**/*.test.ts; node env, no RTL)
 ```
 
-There is **no test suite** — validate changes with `npx tsc --noEmit` + `npm run build`, then a manual walk-through. `fastapi-dev` invokes `python` from PATH (`python -m uvicorn api.index:app --reload`); use a venv/interpreter that has the `requirements.txt` deps.
+Tests are **pure-logic only** (Vitest — `npm test` runs `app/**/*.test.ts` in a node env; no React/RTL/jsdom). Validate changes with `npm test` + `npx tsc --noEmit` + `npm run build`, then a manual walk-through. `fastapi-dev` invokes `python` from PATH (`python -m uvicorn api.index:app --reload`); use a venv/interpreter that has the `requirements.txt` deps.
 
 Interactive API docs (dev): `http://localhost:3000/api/py/docs` or `http://localhost:3000/docs` — both rewrite to FastAPI's Swagger UI.
 
@@ -60,7 +61,7 @@ The DNA/fusion data shapes live on both sides and **must match field-for-field (
 
 ### Client-side chapter-splitting engine (V2)
 
-All splitting happens in the browser in `components/NovelUploader.tsx` — the backend never sees raw novels.
+All splitting happens in the browser in `components/NovelUploader.tsx` — the backend never sees raw novels. The quality-scoring engine is **dual-copied**: the canonical pure copy is `app/splitQuality.ts` (bundled TS, unit-tested, used by the component to **rescore `splitStatus`/`splitMeta` after a manual cut/merge/undo** via `rescoreSplit`), and a byte-equivalent copy lives in the worker `public/workers/novel-parser-worker.js` (classic worker, not in the webpack graph) for the upload/re-split path — keep them in sync (guarded by the golden-vector test in `app/splitQuality.test.ts`).
 
 - **Strategies** (`STRATEGY_REGEX` + `auto_v2`/`custom`): `zh_strict`, `zh_extended`, `mixed`, `en_basic`, `custom`. All regexes match a **single-line** chapter title (`m` flag, no cross-line). `auto_v2` (default on upload) runs every base strategy plus `V2_EXTRA_REGEX`, scores each candidate, and picks the best via `selectBetterCandidate` (confidence → chapter count → max-chapter ratio → short-chapter ratio).
 - **Quality scoring** (`evaluateSplitQuality`): Computes multiple distinct metrics for candidate evaluation:
@@ -70,7 +71,7 @@ All splitting happens in the browser in `components/NovelUploader.tsx` — the b
   - `confidence`: Weighted average of the above scores: `distributionScore` (45%), `titleHitRate` (25%), and `continuityScore` (30%, if available; if not, weights adjust to distribution 64% / title 36%).
   - `confidenceLevel`: Resolves to `'high'` (`>= 0.8`), `'medium'` (`>= 0.58`), or `'low'` (`< 0.58`).
   - `splitStatus`: Becomes `'needs_review'` if `confidenceLevel === 'low'`, else `'ok'`.
-  This scoring is **internal only** — it drives the `auto_v2` winner pick and the `needs_review` flag. It is **not** surfaced in the UI: the readiness banner shows just chapter count + avg chars, and (when `splitStatus === 'needs_review'`) a "建议重新切分" hint. The full `splitMeta` (confidence/metrics/reviewReasons) is still persisted on the novel but not displayed.
+  This scoring drives the `auto_v2` winner pick and the `needs_review` flag, and is surfaced in the split-review header as a compact **confidence pill** (高/中/低 · N%). The readiness banner shows chapter count + avg chars; the full `splitMeta` (confidence/metrics/reviewReasons) is persisted on the novel but not fully displayed. After a manual cut/merge/undo the component **rescores** via `rescoreSplit` so `splitStatus` + pill stay live (no stale `needs_review` — this closes the old data-loss trap where the only way past `needs_review` was a chapter-deleting re-split).
 - **Re-split / repair** (`runResplit`, the 一键智能重切 / 高级修复 UI): re-split with `auto_v2`, another strategy, or a custom regex. **This reuses the persisted `sourceTextCleaned` and deletes every chapter plus its analysis** before rebuilding — so always populate `sourceTextCleaned` on upload. Custom regexes are validated to be single-line (`validateLineRegex`) and have `g`/`y` flags stripped.
 - **Cleaning** (`cleanText`/`cleanLine`): strips piracy-site watermarks, ad URLs, and HTML entities *before* splitting; the removed-char count surfaces as `purifiedCount`.
 - **Encoding** (`detectEncoding`): `jschardet` on the first 50KB; GBK/GB2312/Windows-936 normalize to GB18030, UTF-16 to UTF-16LE. If UTF-8 decoding yields >1% replacement chars (``), it retries as GB18030. Chinese novels in the wild are frequently GBK — do not assume UTF-8.
