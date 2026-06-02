@@ -130,12 +130,14 @@ const normalizeScenesPayload = (value: unknown): StoryboardScene[] => {
 };
 
 export default function FusionWorkshop() {
-  const { setSelectedNovelId, setWorkshopOpen, fusionBias, setFusionBias, rateLimited } = useAppStore((state) => ({
+  const { setSelectedNovelId, setWorkshopOpen, fusionBias, setFusionBias, rateLimited, activeCreationId, setWorkshopBusy } = useAppStore((state) => ({
     setSelectedNovelId: state.setSelectedNovelId,
     setWorkshopOpen: state.setWorkshopOpen,
     fusionBias: state.fusionBias,
     setFusionBias: state.setFusionBias,
     rateLimited: state.rateLimited,
+    activeCreationId: state.activeCreationId,
+    setWorkshopBusy: state.setWorkshopBusy,
   }));
   const novels = useLiveQuery(() => db.novels.reverse().toArray(), []) || [];
   const readyNovels = novels.filter((novel) => novel.analysisStatus === 'done' && novel.dnaCard);
@@ -215,12 +217,19 @@ export default function FusionWorkshop() {
     return () => mediaQuery.removeListener(sync);
   }, []);
 
-  // 工坊会话持久化：进入时从 IndexedDB 恢复上次的方向 / 积木 / 故事板 / 正文，刷新或切侧栏不再蒸发。
+  // 工坊会话持久化：按 store 的 activeCreationId 从 IndexedDB 还原对应创作的方向 / 积木 / 故事板 / 正文；
+  // 切换创作（含「新建」铸新 id）即重新水合：命中则还原，未命中则重置为各 useState 初值的空白态。
   useEffect(() => {
+    if (!activeCreationId) {
+      hydratedRef.current = false;
+      return;
+    }
     let cancelled = false;
+    hydratedRef.current = false; // 水合期间禁回写，避免空白态覆盖刚切入的创作
     void (async () => {
-      const saved = await db.fusionSessions.get('current');
-      if (!cancelled && saved) {
+      const saved = await db.fusionSessions.get(activeCreationId);
+      if (cancelled) return;
+      if (saved) {
         setSelectedIds(saved.selectedIds || []);
         setCustomPrompt(saved.customPrompt || '');
         setAdversarialRules(saved.adversarialRules || '');
@@ -234,35 +243,63 @@ export default function FusionWorkshop() {
         setStoryboard(saved.storyboard || []);
         setSceneTexts(saved.sceneTexts || {});
         setSceneResumeStatus((saved.sceneResumeStatus as Record<number, SceneResumeStatus>) || {});
+      } else {
+        // 新建创作：重置全部 session 状态为各 useState 初值
+        setSelectedIds([]);
+        setCustomPrompt('');
+        setAdversarialRules('');
+        setStep('material');
+        setDirections([]);
+        setBlocks({ worldviewBlock: '', protagonistBlock: '', antagonistBlock: '', narrativeTone: '' });
+        setDirectionTitle('');
+        setSceneCount(3);
+        setStoryboard([]);
+        setSceneTexts({});
+        setSceneResumeStatus({});
       }
       if (!cancelled) hydratedRef.current = true;
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeCreationId]);
 
   // 仅在空闲时刻落盘（流式 / 碰撞 / 调整进行中跳过，避免逐 token 写盘）；一幕流式收尾归 idle 时即落盘。
+  // 回写前先 get 既有记录以保留 name/createdAt（DB 为单一真相源，防侧栏重命名被空闲回写清掉）；空会话不入库。
   useEffect(() => {
-    if (!hydratedRef.current) return;
+    if (!hydratedRef.current || !activeCreationId) return;
     if (streamingScene !== null || generatingBoard || colliding || tweaking) return;
-    const session: FusionSession = {
-      id: 'current',
-      selectedIds,
-      customPrompt,
-      adversarialRules,
-      step,
-      directions,
-      blocks,
-      directionTitle,
-      sceneCount,
-      storyboard,
-      sceneTexts,
-      sceneResumeStatus,
-      updatedAt: Date.now(),
-    };
-    void db.fusionSessions.put(session);
+    const isEmpty =
+      selectedIds.length === 0 &&
+      directions.length === 0 &&
+      storyboard.length === 0 &&
+      Object.keys(sceneTexts).length === 0;
+    if (isEmpty) return;
+    const id = activeCreationId;
+    // get+put 包进同一 rw 事务，IDB 串行化，关闭与侧栏重命名（独立事务）的竞态窗口。
+    void db.transaction('rw', db.fusionSessions, async () => {
+      const prev = await db.fusionSessions.get(id);
+      const session: FusionSession = {
+        id,
+        name: prev?.name || directionTitle || '未命名创作',
+        createdAt: prev?.createdAt || Date.now(),
+        selectedIds,
+        customPrompt,
+        adversarialRules,
+        step,
+        directions,
+        blocks,
+        directionTitle,
+        sceneCount,
+        storyboard,
+        sceneTexts,
+        sceneResumeStatus,
+        updatedAt: Date.now(),
+      };
+      await db.fusionSessions.put(session);
+    });
   }, [
+    activeCreationId,
     step,
     selectedIds,
     customPrompt,
@@ -291,6 +328,12 @@ export default function FusionWorkshop() {
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, [streamingScene, generatingBoard, colliding]);
+
+  // 把工坊忙碌态上抛给侧栏：流式/生成/碰撞/微调进行中时，page.tsx 禁止切换/新建创作，避免跨创作 stale-write。
+  useEffect(() => {
+    setWorkshopBusy(streamingScene !== null || generatingBoard || colliding || tweaking);
+  }, [streamingScene, generatingBoard, colliding, tweaking, setWorkshopBusy]);
+  useEffect(() => () => setWorkshopBusy(false), [setWorkshopBusy]);
 
   const guardLlm = (): boolean => {
     const readiness = ensureLlmConfigReady();
@@ -590,6 +633,27 @@ export default function FusionWorkshop() {
     anchor.href = url;
     const safeTitle = (scene.sceneTitle || 'scene').replace(/[\\/:*?"<>|\r\n]+/g, '_').trim().slice(0, 80) || 'scene';
     anchor.download = `${safeTitle}.txt`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // 整篇导出：标题 + 4 块设定 + 按镜号升序、仅含已生成正文的镜，拼成一个 .md 下载。块标题复用工坊既有 4 块中文标签。
+  const saveWork = () => {
+    const title = directionTitle || '未命名创作';
+    const settingLines = BLOCKS.map(({ key, label }) => `- ${label}：${blocks[key] || ''}`).join('\n');
+    const sceneSections = [...storyboard]
+      .sort((a, b) => a.sceneNumber - b.sceneNumber)
+      .filter((scene) => (sceneTexts[scene.sceneNumber] || '').trim().length > 0)
+      .map((scene) => `## ${scene.sceneNumber}. ${scene.sceneTitle}\n${sceneTexts[scene.sceneNumber]}`)
+      .join('\n\n');
+    if (!sceneSections) return;
+    const md = `# ${title}\n\n## 设定\n${settingLines}\n\n---\n\n${sceneSections}\n`;
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    const safeTitle = title.replace(/[\\/:*?"<>|\r\n]+/g, '_').trim().slice(0, 80) || 'scene';
+    anchor.download = `${safeTitle}.md`;
     anchor.click();
     URL.revokeObjectURL(url);
   };
@@ -1081,6 +1145,11 @@ export default function FusionWorkshop() {
         <div className="flex items-center justify-between gap-3">
           <span className="text-sm">故事板</span>
           <div className="flex items-center gap-3">
+            {storyboard.some((s) => (sceneTexts[s.sceneNumber] || '').trim().length > 0) && (
+              <button onClick={saveWork} className="text-sm text-secondary hover:text-primary">
+                导出全篇
+              </button>
+            )}
             {!generatingBoard && streamingScene === null && (
               <label className="flex items-center gap-1 text-xs text-muted">
                 分镜数

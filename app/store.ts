@@ -76,6 +76,7 @@ interface AppState {
   llmConfig: LLMConfig;
   selectedNovelId: string | null;
   workshopOpen: boolean; // creative fusion workshop view
+  activeCreationId: string | null; // 工坊当前读写的创作库记录 id（v8 多记录创作库）
   manageMode: boolean; // show NovelUploader (chapters + re-split) for the selected novel
   sequencingGear: 'safe' | 'balanced' | 'speed';
   setSequencingGear: (gear: 'safe' | 'balanced' | 'speed') => void;
@@ -83,6 +84,8 @@ interface AppState {
   setShouldReduceEarly: (reduce: boolean) => void;
   rateLimited: boolean;
   setRateLimited: (limited: boolean) => void;
+  workshopBusy: boolean; // 工坊流式/生成进行中——禁止 busy 时切换/新建创作，避免跨创作 stale-write
+  setWorkshopBusy: (busy: boolean) => void;
   persistError: boolean;
   setPersistError: (value: boolean) => void;
   resetSequencingState: () => void;
@@ -93,6 +96,7 @@ interface AppState {
   setFusionBias: (bias: number) => void;
   setSelectedNovelId: (id: string | null) => void;
   setWorkshopOpen: (open: boolean) => void;
+  setActiveCreationId: (id: string | null) => void;
   setManageMode: (on: boolean) => void;
 }
 
@@ -192,14 +196,17 @@ export const useAppStore = create<AppState>()(
       llmConfig: DEFAULT_LLM_CONFIG,
       selectedNovelId: null,
       workshopOpen: false,
+      activeCreationId: null,
       manageMode: false,
       sequencingGear: 'balanced',
       shouldReduceEarly: false,
       rateLimited: false,
+      workshopBusy: false,
       persistError: false,
       setSequencingGear: (gear) => set({ sequencingGear: gear }),
       setShouldReduceEarly: (reduce) => set({ shouldReduceEarly: reduce }),
       setRateLimited: (limited) => set({ rateLimited: limited }),
+      setWorkshopBusy: (busy) => set({ workshopBusy: busy }),
       setPersistError: (value) => set({ persistError: value }),
       resetSequencingState: () => set({ shouldReduceEarly: false, rateLimited: false }),
       setActiveProvider: (provider) =>
@@ -234,8 +241,9 @@ export const useAppStore = create<AppState>()(
       fusionBias: 0.5,
       setFusionBias: (bias) => set({ fusionBias: Math.max(0.01, Math.min(0.99, bias)) }),
       setTemperature: (value) => set((state) => ({ llmConfig: { ...state.llmConfig, temperature: clampTemperature(value) } })),
-      setSelectedNovelId: (id) => set({ selectedNovelId: id, workshopOpen: false, manageMode: false }),
+      setSelectedNovelId: (id) => set({ selectedNovelId: id, workshopOpen: false, manageMode: false, activeCreationId: null }),
       setWorkshopOpen: (open) => set({ workshopOpen: open }),
+      setActiveCreationId: (id) => set({ activeCreationId: id, workshopOpen: true, manageMode: false }),
       setManageMode: (on) => set({ manageMode: on }),
     }),
     {
@@ -263,10 +271,12 @@ export const useAppStore = create<AppState>()(
           llmConfig: normalizeLLMConfig(state.llmConfig),
           selectedNovelId: typeof state.selectedNovelId === 'string' ? state.selectedNovelId : null,
           workshopOpen: false,
+          activeCreationId: null,
           manageMode: false,
           sequencingGear: (gear === 'safe' || gear === 'balanced' || gear === 'speed') ? gear : 'balanced',
           shouldReduceEarly: false,
           rateLimited: false,
+          workshopBusy: false,
           persistError: false,
           fusionBias: typeof state.fusionBias === 'number' ? state.fusionBias : 0.5,
         };

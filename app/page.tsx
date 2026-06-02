@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Novel } from './db';
+import { db, type Novel, type FusionSession } from './db';
 import { useAppStore } from './store';
 import NovelUploader from '../components/NovelUploader';
 import NovelDetail from '../components/NovelDetail';
@@ -24,6 +24,9 @@ export default function Home() {
     setSelectedNovelId,
     workshopOpen,
     setWorkshopOpen,
+    activeCreationId,
+    setActiveCreationId,
+    workshopBusy,
     manageMode,
     setManageMode,
     llmConfig,
@@ -58,6 +61,15 @@ export default function Home() {
   const novelsRaw = useLiveQuery<Novel[]>(() => db.novels.orderBy('createdAt').reverse().toArray(), []);
   const novels = novelsRaw || [];
   const selectedNovel = novels.find((novel) => novel.id === selectedNovelId) || null;
+
+  // 创作库：仅展示已进入创作台或已有正文的创作（过滤掉未成形的空白/方向期会话）。
+  const creationsRaw = useLiveQuery<FusionSession[]>(
+    () => db.fusionSessions.orderBy('createdAt').reverse().toArray(),
+    []
+  );
+  const creations = (creationsRaw || []).filter(
+    (c) => c.step === 'creator' || Object.keys(c.sceneTexts || {}).length > 0
+  );
 
   const readyCount = novels.filter((novel) => novel.analysisStatus === 'done' && novel.dnaCard).length;
   const llmReadiness = useMemo(() => getLlmReadinessSummary(llmConfig), [llmConfig]);
@@ -114,7 +126,7 @@ export default function Home() {
         else if (!llmReadiness.ok) setSettingsOpen(true);
         break;
       case 'fusion':
-        if (readyCount >= 1) setWorkshopOpen(true);
+        if (readyCount >= 1) setActiveCreationId(crypto.randomUUID());
         break;
     }
   };
@@ -127,6 +139,22 @@ export default function Home() {
     });
     if (selectedNovelId === id) {
       setSelectedNovelId(null);
+    }
+  };
+
+  const deleteCreation = async (id: string) => {
+    if (!window.confirm('删除此创作？')) return;
+    await db.fusionSessions.delete(id);
+    if (activeCreationId === id) {
+      setWorkshopOpen(false);
+      setActiveCreationId(null);
+    }
+  };
+
+  const renameCreation = (creation: FusionSession) => {
+    const next = window.prompt('重命名创作', creation.name || creation.directionTitle || '');
+    if (next && next.trim()) {
+      void db.fusionSessions.update(creation.id, { name: next.trim(), updatedAt: Date.now() });
     }
   };
 
@@ -197,17 +225,77 @@ export default function Home() {
               })}
             </div>
           )}
+
+          {creations.length > 0 && (
+            <div className="mt-4 border-t pt-4">
+              <div className="px-4 pb-2 text-xs text-muted">创作 ({creations.length})</div>
+              {creations.map((creation) => {
+                const active = workshopOpen && activeCreationId === creation.id;
+                return (
+                  <div
+                    key={creation.id}
+                    title={workshopBusy && !active ? '生成中，暂不可切换创作' : undefined}
+                    className={`group relative px-4 py-2 ${
+                      active
+                        ? 'bg-secondary'
+                        : workshopBusy
+                        ? 'cursor-not-allowed opacity-50'
+                        : 'cursor-pointer hover:bg-secondary/50'
+                    }`}
+                  >
+                    <div
+                      onClick={() => {
+                        if (workshopBusy) return;
+                        setActiveCreationId(creation.id);
+                        setMobileNavOpen(false);
+                      }}
+                      className="flex items-center justify-between"
+                    >
+                      <span className={`truncate text-sm ${active ? 'text-primary' : 'text-secondary'}`}>
+                        {creation.name || creation.directionTitle || '未命名创作'}
+                      </span>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        renameCreation(creation);
+                      }}
+                      className="absolute right-7 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-primary group-hover:opacity-100"
+                    >
+                      ✎
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void deleteCreation(creation.id);
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-red-400 group-hover:opacity-100"
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="border-t py-2">
           <button
             onClick={() => {
-              setWorkshopOpen(true);
+              if (workshopBusy || readyCount < 1) return;
+              setActiveCreationId(crypto.randomUUID());
               setMobileNavOpen(false);
             }}
-            className={`w-full px-4 py-2 text-left text-sm ${workshopOpen ? 'text-primary' : 'text-secondary hover:text-primary'}`}
+            className={`w-full px-4 py-2 text-left text-sm ${
+              workshopBusy || readyCount < 1
+                ? 'cursor-not-allowed text-muted'
+                : workshopOpen
+                ? 'text-primary'
+                : 'text-secondary hover:text-primary'
+            }`}
           >
-            融合工坊 {readyCount >= 1 && <span className="text-muted">({readyCount})</span>}
+            + 新建创作 {readyCount >= 1 && <span className="text-muted">({readyCount})</span>}
           </button>
           <button
             onClick={() => {
