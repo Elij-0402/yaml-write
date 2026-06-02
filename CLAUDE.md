@@ -35,7 +35,7 @@ Interactive API docs (dev): `http://localhost:3000/api/py/docs` or `http://local
 
 `app/store.ts` is the Zustand store with `persist` middleware → everything lives in browser LocalStorage under `novel-fusion-store`. **Every** request to FastAPI carries `apiKey`, `baseUrl`, `model` (and `temperature`) in its body; the backend builds a fresh `AsyncOpenAI` client per-request and never persists credentials. Preserve this when adding LLM endpoints.
 
-`llmConfig` shape: `activeProvider` (a `ProviderId`) + `providerProfiles` — a `Record<ProviderId, {apiKey, baseUrl, model}>` for `openai`/`deepseek`/`gemini`/`siliconflow`/`ollama`/`custom` (see `app/llmProviders.ts`) — plus a flat `temperature`. Two setters: `setActiveProvider(id)` switches the active provider; `updateActiveProviderProfile(patch)` patches the **active** provider's profile. The active provider's profile is the source of truth sent to the backend; `app/llmClient.ts` (`withLlmPayload` / `postWithLlmConfig` / `ensureLlmConfigReady` / `readApiErrorMessage`) is the single network helper — route new LLM calls through it. API keys for *all* configured providers persist in LocalStorage. (`temperature` is sent and clamped to 0–1.5 but currently has no UI control; it stays at the 0.7 default.)
+`llmConfig` shape: `activeProvider` (a `ProviderId`) + `providerProfiles` — a `Record<ProviderId, {apiKey, baseUrl, model}>` for `openai`/`deepseek`/`gemini`/`siliconflow`/`ollama`/`custom` (see `app/llmProviders.ts`) — plus a flat `temperature`. Two setters: `setActiveProvider(id)` switches the active provider; `updateActiveProviderProfile(patch)` patches the **active** provider's profile. The active provider's profile is the source of truth sent to the backend; `app/llmClient.ts` (`withLlmPayload` / `postWithLlmConfig` / `ensureLlmConfigReady` / `readApiErrorMessage`) is the single network helper — route new LLM calls through it. API keys for *all* configured providers persist in LocalStorage. `temperature` is a flat field on `llmConfig` (default 0.7), sent with every request and clamped to 0–1.5 by `setTemperature`; `SettingsPanel` exposes it as a global slider.
 
 The store also holds view state: `selectedNovelId`, `workshopOpen` (show `FusionWorkshop`), and `manageMode` (show `NovelUploader`'s chapter list + re-split for the selected novel). `setSelectedNovelId` resets both flags. There are **no tabs** and no cross-component chapter handoff — the right pane is chosen entirely from these three flags in `app/page.tsx` (see Navigation & components).
 
@@ -48,7 +48,9 @@ Because the backend proxies user-supplied keys to arbitrary base URLs, it is del
   - `/api/py/generate-fusion-directions`: 8 requests / 60s
   - `/api/py/tweak-fusion-blocks`: 20 requests / 60s
   - `/api/py/generate-storyboard`: 12 requests / 60s
+  - `/api/py/stream-storyboard`: 12 requests / 60s
   - `/api/py/stream-scene-text`: 12 requests / 60s
+  - `/api/py/split-recommend`: 20 requests / 60s
 - **SSRF guard** (`normalize_base_url` / `validate_base_url` + `DEFAULT_ALLOWED_BASE_URLS`): base URL must be in the allowlist (extendable via `ALLOWED_LLM_BASE_URLS` env), HTTP is only allowed for loopback, private/link-local/etc. IPs are blocked, local hosts only on whitelisted ports (Ollama 11434).
 - **Structured errors**: `classify_openai_error` maps OpenAI SDK exceptions to friendly Chinese `ApiError`s; all responses use `{error: {code, message}}`. Don't leak raw upstream errors.
 
@@ -76,26 +78,28 @@ All splitting happens in the browser in `components/NovelUploader.tsx` — the b
 
 ### Book-level DNA: Map-Reduce endpoints + resumable runner
 
-The whole-book DNA and the fusion workshop are served by **6** `/api/py/` endpoints. Five are structured (they share `run_structured` → `instructor.from_openai` + transient retry: up to `MAX_PARSE_RETRIES` (2) extra attempts with exponential backoff on 429/502/503/504, then a friendly `ApiError`); one streams.
+The whole-book DNA and the fusion workshop are served by **8** `/api/py/` endpoints. Six are structured (they share `run_structured` → `instructor.from_openai` + transient retry: up to `MAX_PARSE_RETRIES` (2) extra attempts with exponential backoff on 429/502/503/504, then a friendly `ApiError`); two stream via SSE.
 
 | Endpoint | Mode | response_model |
 |---|---|---|
 | `extract-chapter-map` | structured | `ChapterMapSummaryResponse` |
 | `extract-book-reduce` | structured | `NovelDNACardResponse` |
-| `generate-fusion-directions` | structured (one mega-prompt → 3 directions) | `FusionDirectionsResponse` |
-| `tweak-fusion-blocks` | structured (rewrites only the blocks the instruction hits) | `TweakBlocksResponse` |
-| `generate-storyboard` | structured | `StoryboardResponse` |
-| `stream-scene-text` | **SSE** | — |
+| `generate-fusion-directions` | structured (one mega-prompt → 3 directions; `fusionBias` only honored when exactly 2 cards; optional `adversarialRules`) | `FusionDirectionsResponse` |
+| `tweak-fusion-blocks` | structured (rewrites only the `targetBlock` the instruction hits; optional `adversarialRules`) | `TweakBlocksResponse` |
+| `generate-storyboard` | structured (non-streaming sibling of `stream-storyboard`; also reused as its parse-failure fallback) | `StoryboardResponse` |
+| `stream-storyboard` | **SSE** (streams `[SCENE-n]` blocks; `done` frame carries parsed `scenes`, falling back to `generate-storyboard` when the stream won't parse) | — |
+| `stream-scene-text` | **SSE** (per-scene prose; `currentDraft` resumes an interrupted draft) | — |
+| `split-recommend` | structured (JIT semantic split: numbered paragraphs → recommended cut points) | `SplitRecommendResponse` |
 
 Reasoning models (DeepSeek R1 / `*reasoner*`) may not support the tool-call/structured output `instructor` needs. The creation prompts share `ANTI_SLOP_CONSTRAINT` (a hard anti-cliché rule block), and callers may append free-text `adversarialRules`.
 
-`app/dnaEngine.ts` (`runDnaExtraction(novelId, {limit, signal})`) is the **resumable** Map-Reduce runner: `MAP_CONCURRENCY` (3) workers call `extract-chapter-map` per chapter and persist `mapStatus:'done'` + `mapSummary` immediately (so a refresh/crash never loses progress; re-running skips chapters already `done`). Once every chapter is mapped it folds the summaries into one `NovelDNACard` via `extract-book-reduce`. Progress lives on the novel (`analysisStatus`, `mapProgress`). `NovelDetail.tsx` drives it with an `AbortController` (暂停 = abort → `analysisStatus:'idle'`), exposing 全速提取（前100章）(`limit:100`) vs 深度全量提取 (`limit:undefined`).
+`app/dnaEngine.ts` (`runDnaExtraction(novelId, {limit, targetChapterId, signal})`) is the **resumable** Map-Reduce runner: a pool of workers calls `extract-chapter-map` per chapter and persists `mapStatus:'done'` + `mapSummary` immediately (so a refresh/crash never loses progress; re-running skips chapters already `done`). Concurrency is **gear-driven**, not a fixed constant — `useAppStore.getState().sequencingGear` maps `safe`→1 / `balanced`→3 (default) / `speed`→8, re-evaluated live so changing gears mid-run re-spawns workers. A shared 429 backoff helper — `withRateLimitRetry` + the `RateLimitSignal` sentinel, **exported from `dnaEngine.ts` and reused by `FusionWorkshop.tsx`** — silently退避-retries rate-limited calls (lighting `store.rateLimited`) instead of failing them. Once every chapter is mapped it folds the summaries into one `NovelDNACard` via `extract-book-reduce`. Progress lives on the novel (`analysisStatus`, `mapProgress`). `NovelDetail.tsx` drives it with an `AbortController` (暂停 = abort → `analysisStatus:'idle'`) and **self-heals on mount** (a refresh stranded in `mapping`/`reducing` is reconciled back to `idle` + chapters re-queued so the run is resumable), exposing 全速提取（前100章）(`limit:100`) vs 深度全量提取 (`limit:undefined`), plus 补测/重测 of failed chapters.
 
 > **Vercel 10s note**: `extract-book-reduce` / `generate-fusion-directions` are single large non-streaming calls that can exceed the 10s serverless ceiling on slow models — run heavy extraction under `npm run dev` (local FastAPI, no timeout) or a non-Vercel deploy.
 
 ### Streaming endpoint (real SSE)
 
-`stream-scene-text` returns `StreamingResponse(..., media_type="text/event-stream")` and emits SSE frames via `sse_event(...)`: `event: delta|done|error` + `data: {json}`. The frontend consumes it through the shared `streamSse(endpoint, payload, {onDelta, signal})` helper in `app/llmClient.ts` (its `parseSseBuffer` handles `event:`/`data:` framing + JSON payloads); `FusionWorkshop.tsx` uses it to stream each scene's prose, passing `precedingTexts` (the prior 1–2 generated scenes) for continuity. Route any new long-running LLM endpoint through SSE + `streamSse` — it also dodges Vercel's 10s serverless timeout.
+`stream-storyboard` and `stream-scene-text` return `StreamingResponse(..., media_type="text/event-stream")` and emit SSE frames via `sse_event(...)`: `event: delta|done|error` + `data: {json}`. The frontend consumes them through the shared `streamSse(endpoint, payload, {onDelta, onDone?, signal?})` helper in `app/llmClient.ts` (its `parseSseBuffer` handles `event:`/`data:` framing + JSON payloads; `onDone` receives the `done` frame's payload — e.g. the storyboard's parsed `scenes`; `signal` wires an `AbortController` so the UI's 停止生成 buttons can cancel a live stream). `FusionWorkshop.tsx` streams the storyboard and each scene's prose, passing `precedingTexts` (the prior 1–2 generated scenes) for continuity. Route any new long-running LLM endpoint through SSE + `streamSse` — it also dodges Vercel's 10s serverless timeout.
 
 ### Local persistence — Dexie / IndexedDB (versioned)
 
@@ -113,6 +117,8 @@ Reasoning models (DeepSeek R1 / `*reasoner*`) may not support the tool-call/stru
   - Schema registry updated to:
     - `novels`: `'id, name, createdAt, splitStatus, analysisStatus'`
     - `chapters`: `'id, novelId, chapterIndex, status, mapStatus'`
+- **`version(6)`**: Adds the optional, non-indexed `Chapter.contentSha256` (incremental-sequencing hash). Index strings are identical to v5; the upgrade is a no-op (existing chapters backfill lazily on write/精测).
+- **`version(7)`**: Adds the `fusionSessions` table (`'id, updatedAt'`) — a **singleton** (`id:'current'`) persisting the fusion-workshop funnel (selected DNA ids, custom/adversarial prompts, step, directions, blocks, sceneCount, storyboard, per-scene prose + resume status) so a refresh or sidebar-click never蒸发 generated work. `FusionWorkshop.tsx` hydrates it on mount and writes back at idle moments (never per streamed token).
 
 Any change to the `Novel`/`Chapter` shape requires a new `this.version(n).stores(...).upgrade(...)` block — don't mutate existing version definitions. There is no server-side database. Components read reactively via `useLiveQuery` (`dexie-react-hooks`); mutations through `db.chapters.update(...)` propagate to all live queries automatically.
 
@@ -122,8 +128,8 @@ Any change to the `Novel`/`Chapter` shape requires a new `this.version(n).stores
 
 - **NovelUploader** — upload, clean, split (engine above), the re-split repair panel, and a read-only searchable/paginated chapter list. It is both the landing page (no novel selected) and the manage view (`manageMode`). **Makes no LLM calls** — purely the splitting front-end.
 - **NovelDetail** — the selected novel's book-DNA board. Left: chapter list with `mapStatus` dots (pending/done/error + a spinner while mapping) and a 重切 button (`setManageMode(true)`). Right: either the DNA-extraction CTA (全速提取（前100章） / 深度全量提取 + a progress bar with 暂停) or, once `analysisStatus==='done'`, the 5 inline-editable DNA cards. Runs `runDnaExtraction` from `app/dnaEngine.ts`.
-- **FusionWorkshop** — the 3-step fusion funnel: 引力室 (pick 1+ DNA-ready novels + optional 自定义大方向 / 反套路红队约束 → `generate-fusion-directions`) → three direction cards → creator (the 4 setting blocks + a command bar `tweak-fusion-blocks`, cyan-pulsing the changed blocks → `generate-storyboard` → per-scene streamed prose with copy / save-as-TXT).
-- **SettingsPanel** — minimal slide-over: provider dropdown, API key (show/hide), Base URL, model (with `<datalist>` preset suggestions). Nothing else.
+- **FusionWorkshop** — the 3-step fusion funnel: 引力室 (pick 1+ DNA-ready novels — **1 = 自我裂变, 2+ = 交叉融合**; optional 自定义大方向 / 反套路红队约束, the latter threaded into all four creation calls → `generate-fusion-directions`; exactly 2 books unlocks the gravity-orbit `fusionBias` slider) → three direction cards → creator (the 4 setting blocks + a command bar `tweak-fusion-blocks`, cyan-pulsing the changed blocks → a 1–8 分镜数 selector → `stream-storyboard` → per-scene streamed prose with 停止生成 / copy / save-as-TXT / 重写 / 继续接写). The whole funnel persists to `db.fusionSessions`.
+- **SettingsPanel** — minimal slide-over: provider dropdown, API key (show/hide), Base URL, model (with `<datalist>` preset suggestions), and a global temperature slider (0–1.5). Nothing else.
 
 (`ContrastBoard` and `FusionEditor` were removed in the DNA-workshop refactor.)
 

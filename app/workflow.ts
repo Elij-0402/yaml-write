@@ -64,15 +64,15 @@ export function getNovelWorkflowSummary(
           id: 'fusion',
           label: '融合变体',
           shortLabel: '变体',
-          status: readyNovelCount > 1 ? 'ready' : 'blocked',
+          status: readyNovelCount >= 1 ? 'ready' : 'blocked',
           hint:
-            readyNovelCount > 1
-              ? '已有至少两部 DNA 就绪作品，可生成方向卡、故事板与正文变体草案。'
-              : '至少需要两部 DNA 就绪作品，变体阶段才有足够的碰撞素材。',
+            readyNovelCount >= 1
+              ? '已有 DNA 就绪作品，可进入引力室碰撞出原创变体（单本=自我裂变，多本=交叉融合）。'
+              : '先完成任意一部作品的 DNA 提取，变体阶段即点亮。',
         },
       ],
       recommendedNextStep: '导入第一部作品',
-      readinessReason: llm.reason || (readyNovelCount > 1 ? undefined : '至少需要两部 DNA 就绪作品，变体阶段才会点亮。'),
+      readinessReason: llm.reason || (readyNovelCount >= 1 ? undefined : '完成一部作品的 DNA 后，变体阶段即点亮。'),
     };
   }
 
@@ -144,11 +144,11 @@ export function getNovelWorkflowSummary(
           id: 'fusion',
           label: '融合变体',
           shortLabel: '变体',
-          status: readyNovelCount > 1 ? 'ready' : 'blocked',
+          status: readyNovelCount >= 1 ? 'ready' : 'blocked',
           hint:
-            readyNovelCount > 1
-              ? '至少已有两部 DNA 就绪作品，可生成方向卡、故事板与正文变体草案。'
-              : 'DNA 资产不足。再完成一部作品的 DNA，变体阶段才会真正成立。',
+            readyNovelCount >= 1
+              ? 'DNA 已就绪，可进入引力室碰撞出原创变体（多本作品可交叉融合）。'
+              : '再完成一部作品的 DNA，变体阶段才会真正成立。',
         }
       : {
           id: 'fusion',

@@ -109,9 +109,45 @@ export interface Chapter {
   mapCompletedAt?: number; // epoch ms when this chapter's Map finished — drives Live Feed completion order
 }
 
+// === Fusion workshop session (v7) — persists the融合工坊 funnel so a refresh/sidebar-click never蒸发已生成的方向/积木/正文 ===
+export interface FusionDirectionRecord {
+  title: string;
+  concept: string;
+  catalyst: string;
+  worldviewBlock: string;
+  protagonistBlock: string;
+  antagonistBlock: string;
+  narrativeTone: string;
+}
+
+export interface StoryboardSceneRecord {
+  sceneNumber: number;
+  sceneTitle: string;
+  plotOutline: string;
+  tensionLevel: string;
+  visualCues: string;
+}
+
+export interface FusionSession {
+  id: string; // singleton 'current' — 当前只有一个全局工坊会话
+  selectedIds: string[];
+  customPrompt: string;
+  adversarialRules: string;
+  step: 'material' | 'directions' | 'creator';
+  directions: FusionDirectionRecord[];
+  blocks: { worldviewBlock: string; protagonistBlock: string; antagonistBlock: string; narrativeTone: string };
+  directionTitle: string;
+  sceneCount: number;
+  storyboard: StoryboardSceneRecord[];
+  sceneTexts: Record<number, string>;
+  sceneResumeStatus: Record<number, string>;
+  updatedAt: number;
+}
+
 class NovelFusionDB extends Dexie {
   novels!: Table<Novel, string>;
   chapters!: Table<Chapter, string>;
+  fusionSessions!: Table<FusionSession, string>;
 
   constructor() {
     super('NovelFusionDB');
@@ -247,6 +283,16 @@ class NovelFusionDB extends Dexie {
       })
       .upgrade(async () => {
         /* contentSha256 为可选字段，存量章节留空，由后续写入(1.2)/精测(2.2)按需回填；此处严禁全量重算以免启动时阻塞主线程 */
+      });
+    // v7: 新增 fusionSessions 表持久化融合工坊会话。仅建表，存量无需回填（首次进入工坊时按需创建）。
+    this.version(7)
+      .stores({
+        novels: 'id, name, createdAt, splitStatus, analysisStatus',
+        chapters: 'id, novelId, chapterIndex, status, mapStatus',
+        fusionSessions: 'id, updatedAt',
+      })
+      .upgrade(async () => {
+        /* 新表无存量数据；不回填以免启动时阻塞主线程 */
       });
   }
 }

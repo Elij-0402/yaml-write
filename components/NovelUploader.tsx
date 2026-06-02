@@ -108,6 +108,7 @@ export default function NovelUploader() {
     type?: 'stitch' | 'success';
   } | null>(null);
   const [showBulkModal, setShowBulkModal] = useState(false);
+  const [canUndo, setCanUndo] = useState(false);
 
   // Story 1.5 State
   const [isSplitMode, setIsSplitMode] = useState(false);
@@ -189,10 +190,13 @@ export default function NovelUploader() {
   const reviewReasons = splitMeta?.reviewReasons || [];
 
   // Story 1.6 derived — 智能语义拆分入口判定 / 水晶卡就绪态 / 推荐点索引
+  const oversizedChapter = chapters.find((c) => c.wordCount > 30000) || null;
   const canSmartSplit =
-    (derivedStats?.chapterCount ?? 0) <= 1 &&
-    (activeNovel?.wordCount ?? 0) >= SMART_SPLIT_MIN_WORDS &&
-    chapters.length >= 1;
+    chapters.length >= 1 &&
+    (
+      ((derivedStats?.chapterCount ?? 0) <= 1 && (activeNovel?.wordCount ?? 0) >= SMART_SPLIT_MIN_WORDS) ||
+      Boolean(oversizedChapter)
+    );
   const ollamaReachable = ollamaStatus === 'online' || ollamaStatus === 'model_missing';
   const crystalReady = activeProviderMeta.requiresApiKey ? activeProfile.apiKey.trim().length > 0 : ollamaReachable;
   const recByIndex = useMemo(() => {
@@ -254,7 +258,7 @@ export default function NovelUploader() {
 
   const resetChapterListView = () => { setSearchQuery(''); setActiveChapterId(null); };
 
-  const backupStitchData = (novelId: string, affectedChapters: Chapter[]) => {
+  const backupStitchData = (novelId: string, affectedChapters: Chapter[]): boolean => {
     const tocMap: Record<string, number> = {};
     chapters.forEach((c) => {
       tocMap[c.id] = c.chapterIndex;
@@ -281,13 +285,15 @@ export default function NovelUploader() {
     const jsonStr = JSON.stringify(backup);
     if (jsonStr.length > 4 * 1024 * 1024) {
       console.warn('Backup data is too large (>4MB) for localStorage. Disabling Undo to prevent storage failure.');
-      return;
+      return false;
     }
 
     try {
       localStorage.setItem('bmad_stitch_backup', jsonStr);
+      return true;
     } catch (e) {
       console.warn('LocalStorage backup failed (QuotaExceededError or security restrictions), skipping backup:', e);
+      return false;
     }
   };
 
@@ -303,7 +309,7 @@ export default function NovelUploader() {
     setProcessing(true);
 
     try {
-      backupStitchData(selectedNovelId, [prev, curr]);
+      setCanUndo(backupStitchData(selectedNovelId, [prev, curr]));
 
       await new Promise((resolve) => setTimeout(resolve, 200));
 
@@ -403,6 +409,7 @@ export default function NovelUploader() {
       });
 
       localStorage.removeItem('bmad_stitch_backup');
+      setCanUndo(false);
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : '回滚操作失败');
     } finally {
@@ -438,7 +445,7 @@ export default function NovelUploader() {
 
       const affectedChapters = chapters.filter((c) => backupChaptersSet.has(c.id));
 
-      backupStitchData(selectedNovelId, affectedChapters);
+      setCanUndo(backupStitchData(selectedNovelId, affectedChapters));
 
       await new Promise((resolve) => setTimeout(resolve, 200));
 
@@ -601,13 +608,21 @@ export default function NovelUploader() {
         if (!prev) return null;
         if (prev.countdown <= 100) {
           clearInterval(timer);
-          localStorage.removeItem('bmad_stitch_backup');
+          // 仅 stitch 操作的撤销备份随其 toast 过期清理；success/警告类 toast 不再误删 stitch 备份。
+          if (prev.type === 'stitch') {
+            localStorage.removeItem('bmad_stitch_backup');
+          }
           return null;
         }
         return { ...prev, countdown: prev.countdown - 100 };
       });
     }, 100);
     return () => clearInterval(timer);
+  }, [toast]);
+
+  // toast 消失（过期/被替换）时收起撤销可用态。
+  useEffect(() => {
+    if (!toast) setCanUndo(false);
   }, [toast]);
 
   const stageLabelMap: Record<UploadStage, string> = {
@@ -741,6 +756,10 @@ export default function NovelUploader() {
 
             setSelectedNovelId(novelId);
             resetChapterListView();
+            // 切分置信度低 → 直接落到「校验切分」管理视图修复，而非把坏切分引向 DNA 提取。
+            if (computedSplitMeta.confidenceLevel === 'low') {
+              setManageMode(true);
+            }
           } catch (err: unknown) {
             setErrorMsg(err instanceof Error ? err.message : '保存至本地数据库失败');
           } finally {
@@ -867,6 +886,14 @@ export default function NovelUploader() {
             });
 
             resetChapterListView();
+            setSelectedChapterIds(new Set());
+            if (computedSplitMeta.confidenceLevel === 'low') {
+              setToast({
+                show: true,
+                message: '重切后置信度仍偏低，可改用「分章规则」自定义正则，或用 ✨ 智能语义拆分。',
+                countdown: 6000,
+              });
+            }
           } catch (err: unknown) {
             setErrorMsg(err instanceof Error ? err.message : '更新本地章节失败');
           } finally {
@@ -920,6 +947,10 @@ export default function NovelUploader() {
 
   const runResplit = async (strategy: SplitStrategyId) => {
     if (!activeNovel || repairing || uploading) return;
+    if (activeNovel.analysisStatus === 'mapping' || activeNovel.analysisStatus === 'reducing') {
+      setErrorMsg('正在提取 DNA，重新切分会删除正在写入的章节。请先到「DNA 提取」页暂停后再重切。');
+      return;
+    }
     if (!window.confirm('将覆盖所有章节数据并清空 DNA 进度')) return;
     await doResplit(strategy);
   };
@@ -971,7 +1002,7 @@ export default function NovelUploader() {
     const tearDuration = prefersReducedMotion ? 100 : 300;
 
     try {
-      backupStitchData(selectedNovelId, [activeChapter]);
+      setCanUndo(backupStitchData(selectedNovelId, [activeChapter]));
 
       await new Promise((resolve) => setTimeout(resolve, tearDuration));
 
@@ -1046,7 +1077,8 @@ export default function NovelUploader() {
   // T6 / AC5: 调用后端语义推荐，获取“预涂色”裁切点；段落下标与右侧阅读器严格对齐。
   const runSmartSplit = async () => {
     if (smartSplitLoading || !activeNovel) return;
-    const target = chapters[0];
+    // 优先针对超大章（>30000字）做语义拆分；否则回退到首章（分章失败的巨型单章场景）。
+    const target = oversizedChapter || chapters[0];
     if (!target) return;
 
     // 取前 ~2 万字的非空自然段（与阅读器 paragraphs 同一推导，保证 splitParagraphIndex 对齐）
@@ -1206,6 +1238,9 @@ export default function NovelUploader() {
           <div className="text-[11px] text-[#8a8f98] font-mono leading-relaxed">
             <div>{formatWordCount(activeNovel?.wordCount || 0)}字 · {chapters.length}章</div>
             <div>均字：{Math.round(derivedStats?.avgChapterChars ?? 0)}字/章</div>
+            {!!activeNovel?.purifiedCount && activeNovel.purifiedCount > 0 && (
+              <div className="text-[#10b981]/80">已净化 {activeNovel.purifiedCount.toLocaleString()} 字噪点</div>
+            )}
           </div>
 
           {/* AC1: 分章置信度极低时滑入的智能语义拆分入口 */}
@@ -2032,7 +2067,7 @@ export default function NovelUploader() {
             <span className={`font-medium ${toast.type === 'success' ? 'text-emerald-300' : 'text-slate-300'}`}>
               {toast.message}
             </span>
-            {toast.type === 'stitch' && (
+            {toast.type === 'stitch' && canUndo && (
               <button
                 onClick={handleUndo}
                 className="text-[#06b6d4] hover:text-[#5e6ad2] font-semibold flex items-center gap-1 transition-colors px-2 py-1 rounded hover:bg-[#06b6d4]/10 shrink-0"

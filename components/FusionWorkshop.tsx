@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../app/db';
+import { db, type FusionSession } from '../app/db';
+import { RateLimitSignal, withRateLimitRetry } from '../app/dnaEngine';
 import { StreamSseError, ensureLlmConfigReady, postWithLlmConfig, readApiErrorMessage, streamSse } from '../app/llmClient';
 import { useAppStore } from '../app/store';
 
@@ -129,15 +130,16 @@ const normalizeScenesPayload = (value: unknown): StoryboardScene[] => {
 };
 
 export default function FusionWorkshop() {
-  const { setSelectedNovelId, setWorkshopOpen, fusionBias, setFusionBias } = useAppStore((state) => ({
+  const { setSelectedNovelId, setWorkshopOpen, fusionBias, setFusionBias, rateLimited } = useAppStore((state) => ({
     setSelectedNovelId: state.setSelectedNovelId,
     setWorkshopOpen: state.setWorkshopOpen,
     fusionBias: state.fusionBias,
     setFusionBias: state.setFusionBias,
+    rateLimited: state.rateLimited,
   }));
   const novels = useLiveQuery(() => db.novels.reverse().toArray(), []) || [];
   const readyNovels = novels.filter((novel) => novel.analysisStatus === 'done' && novel.dnaCard);
-  const missingReadyCount = Math.max(0, 2 - readyNovels.length);
+  const missingReadyCount = Math.max(0, 1 - readyNovels.length);
   const firstIncompleteNovel = novels.find((novel) => novel.analysisStatus !== 'done' || !novel.dnaCard) || novels[0] || null;
 
   const [step, setStep] = useState<'material' | 'directions' | 'creator'>('material');
@@ -168,10 +170,16 @@ export default function FusionWorkshop() {
   const [collisionPhase, setCollisionPhase] = useState<'idle' | 'igniting' | 'charging'>('idle');
   const [showParticles, setShowParticles] = useState(false);
   const [directionsRevealNonce, setDirectionsRevealNonce] = useState(0);
+  const [adversarialRules, setAdversarialRules] = useState('');
+  const [sceneCount, setSceneCount] = useState(3);
+  const [copiedScene, setCopiedScene] = useState<number | null>(null);
 
   const collisionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const collisionResolveRef = useRef<(() => void) | null>(null);
   const mountedRef = useRef(true);
+  const streamAbortRef = useRef<AbortController | null>(null);
+  const hydratedRef = useRef(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearCollisionTimer = () => {
     if (collisionTimerRef.current) {
@@ -189,6 +197,8 @@ export default function FusionWorkshop() {
     return () => {
       mountedRef.current = false;
       clearCollisionTimer();
+      streamAbortRef.current?.abort();
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
     };
   }, []);
 
@@ -205,6 +215,83 @@ export default function FusionWorkshop() {
     return () => mediaQuery.removeListener(sync);
   }, []);
 
+  // 工坊会话持久化：进入时从 IndexedDB 恢复上次的方向 / 积木 / 故事板 / 正文，刷新或切侧栏不再蒸发。
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const saved = await db.fusionSessions.get('current');
+      if (!cancelled && saved) {
+        setSelectedIds(saved.selectedIds || []);
+        setCustomPrompt(saved.customPrompt || '');
+        setAdversarialRules(saved.adversarialRules || '');
+        setStep(saved.step || 'material');
+        setDirections(saved.directions || []);
+        setBlocks(
+          saved.blocks || { worldviewBlock: '', protagonistBlock: '', antagonistBlock: '', narrativeTone: '' }
+        );
+        setDirectionTitle(saved.directionTitle || '');
+        setSceneCount(saved.sceneCount || 3);
+        setStoryboard(saved.storyboard || []);
+        setSceneTexts(saved.sceneTexts || {});
+        setSceneResumeStatus((saved.sceneResumeStatus as Record<number, SceneResumeStatus>) || {});
+      }
+      if (!cancelled) hydratedRef.current = true;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 仅在空闲时刻落盘（流式 / 碰撞 / 调整进行中跳过，避免逐 token 写盘）；一幕流式收尾归 idle 时即落盘。
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    if (streamingScene !== null || generatingBoard || colliding || tweaking) return;
+    const session: FusionSession = {
+      id: 'current',
+      selectedIds,
+      customPrompt,
+      adversarialRules,
+      step,
+      directions,
+      blocks,
+      directionTitle,
+      sceneCount,
+      storyboard,
+      sceneTexts,
+      sceneResumeStatus,
+      updatedAt: Date.now(),
+    };
+    void db.fusionSessions.put(session);
+  }, [
+    step,
+    selectedIds,
+    customPrompt,
+    adversarialRules,
+    directions,
+    blocks,
+    directionTitle,
+    sceneCount,
+    storyboard,
+    sceneTexts,
+    sceneResumeStatus,
+    streamingScene,
+    generatingBoard,
+    colliding,
+    tweaking,
+  ]);
+
+  // 生成进行中（未落盘窗口）离开页面前提示，避免流式正文丢失。
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (streamingScene !== null || generatingBoard || colliding) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [streamingScene, generatingBoard, colliding]);
+
   const guardLlm = (): boolean => {
     const readiness = ensureLlmConfigReady();
     if (!readiness.ok) {
@@ -219,7 +306,7 @@ export default function FusionWorkshop() {
   };
 
   const collide = async () => {
-    if (!guardLlm() || selectedIds.length < 2 || colliding) return;
+    if (!guardLlm() || selectedIds.length < 1 || colliding) return;
     const reduceMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const cinematicCollision = selectedIds.length === 2;
     const collisionDurationMs = cinematicCollision ? (reduceMotion ? 100 : 1500) : 100;
@@ -248,13 +335,25 @@ export default function FusionWorkshop() {
         .map((id) => readyNovels.find((novel) => novel.id === id))
         .filter(Boolean)
         .map((novel) => ({ novelName: novel!.name, ...novel!.dnaCard! }));
-      const response = await postWithLlmConfig('/api/py/generate-fusion-directions', {
-        dnaCards,
-        userCustomPrompt: customPrompt.trim() || undefined,
-        fusionBias: selectedIds.length === 2 ? fusionBias : 0.5,
-      });
-      if (!response.ok) throw new Error(await readApiErrorMessage(response));
-      const data = (await response.json()) as { directions: FusionDirection[] };
+      const collideAbort = new AbortController();
+      const data = await withRateLimitRetry(
+        async () => {
+          const response = await postWithLlmConfig(
+            '/api/py/generate-fusion-directions',
+            {
+              dnaCards,
+              userCustomPrompt: customPrompt.trim() || undefined,
+              adversarialRules: adversarialRules.trim() || undefined,
+              fusionBias: selectedIds.length === 2 ? fusionBias : 0.5,
+            },
+            { signal: collideAbort.signal }
+          );
+          if (response.status === 429) throw new RateLimitSignal();
+          if (!response.ok) throw new Error(await readApiErrorMessage(response));
+          return (await response.json()) as { directions: FusionDirection[] };
+        },
+        { signal: collideAbort.signal }
+      );
       await animationDone;
       if (!mountedRef.current) return;
 
@@ -277,6 +376,12 @@ export default function FusionWorkshop() {
   };
 
   const chooseDirection = (direction: FusionDirection) => {
+    if (
+      Object.keys(sceneTexts).length > 0 &&
+      !window.confirm('切换方向会清空当前已生成的故事板与分镜正文，确定切换？')
+    ) {
+      return;
+    }
     setDirectionTitle(direction.title);
     setBlocks({
       worldviewBlock: direction.worldviewBlock,
@@ -299,22 +404,36 @@ export default function FusionWorkshop() {
     setTweaking(true);
     setTweakingTarget(tweakTarget);
     try {
-      const response = await postWithLlmConfig('/api/py/tweak-fusion-blocks', {
-        ...blocks,
-        targetBlock: tweakTarget,
-        userInstruction: command.trim(),
-      });
-      if (!response.ok) throw new Error(await readApiErrorMessage(response));
-      const data = (await response.json()) as Partial<Record<BlockKey, string>> & { modifiedBlocks: BlockKey[] };
+      const tweakAbort = new AbortController();
+      const data = await withRateLimitRetry(
+        async () => {
+          const response = await postWithLlmConfig(
+            '/api/py/tweak-fusion-blocks',
+            {
+              ...blocks,
+              targetBlock: tweakTarget,
+              userInstruction: command.trim(),
+              adversarialRules: adversarialRules.trim() || undefined,
+            },
+            { signal: tweakAbort.signal }
+          );
+          if (response.status === 429) throw new RateLimitSignal();
+          if (!response.ok) throw new Error(await readApiErrorMessage(response));
+          return (await response.json()) as Partial<Record<BlockKey, string>> & { modifiedBlocks: BlockKey[] };
+        },
+        { signal: tweakAbort.signal }
+      );
+      const reported = (data.modifiedBlocks || []).filter((key): key is BlockKey => isBlockKey(key));
+      const applied = reported.filter((key) => key === tweakTarget && typeof data[key] === 'string');
+      if (applied.length === 0) {
+        // 模型判断该指令未改动目标卡（或只动了非目标卡）：保留指令文本，给出可操作反馈而非静默吞掉。
+        setError('该指令未改动当前微调目标卡，换个说法或先切换微调目标后再发送。');
+        return;
+      }
       setBlocks((prev) => {
         const next = { ...prev };
-        const reported = (data.modifiedBlocks || []).filter((key): key is BlockKey => isBlockKey(key));
-        const targetOnly = reported.filter((key) => key === tweakTarget);
-        const effectiveKeys = targetOnly.length > 0 ? targetOnly : [];
-        effectiveKeys.forEach((key) => {
-          if (typeof data[key] === 'string') {
-            next[key] = data[key] as string;
-          }
+        applied.forEach((key) => {
+          next[key] = data[key] as string;
         });
         return next;
       });
@@ -340,11 +459,18 @@ export default function FusionWorkshop() {
     setStoryboardStreamText('');
     let streamedText = '';
     let hasParsedScenes = false;
+    const ac = new AbortController();
+    streamAbortRef.current = ac;
     try {
       await streamSse(
         '/api/py/stream-storyboard',
-        { selectedDirection: selectedDirection(), sceneCount: 3 },
         {
+          selectedDirection: selectedDirection(),
+          sceneCount,
+          adversarialRules: adversarialRules.trim() || undefined,
+        },
+        {
+          signal: ac.signal,
           onDelta: (text) => {
             streamedText += text;
             setStoryboardStreamText((prev) => prev + applyAntiSlopFallback(text));
@@ -364,9 +490,16 @@ export default function FusionWorkshop() {
         setError('故事板流式完成，但未能解析分镜结构，请重试。');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '生成故事板失败');
+      if (ac.signal.aborted) {
+        // 用户主动停止：保留已流式片段（可解析则填入故事板），不报错。
+        const partial = parseStoryboardStreamText(streamedText);
+        if (partial.length > 0) setStoryboard(partial);
+      } else {
+        setError(err instanceof Error ? err.message : '生成故事板失败');
+      }
     } finally {
       setGeneratingBoard(false);
+      streamAbortRef.current = null;
     }
   };
 
@@ -385,6 +518,8 @@ export default function FusionWorkshop() {
       setSceneTexts((prev) => ({ ...prev, [num]: '' }));
     }
     setStreamingScene(num);
+    const ac = new AbortController();
+    streamAbortRef.current = ac;
     try {
       await streamSse(
         '/api/py/stream-scene-text',
@@ -392,30 +527,36 @@ export default function FusionWorkshop() {
           selectedDirection: selectedDirection(),
           currentScene: scene,
           precedingTexts,
+          // 续写仅传 currentDraft（后端 build_scene_user_prompt 以它为准），去掉与之重复的 resumeFromText。
           currentDraft: mode === 'resume' ? existingDraft : undefined,
-          resumeFromText: mode === 'resume' ? existingDraft : undefined,
+          adversarialRules: adversarialRules.trim() || undefined,
         },
         {
-          onDelta: (text) =>
-            {
-              const sanitized = applyAntiSlopFallback(text);
-              receivedSceneText += sanitized;
-              setSceneTexts((prev) => ({
-                ...prev,
-                [num]: (prev[num] || '') + sanitized,
-              }));
-            },
+          signal: ac.signal,
+          onDelta: (text) => {
+            const sanitized = applyAntiSlopFallback(text);
+            receivedSceneText += sanitized;
+            setSceneTexts((prev) => ({
+              ...prev,
+              [num]: (prev[num] || '') + sanitized,
+            }));
+          },
         }
       );
       setSceneResumeStatus((prev) => ({ ...prev, [num]: 'done' }));
     } catch (err) {
-      const reason = err instanceof StreamSseError ? err.code : 'unknown_stream_error';
+      const aborted = ac.signal.aborted;
+      const reason = err instanceof StreamSseError ? err.code : aborted ? 'aborted' : 'unknown_stream_error';
       const message = err instanceof Error ? err.message : String(err);
       const hasText = receivedSceneText.trim().length > 0 || existingDraft.trim().length > 0;
-      const resumable = (err instanceof StreamSseError && err.resumable) || hasText;
+      const resumable = aborted || (err instanceof StreamSseError && err.resumable) || hasText;
       if (resumable) {
         setSceneResumeStatus((prev) => ({ ...prev, [num]: 'failed-resumable' }));
-        setError(`第 ${num} 分镜中断（${reason}）：${message}，可继续接写。`);
+        setError(
+          aborted
+            ? `第 ${num} 分镜已停止，可点击「继续接写」续写。`
+            : `第 ${num} 分镜中断（${reason}）：${message}，可继续接写。`
+        );
       } else {
         setSceneResumeStatus((prev) => ({ ...prev, [num]: 'idle' }));
         setSceneTexts((prev) => ({
@@ -425,11 +566,21 @@ export default function FusionWorkshop() {
       }
     } finally {
       setStreamingScene(null);
+      streamAbortRef.current = null;
     }
   };
 
-  const copyScene = (num: number) => {
-    navigator.clipboard.writeText(sceneTexts[num] || '');
+  const copyScene = async (num: number) => {
+    try {
+      await navigator.clipboard.writeText(sceneTexts[num] || '');
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      setCopiedScene(num);
+      copyTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) setCopiedScene(null);
+      }, 1500);
+    } catch {
+      setError('复制失败，请手动选择正文文本复制（部分浏览器需 HTTPS 或用户手势才允许写入剪贴板）。');
+    }
   };
 
   const saveScene = (scene: StoryboardScene) => {
@@ -437,19 +588,21 @@ export default function FusionWorkshop() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `${scene.sceneTitle || 'scene'}.txt`;
+    const safeTitle = (scene.sceneTitle || 'scene').replace(/[\\/:*?"<>|\r\n]+/g, '_').trim().slice(0, 80) || 'scene';
+    anchor.download = `${safeTitle}.txt`;
     anchor.click();
     URL.revokeObjectURL(url);
   };
 
-  // Not enough ready novels
-  if (readyNovels.length < 2) {
+  // 至少需要 1 部 DNA 就绪作品（单本=自我裂变，多本=交叉融合）
+  if (readyNovels.length < 1) {
     return (
       <div className="max-w-xl space-y-4">
         <h2 className="text-lg">融合工坊</h2>
         <p className="text-secondary">
-          需要至少 2 部 DNA 就绪的作品。当前 {readyNovels.length} 部，还需 {missingReadyCount} 部。
+          还差 {missingReadyCount} 部 DNA 就绪作品即可进入引力室。当前 {readyNovels.length} 部。
         </p>
+        <p className="text-xs text-muted">单本可做「自我裂变」，多本可做「交叉融合」。</p>
         {firstIncompleteNovel && (
           <button
             onClick={() => {
@@ -573,7 +726,7 @@ export default function FusionWorkshop() {
         <div>
           <p className="text-xs text-muted">1/3</p>
           <h2 className="text-lg">选择素材</h2>
-          <p className="mt-1 text-sm text-secondary">选择 2 部以上作品进行碰撞</p>
+          <p className="mt-1 text-sm text-secondary">选择 1 部做自我裂变，或 2 部以上交叉碰撞融合</p>
         </div>
 
         <div className="space-y-2">
@@ -615,8 +768,8 @@ export default function FusionWorkshop() {
               <div 
                 role="button"
                 aria-label="触发星体碰撞"
-                aria-disabled={selectedIds.length < 2 || colliding}
-                tabIndex={selectedIds.length < 2 || colliding ? -1 : 0}
+                aria-disabled={selectedIds.length < 1 || colliding}
+                tabIndex={selectedIds.length < 1 || colliding ? -1 : 0}
                 onClick={() => {
                   if (!colliding) {
                     void collide();
@@ -630,7 +783,7 @@ export default function FusionWorkshop() {
                     }
                   }
                 }}
-                className={`relative z-10 w-10 h-10 rounded-full bg-black border border-[#1b1e36] flex items-center justify-center transition-all duration-300 ${selectedIds.length < 2 || colliding ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'} ${collisionPhase === 'charging' ? 'animate-core-charge' : ''}`}
+                className={`relative z-10 w-10 h-10 rounded-full bg-black border border-[#1b1e36] flex items-center justify-center transition-all duration-300 ${selectedIds.length < 1 || colliding ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'} ${collisionPhase === 'charging' ? 'animate-core-charge' : ''}`}
                 style={{
                   boxShadow: `0 0 20px ${interpolateColor('#06b6d4', '#5e6ad2', fusionBias)}`
                 }}
@@ -740,11 +893,26 @@ export default function FusionWorkshop() {
           />
         </div>
 
+        <div className="space-y-2">
+          <p className="text-xs text-muted">反套路红队约束（可选）</p>
+          <textarea
+            value={adversarialRules}
+            onChange={(e) => setAdversarialRules(e.target.value)}
+            rows={2}
+            placeholder="例如：禁止王子救公主套路、禁止开局废柴逆袭、对手必须有合理动机..."
+            className="w-full border bg-transparent p-2 text-sm focus:outline-none"
+          />
+          <p className="text-[11px] text-muted">将作为硬约束贯穿碰撞 / 微调 / 故事板 / 正文全流程。</p>
+        </div>
+
         {error && <p className="text-sm text-red-400">{error}</p>}
+        {rateLimited && (
+          <p className="text-xs text-amber-400">⏳ 云端限速中，已自动退避重试，请稍候…</p>
+        )}
 
         <button
           onClick={collide}
-          disabled={selectedIds.length < 2 || colliding}
+          disabled={selectedIds.length < 1 || colliding}
           className="text-sm disabled:text-muted disabled:cursor-not-allowed"
         >
           {colliding ? '碰撞中...' : `触发星体碰撞 💥 (${selectedIds.length})`}
@@ -899,6 +1067,9 @@ export default function FusionWorkshop() {
       </p>
 
       {error && <p className="text-sm text-red-400">{error}</p>}
+      {rateLimited && (
+        <p className="text-xs text-amber-400">⏳ 云端限速中，已自动退避重试，请稍候…</p>
+      )}
 
       {/* Storyboard */}
       <div className="space-y-4">
@@ -907,15 +1078,39 @@ export default function FusionWorkshop() {
             transition: opacity 100ms ease-out;
           }
         `}</style>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <span className="text-sm">故事板</span>
-          <button
-            onClick={generateStoryboard}
-            disabled={generatingBoard || streamingScene !== null}
-            className="text-sm text-secondary hover:text-primary disabled:text-muted"
-          >
-            {generatingBoard ? '流式生成中...' : '生成故事板'}
-          </button>
+          <div className="flex items-center gap-3">
+            {!generatingBoard && streamingScene === null && (
+              <label className="flex items-center gap-1 text-xs text-muted">
+                分镜数
+                <select
+                  value={sceneCount}
+                  onChange={(e) => setSceneCount(Number(e.target.value))}
+                  className="border border-default bg-transparent px-1 py-0.5 text-xs text-secondary focus:outline-none"
+                >
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                    <option key={n} value={n} className="bg-black">
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {generatingBoard ? (
+              <button onClick={() => streamAbortRef.current?.abort()} className="text-sm text-amber-400 hover:text-amber-300">
+                停止生成
+              </button>
+            ) : (
+              <button
+                onClick={generateStoryboard}
+                disabled={streamingScene !== null}
+                className="text-sm text-secondary hover:text-primary disabled:text-muted"
+              >
+                {storyboard.length > 0 ? '重新生成故事板' : '生成故事板'}
+              </button>
+            )}
+          </div>
         </div>
 
         {(generatingBoard || storyboardStreamText) && (
@@ -950,16 +1145,31 @@ export default function FusionWorkshop() {
                         <span className={`inline-block w-1 h-3 bg-primary ml-0.5 ${prefersReducedMotion ? 'opacity-80' : 'animate-pulse'}`} />
                       )}
                     </div>
-                    <div className="flex gap-4 text-xs">
-                      <button onClick={() => copyScene(scene.sceneNumber)} className="text-muted hover:text-secondary">复制</button>
+                    <div className="flex flex-wrap items-center gap-4 text-xs">
+                      <button onClick={() => copyScene(scene.sceneNumber)} className="text-muted hover:text-secondary">
+                        {copiedScene === scene.sceneNumber ? '已复制 ✓' : '复制'}
+                      </button>
                       <button onClick={() => saveScene(scene)} className="text-muted hover:text-secondary">下载</button>
-      {sceneResumeStatus[scene.sceneNumber] === 'failed-resumable' && (
-        <button
-          onClick={() => generateScene(scene, 'resume')}
-          disabled={streamingScene !== null}
-          className="rounded border border-white/20 bg-white/10 px-2 py-0.5 text-primary backdrop-blur-sm hover:text-white disabled:text-muted"
-          aria-live="polite"
-        >
+                      {streamingScene === scene.sceneNumber ? (
+                        <button onClick={() => streamAbortRef.current?.abort()} className="text-amber-400 hover:text-amber-300">
+                          停止生成
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => generateScene(scene, 'fresh')}
+                          disabled={streamingScene !== null}
+                          className="text-muted hover:text-secondary disabled:opacity-50"
+                        >
+                          重写
+                        </button>
+                      )}
+                      {sceneResumeStatus[scene.sceneNumber] === 'failed-resumable' && (
+                        <button
+                          onClick={() => generateScene(scene, 'resume')}
+                          disabled={streamingScene !== null}
+                          className="rounded border border-white/20 bg-white/10 px-2 py-0.5 text-primary backdrop-blur-sm hover:text-white disabled:text-muted"
+                          aria-live="polite"
+                        >
                           {sceneResumeStatus[scene.sceneNumber] === 'resuming' ? '续写中...' : '继续接写 ↩️'}
                         </button>
                       )}

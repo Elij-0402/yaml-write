@@ -89,6 +89,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
   const [draft, setDraft] = useState('');
   const [savedToast, setSavedToast] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const reconciledRef = useRef(false);
   const [liveFeed, setLiveFeed] = useState<LiveFeedItem[]>([]);
   const renderedIdsRef = useRef<Set<string>>(new Set());
   const feedContainerRef = useRef<HTMLDivElement>(null);
@@ -105,7 +106,25 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
     renderedIdsRef.current = new Set();
     setFlipped(false);
     setActiveTab(DNA_FIELDS[0].key);
+    reconciledRef.current = false;
   }, [novelId]);
+
+  // 挂载对账（Critical）：刷新/崩溃后 analysisStatus 仍持久化为 mapping/reducing，但本会话没有活动的
+  // AbortController（abortRef 为空且未在提取）——这是上一次被中断的孤儿态。直接复位为可继续态，
+  // 并把卡在 mapping 的章回滚 pending，否则用户会被假进度面板永久卡死、暂停按钮空操作、提取按钮被隐藏。
+  useEffect(() => {
+    if (!novel || extracting || abortRef.current) return;
+    if (novel.analysisStatus !== 'mapping' && novel.analysisStatus !== 'reducing') return;
+    if (reconciledRef.current) return;
+    reconciledRef.current = true;
+    void (async () => {
+      await db.novels.update(novelId, { analysisStatus: 'idle' });
+      await db.chapters.where('novelId').equals(novelId).and((c) => c.mapStatus === 'mapping').modify({ mapStatus: 'pending' });
+      setSavedToast('检测到上次提取被中断，已自动复位，可继续提取。');
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = setTimeout(() => setSavedToast(null), 3500);
+    })();
+  }, [novel, novelId, extracting]);
 
   // Story 2.5: 卸载时清理翻转 autofocus / toast 定时器，防内存泄漏与跨小说串扰
   useEffect(() => () => {
@@ -185,6 +204,9 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
   const status = novel.analysisStatus;
   const busy = extracting || status === 'mapping' || status === 'reducing';
   const dnaReady = status === 'done' && novel.dnaCard;
+  const needsReview = novel.splitStatus === 'needs_review';
+  const oversizedChapter = chapters.find((c) => c.wordCount > 30000) || null;
+  const failedChapters = chapters.filter((c) => c.mapStatus === 'error');
 
   const handleExtract = async (limit?: number) => {
     const readiness = ensureLlmConfigReady(llmConfig);
@@ -206,7 +228,14 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
     }
   };
 
-  const pause = () => abortRef.current?.abort();
+  const pause = () => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+    } else {
+      // 孤儿态兜底：无活动会话时直接复位，避免假进度卡死（与挂载对账互为双保险）。
+      void db.novels.update(novelId, { analysisStatus: 'idle' });
+    }
+  };
 
   const handleReduceEarly = () => {
     if (progress.current === 0) {
@@ -369,14 +398,23 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
               <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse motion-reduce:animate-none" />
               DNA 基因组图谱已固化就绪
             </span>
-            {readyNovelCount >= 2 && (
+            <div className="flex items-center gap-2">
               <button
-                onClick={() => setWorkshopOpen(true)}
-                className="text-xs px-3 py-1.5 rounded bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-medium shadow-lg hover:shadow-indigo-500/10 transition-all duration-300"
+                onClick={() => { if (window.confirm('将基于全部章节重新测序并覆盖当前 DNA，确定继续？')) void handleExtract(undefined); }}
+                className="text-xs px-3 py-1.5 rounded bg-zinc-900 border border-zinc-800 text-secondary hover:text-white hover:border-zinc-700 transition-all"
+                title="补测剩余章节并基于全书重新归纳 DNA（覆盖当前结果）"
               >
-                进入双星融合工坊 →
+                补测 / 重测
               </button>
-            )}
+              {readyNovelCount >= 1 && (
+                <button
+                  onClick={() => setWorkshopOpen(true)}
+                  className="text-xs px-3 py-1.5 rounded bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-medium shadow-lg hover:shadow-indigo-500/10 transition-all duration-300"
+                >
+                  进入融合工坊 →
+                </button>
+              )}
+            </div>
           </div>
 
           {/* 五维高奢 Tabs（母题/世界观/角色/叙事/风格），同一时刻仅显选中维度卡 */}
@@ -489,6 +527,26 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
             }
           `}</style>
 
+          {!busy && (needsReview || oversizedChapter) && (
+            <div className="border border-amber-500/20 bg-amber-500/5 rounded-lg p-4 text-sm max-w-xl">
+              <div className="flex items-center gap-2 text-amber-400 font-semibold">
+                <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse motion-reduce:animate-none" />
+                {oversizedChapter ? '存在超大章节，建议先裁切' : '章节切分质量偏低，建议先校验'}
+              </div>
+              <p className="mt-2 text-secondary text-xs leading-relaxed">
+                {oversizedChapter
+                  ? `章节「${oversizedChapter.name}」超过 30,000 字，DNA 提取会被阻断。请先到切分校验台用剪刀或智能语义拆分裁小。`
+                  : '当前切分置信度较低，可能影响 DNA 提取质量。建议先到切分校验台修复后再提取。'}
+              </p>
+              <button
+                onClick={() => setManageMode(true)}
+                className="mt-3 text-xs inline-flex items-center gap-1 text-amber-400 hover:text-amber-300 font-medium transition-colors"
+              >
+                前往切分校验台 →
+              </button>
+            </div>
+          )}
+
           {!llmReadiness.ok && (
             <div className="border border-amber-500/20 bg-amber-500/5 rounded-lg p-4 text-sm max-w-xl">
               <div className="flex items-center gap-2 text-amber-400 font-semibold">
@@ -585,6 +643,11 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
                     {status !== 'reducing' && (
                       <p className="text-xs text-muted">
                         已分析章节的精髓正持续汇入本地索引库...
+                      </p>
+                    )}
+                    {status === 'reducing' && (
+                      <p className="text-xs text-muted leading-relaxed">
+                        整书归纳为单次大请求，耗时较长；若部署在 Vercel 可能触及 10s 函数上限，长篇建议本地运行。
                       </p>
                     )}
                   </div>
@@ -699,6 +762,28 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
             <>
               {/* Speed Dial centered when not busy */}
               {renderSpeedDial()}
+
+              {llmReadiness.ok && failedChapters.length > 0 && (
+                <div className="border border-rose-500/20 bg-rose-500/5 rounded-lg p-4 text-sm max-w-xl mx-auto space-y-3">
+                  <div className="flex items-center gap-2 text-rose-400 font-semibold">
+                    <span>⚠️</span> {failedChapters.length} 个章节测序失败
+                  </div>
+                  <div className="space-y-1 max-h-24 overflow-y-auto text-xs text-secondary">
+                    {failedChapters.slice(0, 6).map((c) => (
+                      <div key={c.id} className="truncate">
+                        第 {c.chapterIndex} 章 · {c.name}{c.errorMsg ? ` — ${c.errorMsg}` : ''}
+                      </div>
+                    ))}
+                    {failedChapters.length > 6 && <div className="text-muted">…等共 {failedChapters.length} 章</div>}
+                  </div>
+                  <button
+                    onClick={() => void handleExtract(undefined)}
+                    className="text-xs px-3 py-1.5 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 transition-all"
+                  >
+                    继续提取（重试失败章）
+                  </button>
+                </div>
+              )}
 
               {llmReadiness.ok && (
                 <div className="flex gap-4 text-sm max-w-xl mx-auto pt-2">

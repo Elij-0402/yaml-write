@@ -20,7 +20,7 @@ const RL_MAX_MS = 30_000; // 单次退避上限
 const RL_MAX_ATTEMPTS = 5; // 同一单元最多退避次数；耗尽作为真实失败兜底（防活锁 / 防额度耗尽空转）
 
 // 模块内哨兵错误：让调用方把 429 与普通错误 / abort 严格区分（严禁 any / 字符串判型）。
-class RateLimitSignal extends Error {
+export class RateLimitSignal extends Error {
   constructor() {
     super('rate_limited');
     this.name = 'RateLimitSignal';
@@ -79,10 +79,8 @@ function interruptibleSleep(ms: number, signal: AbortSignal): Promise<'ok' | 'ab
   });
 }
 
-// 单一共享退避 helper（Map 与 Reduce 复用，勿重复造轮子）：捕获 RateLimitSignal → 点亮护航灯
-// → 抖动指数退避 → 重试；退避被 abort 抢占则重抛哨兵，交由调用方既有 catch 走「回滚 pending」
-// 路径（与基线 abort 语义一致，零回归）；退避次数耗尽抛友好终态错误，作为真实失败兜底。
-async function withRateLimitRetry<T>(
+// 单一共享退避 helper（Map / Reduce / 融合工坊复用，勿重复造轮子）：捕获 RateLimitSignal → 点亮护航灯
+export async function withRateLimitRetry<T>(
   fn: () => Promise<T>,
   opts: { signal: AbortSignal }
 ): Promise<T> {

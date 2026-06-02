@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
+import { persist, createJSONStorage, type StateStorage } from 'zustand/middleware';
 import {
   createDefaultProviderProfiles,
   isProviderId,
@@ -55,7 +55,8 @@ export function decryptKey(encrypted: string): string {
       return xored;
     }
   } catch {
-    return encrypted;
+    // 损坏密文（解密/解码失败）视为未配置，避免把乱码当成"已就绪"的 Key 发往后端。
+    return '';
   }
 }
 
@@ -82,9 +83,12 @@ interface AppState {
   setShouldReduceEarly: (reduce: boolean) => void;
   rateLimited: boolean;
   setRateLimited: (limited: boolean) => void;
+  persistError: boolean;
+  setPersistError: (value: boolean) => void;
   resetSequencingState: () => void;
   setActiveProvider: (provider: ProviderId) => void;
   updateActiveProviderProfile: (patch: Partial<ProviderProfile>) => void;
+  setTemperature: (value: number) => void;
   fusionBias: number;
   setFusionBias: (bias: number) => void;
   setSelectedNovelId: (id: string | null) => void;
@@ -165,6 +169,23 @@ function normalizeLLMConfig(raw: unknown): LLMConfig {
   };
 }
 
+// localStorage 包装：写失败（隐私模式 / 配额耗尽）不再静默吞掉，而是点亮 persistError 供顶栏提示。
+const safeLocalStorage: StateStorage = {
+  getItem: (name) => {
+    try { return localStorage.getItem(name); } catch { return null; }
+  },
+  setItem: (name, value) => {
+    try {
+      localStorage.setItem(name, value);
+    } catch {
+      try { useAppStore.getState().setPersistError(true); } catch { /* store not ready */ }
+    }
+  },
+  removeItem: (name) => {
+    try { localStorage.removeItem(name); } catch { /* ignore */ }
+  },
+};
+
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
@@ -175,9 +196,11 @@ export const useAppStore = create<AppState>()(
       sequencingGear: 'balanced',
       shouldReduceEarly: false,
       rateLimited: false,
+      persistError: false,
       setSequencingGear: (gear) => set({ sequencingGear: gear }),
       setShouldReduceEarly: (reduce) => set({ shouldReduceEarly: reduce }),
       setRateLimited: (limited) => set({ rateLimited: limited }),
+      setPersistError: (value) => set({ persistError: value }),
       resetSequencingState: () => set({ shouldReduceEarly: false, rateLimited: false }),
       setActiveProvider: (provider) =>
         set((state) => {
@@ -210,6 +233,7 @@ export const useAppStore = create<AppState>()(
         }),
       fusionBias: 0.5,
       setFusionBias: (bias) => set({ fusionBias: Math.max(0.01, Math.min(0.99, bias)) }),
+      setTemperature: (value) => set((state) => ({ llmConfig: { ...state.llmConfig, temperature: clampTemperature(value) } })),
       setSelectedNovelId: (id) => set({ selectedNovelId: id, workshopOpen: false, manageMode: false }),
       setWorkshopOpen: (open) => set({ workshopOpen: open }),
       setManageMode: (on) => set({ manageMode: on }),
@@ -219,12 +243,17 @@ export const useAppStore = create<AppState>()(
       version: STORE_VERSION,
       // AC2: obfuscate every `apiKey` on its way to localStorage and restore it on read.
       // In-memory state always holds the plaintext key, so llmClient.ts needs no changes.
-      storage: createJSONStorage(() => localStorage, {
+      storage: createJSONStorage(() => safeLocalStorage, {
         replacer: (key, value) =>
           key === 'apiKey' && typeof value === 'string' && value ? encryptKey(value) : value,
         reviver: (key, value) =>
           key === 'apiKey' && typeof value === 'string' && value ? decryptKey(value) : value,
       }),
+      onRehydrateStorage: () => (_state, error) => {
+        if (error) {
+          try { useAppStore.getState().setPersistError(true); } catch { /* store not ready */ }
+        }
+      },
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState;
         const state = persistedState as Record<string, unknown>;
@@ -238,6 +267,7 @@ export const useAppStore = create<AppState>()(
           sequencingGear: (gear === 'safe' || gear === 'balanced' || gear === 'speed') ? gear : 'balanced',
           shouldReduceEarly: false,
           rateLimited: false,
+          persistError: false,
           fusionBias: typeof state.fusionBias === 'number' ? state.fusionBias : 0.5,
         };
       },

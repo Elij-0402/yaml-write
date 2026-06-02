@@ -8,12 +8,8 @@ import NovelUploader from '../components/NovelUploader';
 import NovelDetail from '../components/NovelDetail';
 import FusionWorkshop from '../components/FusionWorkshop';
 import SettingsPanel from '../components/SettingsPanel';
-import { getLlmReadinessSummary } from './workflow';
-
-function formatWordCount(count: number): string {
-  if (count >= 10000) return `${(count / 10000).toFixed(1)}万`;
-  return `${count}`;
-}
+import WorkflowStepper from '../components/WorkflowStepper';
+import { getLlmReadinessSummary, getNovelWorkflowSummary, type WorkflowStage } from './workflow';
 
 function getStatus(novel: Novel): string {
   if (novel.analysisStatus === 'done' && novel.dnaCard) return 'ready';
@@ -23,11 +19,20 @@ function getStatus(novel: Novel): string {
 }
 
 export default function Home() {
-  const { selectedNovelId, setSelectedNovelId, workshopOpen, setWorkshopOpen, manageMode, setManageMode, llmConfig } =
-    useAppStore();
+  const {
+    selectedNovelId,
+    setSelectedNovelId,
+    workshopOpen,
+    setWorkshopOpen,
+    manageMode,
+    setManageMode,
+    llmConfig,
+    persistError,
+  } = useAppStore();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsIntent, setSettingsIntent] = useState<string | null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -40,12 +45,6 @@ export default function Home() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const novels = useLiveQuery<Novel[]>(() => db.novels.orderBy('createdAt').reverse().toArray(), []) || [];
-  const selectedNovel = novels.find((novel) => novel.id === selectedNovelId) || null;
-
-  const readyCount = novels.filter((novel) => novel.analysisStatus === 'done' && novel.dnaCard).length;
-  const llmReadiness = useMemo(() => getLlmReadinessSummary(llmConfig), [llmConfig]);
-
   useEffect(() => {
     const handler = (event: Event) => {
       const custom = event as CustomEvent<{ intent?: string }>;
@@ -55,6 +54,70 @@ export default function Home() {
     window.addEventListener('open-settings-panel', handler as EventListener);
     return () => window.removeEventListener('open-settings-panel', handler as EventListener);
   }, []);
+
+  const novelsRaw = useLiveQuery<Novel[]>(() => db.novels.orderBy('createdAt').reverse().toArray(), []);
+  const novels = novelsRaw || [];
+  const selectedNovel = novels.find((novel) => novel.id === selectedNovelId) || null;
+
+  const readyCount = novels.filter((novel) => novel.analysisStatus === 'done' && novel.dnaCard).length;
+  const llmReadiness = useMemo(() => getLlmReadinessSummary(llmConfig), [llmConfig]);
+  const workflowSummary = useMemo(
+    () => getNovelWorkflowSummary(selectedNovel, llmConfig, readyCount),
+    [selectedNovel, llmConfig, readyCount]
+  );
+
+  // 清理幽灵选中：持久化的 selectedNovelId 指向已删除作品时复位（仅在 live 查询解析完成后判断，避免误清加载中的有效选择）。
+  useEffect(() => {
+    if (novelsRaw && selectedNovelId && !novelsRaw.some((n) => n.id === selectedNovelId)) {
+      setSelectedNovelId(null);
+    }
+  }, [novelsRaw, selectedNovelId, setSelectedNovelId]);
+
+  const currentStageId: WorkflowStage['id'] = workshopOpen
+    ? 'fusion'
+    : selectedNovel
+    ? manageMode
+      ? 'split'
+      : 'dna'
+    : 'import';
+
+  const currentPath = workshopOpen
+    ? '融合工坊'
+    : selectedNovel
+    ? manageMode
+      ? '章节校验'
+      : '作品详情'
+    : '总览';
+
+  const goImport = () => {
+    setSelectedNovelId(null);
+    setWorkshopOpen(false);
+    setManageMode(false);
+    setMobileNavOpen(false);
+  };
+
+  // 阶段门导航：语义层由 stepper 驱动，用户不再直面三标志拼凑。
+  const handleStageClick = (id: WorkflowStage['id']) => {
+    setMobileNavOpen(false);
+    switch (id) {
+      case 'import':
+        setSelectedNovelId(null);
+        break;
+      case 'split':
+        if (selectedNovel) {
+          setWorkshopOpen(false);
+          setManageMode(true);
+        }
+        break;
+      case 'dna':
+        if (selectedNovel) setSelectedNovelId(selectedNovel.id);
+        else if (!llmReadiness.ok) setSettingsOpen(true);
+        break;
+      case 'fusion':
+        if (readyCount >= 1) setWorkshopOpen(true);
+        break;
+    }
+  };
 
   const deleteNovel = async (id: string) => {
     if (!window.confirm('删除此作品？')) return;
@@ -67,31 +130,30 @@ export default function Home() {
     }
   };
 
-  const currentPath = workshopOpen
-    ? '融合工坊'
-    : selectedNovel
-    ? manageMode
-      ? '章节校验'
-      : '作品详情'
-    : '总览';
-
   return (
     <main className="flex min-h-screen">
-      {/* Sidebar */}
-      <aside className="hidden w-56 flex-col border-r lg:flex">
+      {/* Mobile nav scrim */}
+      {mobileNavOpen && (
+        <button
+          type="button"
+          aria-label="关闭导航"
+          onClick={() => setMobileNavOpen(false)}
+          className="fixed inset-0 z-30 bg-black/60 lg:hidden"
+        />
+      )}
+
+      {/* Sidebar — static on lg, slide-in drawer below lg */}
+      <aside
+        className={`${
+          mobileNavOpen ? 'fixed inset-y-0 left-0 z-40 flex' : 'hidden'
+        } w-56 flex-col border-r bg-black lg:static lg:z-auto lg:flex`}
+      >
         <div className="flex h-12 items-center border-b px-4">
           <span className="text-sm text-secondary">创作 DNA 工坊</span>
         </div>
 
         <div className="flex-1 overflow-y-auto py-2">
-          <button
-            onClick={() => {
-              setSelectedNovelId(null);
-              setWorkshopOpen(false);
-              setManageMode(false);
-            }}
-            className="w-full px-4 py-2 text-left text-sm text-secondary hover:text-primary"
-          >
+          <button onClick={goImport} className="w-full px-4 py-2 text-left text-sm text-secondary hover:text-primary">
             + 导入作品
           </button>
 
@@ -110,6 +172,7 @@ export default function Home() {
                       onClick={() => {
                         setSelectedNovelId(novel.id);
                         setWorkshopOpen(false);
+                        setMobileNavOpen(false);
                       }}
                       className="flex items-center justify-between"
                     >
@@ -138,13 +201,19 @@ export default function Home() {
 
         <div className="border-t py-2">
           <button
-            onClick={() => setWorkshopOpen(true)}
+            onClick={() => {
+              setWorkshopOpen(true);
+              setMobileNavOpen(false);
+            }}
             className={`w-full px-4 py-2 text-left text-sm ${workshopOpen ? 'text-primary' : 'text-secondary hover:text-primary'}`}
           >
-            融合工坊 {readyCount >= 2 && <span className="text-muted">({readyCount})</span>}
+            融合工坊 {readyCount >= 1 && <span className="text-muted">({readyCount})</span>}
           </button>
           <button
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => {
+              setSettingsOpen(true);
+              setMobileNavOpen(false);
+            }}
             className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-secondary hover:text-primary"
           >
             <span>设置</span>
@@ -157,24 +226,44 @@ export default function Home() {
 
       {/* Main */}
       <section className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 items-center justify-between border-b px-6">
-          <div className="flex items-center gap-2 text-sm">
-            <span className="text-muted">{selectedNovel?.name || '工坊'}</span>
+        <header className="flex h-12 items-center justify-between gap-3 border-b px-4 sm:px-6">
+          <div className="flex min-w-0 items-center gap-2 text-sm">
+            <button
+              onClick={() => setMobileNavOpen(true)}
+              className="text-secondary hover:text-primary lg:hidden"
+              aria-label="打开导航"
+            >
+              ☰
+            </button>
+            <span className="truncate text-muted">{selectedNovel?.name || '工坊'}</span>
             <span className="text-muted">/</span>
-            <span>{currentPath}</span>
+            <span className="truncate">{currentPath}</span>
           </div>
-          <span className={`text-xs ${llmReadiness.ok ? 'text-secondary' : 'text-amber-500'}`}>
-            {llmReadiness.ok ? 'LLM Ready' : 'LLM Offline'}
-          </span>
+          <div className="flex shrink-0 items-center gap-3">
+            {persistError && (
+              <span
+                className="text-xs text-amber-500"
+                title="浏览器本地存储不可用（隐私模式或空间不足），设置与密钥可能无法保存。"
+              >
+                ⚠ 存储不可用
+              </span>
+            )}
+            <span className={`text-xs ${llmReadiness.ok ? 'text-secondary' : 'text-amber-500'}`}>
+              {llmReadiness.ok ? 'LLM Ready' : 'LLM Offline'}
+            </span>
+          </div>
         </header>
+
+        {/* 主线进度 Stepper */}
+        <div className="border-b px-4 py-2 sm:px-6">
+          <WorkflowStepper summary={workflowSummary} currentStageId={currentStageId} onStageClick={handleStageClick} />
+        </div>
 
         <div className="flex-1 overflow-y-auto p-6">
           {workshopOpen ? (
             <FusionWorkshop />
-          ) : selectedNovelId && !manageMode ? (
-            <NovelDetail novelId={selectedNovelId} />
-          ) : selectedNovelId && manageMode ? (
-            <NovelUploader />
+          ) : selectedNovel && !manageMode ? (
+            <NovelDetail novelId={selectedNovel.id} />
           ) : (
             <NovelUploader />
           )}
