@@ -26,12 +26,20 @@ from openai import (
     RateLimitError,
 )
 from api.schemas import (
+    ArcMapInput,
+    BookDirectInput,
     BookReduceInput,
     ChapterMapInput,
     ChapterMapSummaryResponse,
+    EnhanceInstructionInput,
+    EnhanceInstructionResponse,
     FusionDirectionsInput,
     FusionDirectionsResponse,
+    MAX_ARC_CONTENT_CHARS,
+    MAX_DIRECT_INPUT_CHARS,
     NovelDNACardResponse,
+    RepairSettingGapsInput,
+    RepairSettingGapsResponse,
     SceneTextInput,
     SplitRecommendInput,
     SplitRecommendResponse,
@@ -48,6 +56,7 @@ if not logger.handlers:
 app = FastAPI(docs_url="/api/py/docs", openapi_url="/api/py/openapi.json")
 
 REQUEST_TIMEOUT_SECONDS = 25.0
+LONG_REQUEST_TIMEOUT_SECONDS = 120.0  # 重步骤（整本直提 / reduce / 弧窗 / 换皮 / 补洞）面向本地/非 Vercel 后端（决策 A），放宽超时
 STREAM_TIMEOUT_SECONDS = 60.0
 MAX_PARSE_RETRIES = 2
 MAX_CHAPTER_CONTENT_CHARS = 30000
@@ -56,8 +65,12 @@ MAX_SCENE_CONTEXT_CHARS = 24000
 MAX_SPLIT_RECOMMEND_CHARS = 20000
 RATE_LIMIT_RULES = {
     "/api/py/extract-chapter-map": (60, 120),
+    "/api/py/extract-arc-map": (60, 120),
+    "/api/py/extract-book-direct": (60, 10),
     "/api/py/extract-book-reduce": (60, 10),
     "/api/py/generate-fusion-directions": (60, 8),
+    "/api/py/repair-setting-gaps": (60, 8),
+    "/api/py/enhance-instruction": (60, 20),
     "/api/py/tweak-fusion-blocks": (60, 20),
     "/api/py/generate-storyboard": (60, 12),
     "/api/py/stream-storyboard": (60, 12),
@@ -72,6 +85,20 @@ ANTI_SLOP_CONSTRAINT = (
     "“空气仿佛凝固”“心中一紧”“缓缓睁开眼”“不知为何”等。"
     "禁止宏大空泛的抒情与解释性旁白；改用冰冷、具象、高信息密度的物理细节与克制白描，"
     "让冲突通过动作、环境与器物呈现，而非作者直接告知。文字要有颗粒度与刺痛感。"
+)
+
+# 4 层「引擎 / 皮」DNA 产出规范（extract-book-direct 与 extract-book-reduce 共用，确保两路输出同形）。
+FOUR_LAYER_DNA_GUIDE = (
+    "请把这本小说拆解为「可移植引擎」与「可替换皮」，输出 4 层创作 DNA"
+    "（换皮变题理论：迁移引擎、替换皮 → 形似神不似的新书）：\n"
+    "① structureSkeleton（引擎·结构骨架）：可迁移的【功能节拍序列】（Propp 功能 / 角色功能）。"
+    "每个节拍含 function（功能名，须题材中立，如「废柴受辱」「获得金手指」「打脸打压者」「强敌登场」「绝境翻盘」）"
+    "与 summary（该节拍在本书的具体体现，一句话）。按故事推进顺序给出约 8–20 个关键节拍，"
+    "只保留可被任意题材复用的【结构功能】，剥离具体题材名词。\n"
+    "② pacingSyuzhet（引擎·编排节奏）：视角排布、悬念与信息差的铺陈方式、爽点/钩子的出现节奏与曲线（syuzhet 表层编排）。\n"
+    "③ themeSkin（皮·题材）：题材类型、世界观底层运行规则与代价体系、核心意象与符号——这是【可替换】的那层皮。\n"
+    "④ proseStyle（文笔）：语言颗粒度、白描/意象风格、句式与语调质感。\n"
+    "铁律：引擎层（①②）必须题材中立、可干净迁移；皮层（③④）才承载具体题材。"
 )
 
 DEFAULT_ALLOWED_BASE_URLS = [
@@ -346,10 +373,11 @@ async def run_structured(
     request: Request,
     label: str,
     instructor_retries: int = 0,
+    timeout: float = REQUEST_TIMEOUT_SECONDS,
 ):
     """Shared structured-extraction call: instructor + transient retry + friendly errors."""
     client = instructor.from_openai(
-        build_openai_client(api_key, base_url, timeout=REQUEST_TIMEOUT_SECONDS)
+        build_openai_client(api_key, base_url, timeout=timeout)
     )
     for attempt in range(MAX_PARSE_RETRIES + 1):
         try:
@@ -447,21 +475,78 @@ async def extract_book_reduce(data: BookReduceInput, request: Request):
     logger.info("extract_book_reduce ip=%s model=%s chapters=%s", get_client_ip(request), model, len(data.mapSummaries))
 
     system_prompt = (
-        "你是一个顶级的小说架构大师。下面是这本小说所有章节提炼出的 Map 摘要序列（按时间线排列）。"
-        "请通过长上下文推理，提炼出这本小说最深层的'创作 DNA 结构'：\n"
-        "1. 母题与冲突：作者潜意识反复探讨的底层命题（如：秩序与失控的拉扯、技术与人性的自我拆解）。\n"
-        "2. 世界观运行规则与代价：世界如何流转？获取力量或地位的底层代价是什么？\n"
-        "3. 角色灵魂原型：主角与主要角色的深层冲突、认知缺陷与救赎轨迹。\n"
-        "4. 叙事结构特征与视角排布规律。\n"
-        "5. 风格指纹：全书语言特色的高频意象与笔触质感。\n"
-        "请以精炼、充满洞察力的结构返回。"
+        "你是一个顶级的小说架构大师与叙事学者。下面是这本小说全部章节/弧窗提炼出的 Map 摘要序列（按时间线排列）。"
+        "请通过长上下文综合推理，" + FOUR_LAYER_DNA_GUIDE
     )
-    user_prompt = f"小说名：{data.novelName or '（未命名）'}\n\n章节 Map 摘要序列：\n{timeline}"
+    user_prompt = f"小说名：{data.novelName or '（未命名）'}\n\n章节/弧窗 Map 摘要序列：\n{timeline}"
     return await run_structured(
         api_key=api_key, base_url=data.baseUrl, model=model,
         response_model=NovelDNACardResponse,
         system_prompt=system_prompt, user_prompt=user_prompt,
         temperature=data.temperature, request=request, label="extract_book_reduce",
+        instructor_retries=1, timeout=LONG_REQUEST_TIMEOUT_SECONDS,
+    )
+
+
+@app.post("/api/py/extract-book-direct")
+async def extract_book_direct(data: BookDirectInput, request: Request):
+    """小档「整本直提」：整本（或大块）净化文本一次喂入 → 直接产 4 层 DNA，跳过逐章 map。"""
+    await ensure_rate_limit(request, "/api/py/extract-book-direct")
+    model = sanitize_text(data.model)
+    api_key = sanitize_text(data.apiKey)
+    content = sanitize_text(data.content)
+    if not content:
+        raise ApiError(status_code=400, code="invalid_request", message="正文内容不能为空。")
+    if len(content) > MAX_DIRECT_INPUT_CHARS:
+        content = content[:MAX_DIRECT_INPUT_CHARS]
+    validate_llm_creds(api_key, model, data.temperature)
+    logger.info("extract_book_direct ip=%s model=%s content_chars=%s", get_client_ip(request), model, len(content))
+
+    system_prompt = (
+        "你是一个顶级的小说架构大师与叙事学者。下面给出一本小说接近完整的正文（可能为节选/截断）。"
+        "请整体把握全书后，" + FOUR_LAYER_DNA_GUIDE
+    )
+    user_prompt = f"小说名：{data.novelName or '（未命名）'}\n\n【小说正文】\n{content}"
+    return await run_structured(
+        api_key=api_key, base_url=data.baseUrl, model=model,
+        response_model=NovelDNACardResponse,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        temperature=data.temperature, request=request, label="extract_book_direct",
+        instructor_retries=1, timeout=LONG_REQUEST_TIMEOUT_SECONDS,
+    )
+
+
+@app.post("/api/py/extract-arc-map")
+async def extract_arc_map(data: ArcMapInput, request: Request):
+    """中/大档「弧窗 map」：若干连续章节拼接成的弧文本 → 一条 ChapterMapSummary。"""
+    await ensure_rate_limit(request, "/api/py/extract-arc-map")
+    title = sanitize_text(data.title)
+    content = sanitize_text(data.content)
+    model = sanitize_text(data.model)
+    api_key = sanitize_text(data.apiKey)
+    if not title or not content:
+        raise ApiError(status_code=400, code="invalid_request", message="区间标识与内容不能为空。")
+    if len(content) > MAX_ARC_CONTENT_CHARS:
+        content = content[:MAX_ARC_CONTENT_CHARS]
+    validate_llm_creds(api_key, model, data.temperature)
+    logger.info("extract_arc_map ip=%s model=%s content_chars=%s", get_client_ip(request), model, len(content))
+
+    system_prompt = (
+        "你是一个极其挑剔的文学分析编辑。下面是一段【连续章节区间】的正文（可能跨多章）。"
+        "请对这段区间整体降维提炼，过滤对话、抒情、招式细节等冗余，只关注实质性的'DNA 突变点'：\n"
+        "1. 本区间新展现的底层设定、地图或规则？\n"
+        "2. 主角的情感底线 / 核心动机 / 人际关系发生的不可逆变化？\n"
+        "3. 本区间最核心的情节推力（含关键转折与爽点）？\n"
+        "4. 本区间独特的遣词造句或叙事语调特征？\n"
+        "用极度精炼、非情绪化的骨架语言回答，每项控制在 150 字内；某项无内容则填'无'。"
+    )
+    user_prompt = f"区间标识: {title}\n\n区间正文:\n{content}"
+    return await run_structured(
+        api_key=api_key, base_url=data.baseUrl, model=model,
+        response_model=ChapterMapSummaryResponse,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        temperature=data.temperature, request=request, label="extract_arc_map",
+        timeout=LONG_REQUEST_TIMEOUT_SECONDS,
     )
 
 
@@ -471,16 +556,37 @@ async def generate_fusion_directions(data: FusionDirectionsInput, request: Reque
     model = sanitize_text(data.model)
     api_key = sanitize_text(data.apiKey)
     validate_llm_creds(api_key, model, data.temperature)
-    logger.info("generate_fusion_directions ip=%s model=%s books=%s", get_client_ip(request), model, len(data.dnaCards))
 
-    cards = []
-    for idx, c in enumerate(data.dnaCards):
-        cards.append(
-            f"=== 小说 {idx + 1}：{c.novelName or '（未命名）'} ===\n"
-            f"母题与冲突：{c.theme}\n世界观规则与代价：{c.worldview}\n"
-            f"角色灵魂原型：{c.characters}\n叙事特征：{c.narrativeStyle}\n风格指纹：{c.styleFingerprint}"
+    engine = data.engineCard
+    if not engine or not engine.structureSkeleton:
+        raise ApiError(
+            status_code=400,
+            code="missing_engine_card",
+            message="缺少骨架引擎卡（需 4 层 DNA 的结构骨架）。请先对骨架书完成 DNA 提取。",
         )
-    dna_block = "\n\n".join(cards)
+    skin = data.skinSource
+    mode = data.mode or ("cross" if (skin and (skin.novelName or skin.themeSkin)) else "self")
+    logger.info("generate_fusion_directions ip=%s model=%s mode=%s beats=%s", get_client_ip(request), model, mode, len(engine.structureSkeleton))
+
+    beats = "\n".join(
+        f"- {b.function}：{b.summary}" for b in engine.structureSkeleton if (b.function or "").strip()
+    ) or "（结构骨架为空）"
+
+    if skin and (skin.novelName or (skin.themeSkin or "").strip()):
+        skin_block = (
+            f"题材来源：{skin.novelName or '（口述）'}\n"
+            f"题材世界观与意象：{skin.themeSkin or '（未提供，可据来源自行归纳）'}\n"
+            f"参考文笔质感：{skin.proseStyle or '（无特别要求）'}"
+        )
+        if skin.userBrief and skin.userBrief.strip():
+            skin_block += f"\n用户额外诉求：{skin.userBrief.strip()}"
+    else:
+        brief = (skin.userBrief.strip() if (skin and skin.userBrief) else "")
+        skin_block = (
+            "（自我裂变：无题材书，请基于用户口述/自由发挥另立一个与原书反差鲜明的新题材）\n"
+            f"用户口述题材诉求：{brief or '（未指定，请自选一个反差鲜明的新题材）'}"
+        )
+
     extra = ""
     if data.userCustomPrompt and data.userCustomPrompt.strip():
         extra += f"\n\n【用户自定义大方向】：{data.userCustomPrompt.strip()}"
@@ -488,33 +594,107 @@ async def generate_fusion_directions(data: FusionDirectionsInput, request: Reque
         extra += f"\n\n【用户红队对抗规则（最高优先级，违反即重写）】：{data.adversarialRules.strip()}"
 
     system_prompt = (
-        "你是一个由三位顶尖创作大脑组成的'创世圆桌'，并内置一名冷面红队审查官。"
-        "你的任务：基于输入的多本小说'创作 DNA'，碰撞出 3 个完全独立、互不雷同、具备高维原创性的融合变体方向。\n"
-        "请在内部（不外显推演过程）完成以下步骤后，只输出最终 3 个方向：\n"
-        "第一步·摩擦力诊断：计算这些 DNA 之间最尖锐的偏离与矛盾点（例：'追求自然天道'撞上'极致资本科技'→ "
-        "天道修行能否被资本化、义体化），以核心摩擦点作为变体的引爆原点，而非表面元素拼贴。\n"
-        "第二步·三编剧圆桌辩论：\n"
-        "· 先锋导演（催化剂）：打破常规，提出最极致的世界观反转与最具冲击力的'催化变量'。坚决反对'把飞剑染成霓虹色'式肤浅拼凑，"
-        "主张本质级重构（如'灵气本是重度致幻的工业废料，跨国集团垄断净化核心，散修须将身体改造成气脉过滤器才能活命'）。\n"
-        "· 现实主义社会学者（法则构建师）：为激进幻想搭建严密的社会经济与代价体系（如'修行层级晋升＝持股量增多，天劫＝集团强制清算重组'），确保逻辑自洽。\n"
-        "· 反套路批评家（红队）：清扫一切宏大空泛叙事与煽情辞藻，强制冷白描与高信息密度物理细节。\n"
-        "第三步·红队自查：逐条核对每个方向——是否只是名字替换式的机械缝合？是否违反用户红队规则？是否含黑名单陈词滥调？不合格者就地重写直至通过。\n"
-        "3 个方向之间必须在母题与机制上显著不同，禁止换皮。\n"
+        "你是一位精通「换皮变题」的小说迁移大师（学理：Propp 功能不变·角色可替换；Riedl『story analogues』类推迁移）。"
+        "任务：把【骨架引擎】的功能节拍序列，逐一类推迁移到【新题材皮】，产出 3 个『形似神不似』的换皮嫁接方向。\n"
+        "硬规则：\n"
+        "1. 保持引擎的功能节拍序列与编排节奏不变——同一套结构骨架与爽点曲线，只换皮、不换骨。\n"
+        "2. 把每个功能节拍重新具象化为新题材里的等价事件（角色 / 道具 / 场景 / 机制换皮，功能不变），严禁照抄原书的题材名词。\n"
+        "3. 3 个方向必须采用显著不同的嫁接思路（如：题材直译 / 反转母题 / 杂交第三元素），彼此在题材与机制上明显区分，禁止换名式雷同。\n"
+        "4. 每个方向给出：title、concept（一句话核心冲突）、catalyst（催化变量及其质变）、"
+        "worldviewBlock / protagonistBlock / antagonistBlock / narrativeTone（换皮后的新书具体设定四块）、"
+        "transferNote（一句话溯源：保留了引擎的哪条结构、替换成了什么题材皮）。\n"
+        "5. 设定四块要逻辑自洽、可支撑后续开篇正文；narrativeTone 贴合新题材重新生成文笔，不照搬原书。\n"
+        + ANTI_SLOP_CONSTRAINT
     )
-    if len(data.dnaCards) == 2:
-        system_prompt += (
-            f"\n\n【融合偏航倾向】：参与融合的两部作品中，"
-            f"小说 1 的比重权重为 {data.fusionBias:.2f}，小说 2 的比重权重为 {1.0 - data.fusionBias:.2f}。"
-            f"请在小说融合理念设计、世界观、主角和叙事风格的变体生成中，严格遵循此权重比例主导倾向，进行深层的语义插值合成。"
-        )
-    system_prompt += ANTI_SLOP_CONSTRAINT
-    user_prompt = f"以下是参与碰撞的小说创作 DNA：\n\n{dna_block}{extra}\n\n请输出 3 个深度融合的原创变体方向。"
+    user_prompt = (
+        f"【骨架引擎（迁移不变量）】\n来源：{engine.novelName or '（未命名）'}\n"
+        f"结构功能节拍序列：\n{beats}\n编排节奏：{engine.pacingSyuzhet or '（未提供）'}\n\n"
+        f"【新题材皮（替换目标）】\n{skin_block}{extra}\n\n"
+        "请输出 3 个换皮嫁接方向。"
+    )
     return await run_structured(
         api_key=api_key, base_url=data.baseUrl, model=model,
         response_model=FusionDirectionsResponse,
         system_prompt=system_prompt, user_prompt=user_prompt,
         temperature=data.temperature, request=request, label="generate_fusion_directions",
-        instructor_retries=2,
+        instructor_retries=2, timeout=LONG_REQUEST_TIMEOUT_SECONDS,
+    )
+
+
+@app.post("/api/py/repair-setting-gaps")
+async def repair_setting_gaps(data: RepairSettingGapsInput, request: Request):
+    """补洞：逐结构节拍核对新题材能否支撑，定位断裂点并补入自洽事件 / 设定（质量护城河）。"""
+    await ensure_rate_limit(request, "/api/py/repair-setting-gaps")
+    model = sanitize_text(data.model)
+    api_key = sanitize_text(data.apiKey)
+    validate_llm_creds(api_key, model, data.temperature)
+    logger.info("repair_setting_gaps ip=%s model=%s beats=%s", get_client_ip(request), model, len(data.structureSkeleton))
+
+    beats = "\n".join(
+        f"- {b.function}：{b.summary}" for b in data.structureSkeleton if (b.function or "").strip()
+    ) or "（结构骨架为空）"
+    adv = ""
+    if data.adversarialRules and data.adversarialRules.strip():
+        adv = f"\n【用户红队对抗规则（必须遵守）】：{data.adversarialRules.strip()}"
+
+    system_prompt = (
+        "你是换皮迁移的『补洞质检官』。朴素的结构迁移常留下逻辑硬伤——新题材撑不起原结构的某些功能节拍。\n"
+        "请逐一核对【引擎结构节拍】在【新书设定】下能否自洽成立：\n"
+        "1. 定位撑不住的节拍（例：『吞噬异火升级』迁到美食题材后没有对应的升级机制）。\n"
+        "2. 为每个断裂点补入让逻辑自洽的事件 / 设定 / 机制，并写进对应的设定块。\n"
+        "3. 只做『补洞』式增补与微调：不要推翻方向、不要更换题材、不要删除既有合理设定。\n"
+        "返回补洞后的四块设定，以及 gaps（你定位并补入的断裂点清单：beat / issue / patch）。"
+        + adv
+        + ANTI_SLOP_CONSTRAINT
+    )
+    user_prompt = (
+        f"【引擎结构功能节拍序列（必须都被新题材支撑）】\n{beats}\n\n"
+        f"【新题材皮】\n{data.themeSkin or '（未提供）'}\n\n"
+        f"【当前新书设定四块】\nworldviewBlock：{data.worldviewBlock}\nprotagonistBlock：{data.protagonistBlock}\n"
+        f"antagonistBlock：{data.antagonistBlock}\nnarrativeTone：{data.narrativeTone}\n\n"
+        "请补洞并返回完整的四块设定与 gaps 清单。"
+    )
+    return await run_structured(
+        api_key=api_key, base_url=data.baseUrl, model=model,
+        response_model=RepairSettingGapsResponse,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        temperature=data.temperature, request=request, label="repair_setting_gaps",
+        instructor_retries=1, timeout=LONG_REQUEST_TIMEOUT_SECONDS,
+    )
+
+
+@app.post("/api/py/enhance-instruction")
+async def enhance_instruction(data: EnhanceInstructionInput, request: Request):
+    """✨意图增强：糙指令 → 精确创作简报 +「我理解你要…对吗」确认话术（带确认门，前端确认后再执行 tweak）。"""
+    await ensure_rate_limit(request, "/api/py/enhance-instruction")
+    model = sanitize_text(data.model)
+    api_key = sanitize_text(data.apiKey)
+    instruction = sanitize_text(data.userInstruction)
+    if not instruction:
+        raise ApiError(status_code=400, code="invalid_request", message="指令不能为空。")
+    validate_llm_creds(api_key, model, data.temperature)
+    logger.info("enhance_instruction ip=%s model=%s", get_client_ip(request), model)
+
+    system_prompt = (
+        "你是创作指令的『意图增强器』。用户给出的常是模糊糙指令；请把它增强为【精确、可执行的创作简报】，并给出一句确认话术。\n"
+        "要求：\n"
+        "1. interpretedBrief：明确指出『要改什么 / 改成什么效果 / 必须保留什么约束』，具体可执行，不空泛、不堆砌辞藻。\n"
+        "2. confirmation：用『我理解你要……，对吗？』句式一句话复述你的理解，供用户确认或否决。\n"
+        "3. 忠实放大用户意图，严禁臆造与原指令无关的新设定，也不要替用户做额外决定。\n"
+        + ANTI_SLOP_CONSTRAINT
+    )
+    ctx = ""
+    if data.targetBlock:
+        ctx += f"\n【当前目标卡】{data.targetBlock}"
+    if data.blockContext and data.blockContext.strip():
+        ctx += f"\n【目标卡当前内容】\n{data.blockContext.strip()}"
+    user_prompt = f"【用户糙指令】：{instruction}{ctx}\n\n请输出增强后的创作简报与确认话术。"
+    return await run_structured(
+        api_key=api_key, base_url=data.baseUrl, model=model,
+        response_model=EnhanceInstructionResponse,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        temperature=data.temperature, request=request, label="enhance_instruction",
+        instructor_retries=1,
     )
 
 

@@ -22,7 +22,7 @@ export interface ChapterAnalysis {
   style: string;
 }
 
-// === Book-level DNA (v5 Map-Reduce) — mirrors api/schemas.py (camelCase) ===
+// === Book-level DNA — mirrors api/schemas.py (camelCase) ===
 export interface ChapterMapSummary {
   worldviewUpdates: string;
   keyPlotTurns: string;
@@ -30,12 +30,39 @@ export interface ChapterMapSummary {
   styleObservations: string;
 }
 
+// v9 四层「引擎 / 皮」DNA — 镜像 api/schemas.py NovelDNACardResponse v2。
+// 引擎层（①②）结构化、可干净迁移；皮层（③④）自由文本、可替换。
+export interface StructureBeat {
+  function: string; // 可迁移功能节拍（Propp 功能；如「废柴受辱」「获金手指」）
+  summary: string;  // 该节拍在原书的具体体现（一句话）
+}
+
 export interface NovelDNACard {
+  structureSkeleton: StructureBeat[]; // ① 引擎·结构骨架（typed）
+  pacingSyuzhet: string;              // ② 引擎·编排节奏（syuzhet）
+  themeSkin: string;                  // ③ 皮·题材世界观意象（自由文本）
+  proseStyle: string;                 // ④ 文笔（自由文本；换皮时默认重生成）
+}
+
+// 存量 5 维卡：惰性迁移保留原文不丢（决策 B）。仅在重新提取时升级为 4 层 NovelDNACard。
+export interface LegacyNovelDNACard {
   theme: string;
   worldview: string;
   characters: string;
   narrativeStyle: string;
   styleFingerprint: string;
+}
+
+// dnaCard 为联合类型：用守卫区分 4 层新卡与 5 维旧卡，避免读取时误判形状。
+export function isLegacyDnaCard(
+  card: NovelDNACard | LegacyNovelDNACard | null | undefined,
+): card is LegacyNovelDNACard {
+  return !!card && 'theme' in card && !('structureSkeleton' in card);
+}
+export function isFourLayerDnaCard(
+  card: NovelDNACard | LegacyNovelDNACard | null | undefined,
+): card is NovelDNACard {
+  return !!card && 'structureSkeleton' in card;
 }
 
 export type AnalysisStatus = 'idle' | 'mapping' | 'reducing' | 'done' | 'error';
@@ -84,10 +111,11 @@ export interface Novel {
   sourceTextCleaned: string;
   splitStatus: SplitStatus;
   splitMeta?: SplitMeta;
-  // v5 book-level DNA (Map-Reduce)
+  // book-level DNA (extraction)
   analysisStatus: AnalysisStatus;
   mapProgress?: { total: number; current: number };
-  dnaCard?: NovelDNACard | null;
+  dnaCard?: NovelDNACard | LegacyNovelDNACard | null;
+  dnaCardVersion?: 1 | 2; // 1 = 旧 5 维（legacy，惰性保留）；2 = 新 4 层。无卡时留空
 }
 
 export interface Chapter {
@@ -118,6 +146,7 @@ export interface FusionDirectionRecord {
   protagonistBlock: string;
   antagonistBlock: string;
   narrativeTone: string;
+  transferNote?: string; // 换皮溯源：引擎结构如何嫁接到新题材（v2 换皮迁移；旧记录缺省）
 }
 
 export interface StoryboardSceneRecord {
@@ -128,6 +157,13 @@ export interface StoryboardSceneRecord {
   visualCues: string;
 }
 
+// v9 版本历史：每次接受 AI 改动「前」对 4 块设定拍快照，支持一键回退（试错零成本）。
+export interface SettingSnapshot {
+  blocks: { worldviewBlock: string; protagonistBlock: string; antagonistBlock: string; narrativeTone: string };
+  at: number;   // epoch ms
+  note: string; // 改动说明（如指令摘要 / 「回退至此」）
+}
+
 export interface FusionSession {
   id: string; // v8 起为按 id 的多记录「创作库」（不再单例 'current'）；每开一轮新融合即一条新记录
   name: string; // 创作名（DB 为单一真相源，侧栏可重命名；回写前 get 既有记录以保留）
@@ -135,7 +171,7 @@ export interface FusionSession {
   selectedIds: string[];
   customPrompt: string;
   adversarialRules: string;
-  step: 'material' | 'directions' | 'creator';
+  step: 'material' | 'directions' | 'creator' | 'manuscript';
   directions: FusionDirectionRecord[];
   blocks: { worldviewBlock: string; protagonistBlock: string; antagonistBlock: string; narrativeTone: string };
   directionTitle: string;
@@ -143,6 +179,7 @@ export interface FusionSession {
   storyboard: StoryboardSceneRecord[];
   sceneTexts: Record<number, string>;
   sceneResumeStatus: Record<number, string>;
+  settingHistory?: SettingSnapshot[]; // v9：4 块设定的编辑快照栈（接受 AI 改动前入栈），缺省视为空栈
   updatedAt: number;
 }
 
@@ -313,6 +350,24 @@ class NovelFusionDB extends Dexie {
             s.createdAt = s.updatedAt || Date.now();
           }
         });
+      });
+    // v9: DNA 卡重切为 4 层「引擎/皮」(StructureBeat[] + pacingSyuzhet/themeSkin/proseStyle) + FusionSession.settingHistory 版本历史。
+    // 索引串与 v8 一致（dnaCard / dnaCardVersion / settingHistory 均非索引）。存量 5 维卡惰性标 legacy：
+    // 保留原文不丢、analysisStatus 维持 done，仅打 dnaCardVersion=1；重新提取时才升 4 层（决策 B）。
+    this.version(9)
+      .stores({
+        novels: 'id, name, createdAt, splitStatus, analysisStatus',
+        chapters: 'id, novelId, chapterIndex, status, mapStatus',
+        fusionSessions: 'id, updatedAt, createdAt',
+      })
+      .upgrade(async (tx) => {
+        await tx.table('novels').toCollection().modify((novel: Partial<Novel>) => {
+          // v9 之前的 dnaCard 必为旧 5 维形状——非空即标 legacy(1)；空卡(null)不标，留待提取写 2。
+          if (novel.dnaCard && novel.dnaCardVersion === undefined) {
+            novel.dnaCardVersion = 1;
+          }
+        });
+        /* settingHistory 为新可选字段，存量创作留空（缺省视为空栈），首次接受 AI 改动时按需创建——不回填以免阻塞启动主线程 */
       });
   }
 }

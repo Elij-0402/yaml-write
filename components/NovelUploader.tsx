@@ -4,7 +4,6 @@ import { db, type Chapter, type Novel, type SplitMeta, type SplitStrategyId } fr
 import { useAppStore } from '../app/store';
 import { listProviderMetas, getProviderMeta } from '../app/llmProviders';
 import { getLlmConfigError, postWithLlmConfig, readApiErrorMessage } from '../app/llmClient';
-import { runDnaExtraction } from '../app/dnaEngine';
 import { rescoreSplit } from '../app/splitQuality';
 
 const MAX_UPLOAD_SIZE_MB = 50;
@@ -101,7 +100,6 @@ export default function NovelUploader() {
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   const [selectedChapterIds, setSelectedChapterIds] = useState<Set<string>>(new Set());
   const [processing, setProcessing] = useState(false);
-  const [localExtractingMap, setLocalExtractingMap] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState<{
     show: boolean;
     message: string;
@@ -136,7 +134,6 @@ export default function NovelUploader() {
     setSplittingIndex(null);
     setIsCrystalOpen(false);
     setSplitRecommendations([]);
-    setLocalExtractingMap({});
   }, [selectedNovelId]);
 
   useEffect(() => {
@@ -537,73 +534,6 @@ export default function NovelUploader() {
       setErrorMsg(err instanceof Error ? err.message : '批量合并操作失败');
     } finally {
       await new Promise((resolve) => setTimeout(resolve, 300));
-      setProcessing(false);
-    }
-  };
-
-  const handleSingleChapterExtract = async (chapterId: string) => {
-    if (processing || !selectedNovelId) return;
-
-    if (activeNovel?.analysisStatus === 'mapping' || activeNovel?.analysisStatus === 'reducing') {
-      setToast({
-        show: true,
-        message: '已有一个全局分析任务在后台运行中，请等待其完成后再进行单章精测。',
-        countdown: 6000,
-      });
-      return;
-    }
-
-    if (!crystalReady || getLlmConfigError(llmConfig)) {
-      setIsCrystalOpen(true);
-      return;
-    }
-
-    const chapter = chapters.find((c) => c.id === chapterId);
-    if (!chapter) return;
-
-    if (chapter.wordCount > 30000) {
-      setToast({
-        show: true,
-        message: '本章字数已超过 30,000 字上限，为了保护大模型上下文及本地 IndexedDB 性能，请先用剪刀裁剪成小章。',
-        countdown: 6000,
-      });
-      return;
-    }
-
-    setProcessing(true);
-    setLocalExtractingMap((prev) => ({ ...prev, [chapterId]: true }));
-    setErrorMsg(null);
-
-    const controller = new AbortController();
-
-    try {
-      await runDnaExtraction(selectedNovelId, {
-        targetChapterId: chapterId,
-        signal: controller.signal,
-      });
-
-      setToast({
-        show: true,
-        message: '本章基因精测成功，小说全书 DNA 已增量固化重组。',
-        countdown: 6000,
-        type: 'success',
-      });
-    } catch (err: unknown) {
-      const isAbort = err instanceof Error && err.name === 'AbortError';
-      if (isAbort) {
-        await db.chapters.update(chapterId, {
-          mapStatus: 'pending',
-          errorMsg: undefined,
-        });
-      } else {
-        await db.chapters.update(chapterId, {
-          mapStatus: 'error',
-          errorMsg: err instanceof Error ? err.message : String(err),
-        });
-        setErrorMsg(err instanceof Error ? err.message : String(err));
-      }
-    } finally {
-      setLocalExtractingMap((prev) => ({ ...prev, [chapterId]: false }));
       setProcessing(false);
     }
   };
@@ -1164,31 +1094,32 @@ export default function NovelUploader() {
       >
         <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".txt" className="hidden" />
 
-        <div className="text-center py-4">
-          <h1 className="text-xl font-medium tracking-tight bg-gradient-to-r from-white via-[#e2e8f0] to-[#94a3b8] bg-clip-text text-transparent">导入小说作品</h1>
-          <p className="mt-2 text-xs text-slate-400">将 TXT 格式的小说拖入高奢暗黑虚线拖拽舱</p>
+        <div className="py-2">
+          <div className="eyebrow">Workbench · 工作台</div>
+          <h1 className="atelier-h1" style={{ fontSize: 28 }}>把读过的书，<span className="it">炼成</span>新书。</h1>
+          <p className="lede">拖入一本 TXT —— 工坊在后台自动切分、提取创作 DNA；就绪后去配方台指认骨架 / 题材，一键起一本形似神不似的新书。</p>
         </div>
 
         <div
           onClick={() => fileInputRef.current?.click()}
           className={`relative group cursor-pointer overflow-hidden rounded-xl border border-dashed py-14 px-8 text-center transition-all duration-[150ms] ${
             dragActive
-              ? 'border-[#06b6d4] bg-[#06b6d4]/5 shadow-[0_0_20px_rgba(6,182,212,0.15),0_0_40px_rgba(94,106,210,0.1)]'
-              : 'border-[#1b1e36] bg-[#080916] hover:border-[#5e6ad2]/50 hover:shadow-[0_0_15px_rgba(94,106,210,0.05)]'
+              ? 'border-[color:var(--vermilion)] bg-[color:var(--vermilion-soft)]'
+              : 'border-default bg-secondary hover:border-[color:var(--vermilion-line)]'
           }`}
         >
-          {/* Subtle hover laser flow lines */}
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#5e6ad2]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+          {/* Subtle hover wash */}
+          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" style={{ background: 'linear-gradient(to bottom, transparent, var(--vermilion-soft), transparent)' }} />
 
           <div className="space-y-4">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#10122c] border border-[#1b1e36] text-2xl transition-transform duration-300 group-hover:scale-110">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-default bg-secondary text-2xl transition-transform duration-300 group-hover:scale-110">
               📥
             </div>
             <div>
-              <p className="text-sm font-medium text-slate-200 group-hover:text-[#06b6d4] transition-colors duration-150">
-                {dragActive ? '释放以启动舱门' : '点击选择或拖拽文件到这里'}
+              <p className="text-sm font-medium text-secondary transition-colors duration-150" style={{ color: dragActive ? 'var(--vermilion)' : undefined }}>
+                {dragActive ? '释放以启动导入' : '点击选择或拖拽文件到这里'}
               </p>
-              <p className="mt-1.5 text-xs text-slate-500">
+              <p className="mt-1.5 text-xs text-muted">
                 支持 UTF-8 / GB18030 / BIG5 自适应检测，文件限制在 50MB 以内
               </p>
             </div>
@@ -1490,7 +1421,7 @@ export default function NovelUploader() {
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0 pl-2">
                     {/* DNA Sequencing State Badge or Hover Action */}
-                    { (chapter.mapStatus === 'mapping' || localExtractingMap[chapter.id]) ? (
+                    {chapter.mapStatus === 'mapping' ? (
                       <div className="flex items-center gap-1 text-cyan-400 font-mono text-[10px]">
                         <svg className="w-3 h-3 animate-spin text-cyan-400" viewBox="0 0 100 100">
                           <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="12" strokeDasharray="160 80" fill="none" />
@@ -1498,57 +1429,19 @@ export default function NovelUploader() {
                         <span>[🧬 测序中...]</span>
                       </div>
                     ) : chapter.mapStatus === 'done' ? (
-                      <div className="flex items-center gap-1.5">
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" title="已完成 DNA 提炼">
-                          🧬
-                        </span>
-                        <button
-                          disabled={processing}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSingleChapterExtract(chapter.id);
-                          }}
-                          className="hidden group-hover:flex items-center gap-0.5 rounded bg-[#06b6d4]/10 hover:bg-[#06b6d4]/20 border border-[#06b6d4]/30 px-1 py-0.5 text-[9px] text-[#67e8f9] transition-all"
-                          title="重新精测本章"
-                        >
-                          🧬 精测
-                        </button>
-                      </div>
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" title="已完成 DNA 提炼">
+                        🧬
+                      </span>
                     ) : chapter.mapStatus === 'error' ? (
-                      <div className="flex items-center gap-1.5">
-                        <div className="relative group/error shrink-0">
-                          <span className="text-red-500 cursor-help" title={chapter.errorMsg || '解析失败'}>⚠️</span>
-                          {chapter.errorMsg && (
-                            <div className="absolute bottom-full right-0 mb-1 hidden group-hover/error:block w-48 p-2 rounded-lg bg-[#0c0e20]/90 border border-red-500/30 backdrop-blur-md shadow-xl text-[10px] text-red-200 z-50 whitespace-normal break-all">
-                              {chapter.errorMsg}
-                            </div>
-                          )}
-                        </div>
-                        <button
-                          disabled={processing}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSingleChapterExtract(chapter.id);
-                          }}
-                          className="hidden group-hover:flex items-center gap-0.5 rounded bg-[#06b6d4]/10 hover:bg-[#06b6d4]/20 border border-[#06b6d4]/30 px-1 py-0.5 text-[9px] text-[#67e8f9] transition-all"
-                          title="重试精测本章"
-                        >
-                          🧬 精测
-                        </button>
+                      <div className="relative group/error shrink-0">
+                        <span className="text-red-500 cursor-help" title={chapter.errorMsg || '解析失败'}>⚠️</span>
+                        {chapter.errorMsg && (
+                          <div className="absolute bottom-full right-0 mb-1 hidden group-hover/error:block w-48 p-2 rounded-lg bg-[#0c0e20]/90 border border-red-500/30 backdrop-blur-md shadow-xl text-[10px] text-red-200 z-50 whitespace-normal break-all">
+                            {chapter.errorMsg}
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <button
-                        disabled={processing}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSingleChapterExtract(chapter.id);
-                        }}
-                        className="hidden group-hover:flex items-center gap-1 rounded bg-[#06b6d4]/10 hover:bg-[#06b6d4]/20 border border-[#06b6d4]/30 px-1.5 py-0.5 text-[10px] text-[#67e8f9] transition-all"
-                        title="对本章单独执行 [🧬 精测]"
-                      >
-                        🧬 精测
-                      </button>
-                    )}
+                    ) : null}
 
                     {warningType === 'short' && (
                       <button

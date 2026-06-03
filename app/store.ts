@@ -7,7 +7,7 @@ import {
   type ProviderProfile,
 } from './llmProviders';
 
-const STORE_VERSION = 3;
+const STORE_VERSION = 4;
 const DEFAULT_TEMPERATURE = 0.7;
 
 function xorEncryptDecrypt(input: string): string {
@@ -78,26 +78,22 @@ interface AppState {
   workshopOpen: boolean; // creative fusion workshop view
   activeCreationId: string | null; // 工坊当前读写的创作库记录 id（v8 多记录创作库）
   manageMode: boolean; // show NovelUploader (chapters + re-split) for the selected novel
-  sequencingGear: 'safe' | 'balanced' | 'speed';
-  setSequencingGear: (gear: 'safe' | 'balanced' | 'speed') => void;
-  shouldReduceEarly: boolean;
-  setShouldReduceEarly: (reduce: boolean) => void;
+  engineNovelId: string | null; // 配方台：指认为「骨架(引擎)」的书
+  skinNovelId: string | null;   // 配方台：指认为「题材(皮)」的书
   rateLimited: boolean;
   setRateLimited: (limited: boolean) => void;
   workshopBusy: boolean; // 工坊流式/生成进行中——禁止 busy 时切换/新建创作，避免跨创作 stale-write
   setWorkshopBusy: (busy: boolean) => void;
   persistError: boolean;
   setPersistError: (value: boolean) => void;
-  resetSequencingState: () => void;
   setActiveProvider: (provider: ProviderId) => void;
   updateActiveProviderProfile: (patch: Partial<ProviderProfile>) => void;
-  setTemperature: (value: number) => void;
-  fusionBias: number;
-  setFusionBias: (bias: number) => void;
   setSelectedNovelId: (id: string | null) => void;
   setWorkshopOpen: (open: boolean) => void;
   setActiveCreationId: (id: string | null) => void;
   setManageMode: (on: boolean) => void;
+  setEngineNovelId: (id: string | null) => void;
+  setSkinNovelId: (id: string | null) => void;
 }
 
 function clampTemperature(value: unknown): number {
@@ -198,17 +194,14 @@ export const useAppStore = create<AppState>()(
       workshopOpen: false,
       activeCreationId: null,
       manageMode: false,
-      sequencingGear: 'balanced',
-      shouldReduceEarly: false,
+      engineNovelId: null,
+      skinNovelId: null,
       rateLimited: false,
       workshopBusy: false,
       persistError: false,
-      setSequencingGear: (gear) => set({ sequencingGear: gear }),
-      setShouldReduceEarly: (reduce) => set({ shouldReduceEarly: reduce }),
       setRateLimited: (limited) => set({ rateLimited: limited }),
       setWorkshopBusy: (busy) => set({ workshopBusy: busy }),
       setPersistError: (value) => set({ persistError: value }),
-      resetSequencingState: () => set({ shouldReduceEarly: false, rateLimited: false }),
       setActiveProvider: (provider) =>
         set((state) => {
           if (provider === state.llmConfig.activeProvider) return state;
@@ -238,13 +231,12 @@ export const useAppStore = create<AppState>()(
             },
           };
         }),
-      fusionBias: 0.5,
-      setFusionBias: (bias) => set({ fusionBias: Math.max(0.01, Math.min(0.99, bias)) }),
-      setTemperature: (value) => set((state) => ({ llmConfig: { ...state.llmConfig, temperature: clampTemperature(value) } })),
       setSelectedNovelId: (id) => set({ selectedNovelId: id, workshopOpen: false, manageMode: false, activeCreationId: null }),
       setWorkshopOpen: (open) => set({ workshopOpen: open }),
       setActiveCreationId: (id) => set({ activeCreationId: id, workshopOpen: true, manageMode: false }),
       setManageMode: (on) => set({ manageMode: on }),
+      setEngineNovelId: (id) => set({ engineNovelId: id }),
+      setSkinNovelId: (id) => set({ skinNovelId: id }),
     }),
     {
       name: 'novel-fusion-store', // name of the item in the storage (must be unique)
@@ -265,7 +257,10 @@ export const useAppStore = create<AppState>()(
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState;
         const state = persistedState as Record<string, unknown>;
-        const gear = state.sequencingGear;
+        // STORE_VERSION 4：丢弃已删旋钮字段（档位 / 阶段汇总耦合 / 融合偏向），它们不再属于状态形状。
+        delete state.sequencingGear;
+        delete state.shouldReduceEarly;
+        delete state.fusionBias;
         return {
           ...state,
           llmConfig: normalizeLLMConfig(state.llmConfig),
@@ -273,12 +268,11 @@ export const useAppStore = create<AppState>()(
           workshopOpen: false,
           activeCreationId: null,
           manageMode: false,
-          sequencingGear: (gear === 'safe' || gear === 'balanced' || gear === 'speed') ? gear : 'balanced',
-          shouldReduceEarly: false,
+          engineNovelId: null,
+          skinNovelId: null,
           rateLimited: false,
           workshopBusy: false,
           persistError: false,
-          fusionBias: typeof state.fusionBias === 'number' ? state.fusionBias : 0.5,
         };
       },
     }

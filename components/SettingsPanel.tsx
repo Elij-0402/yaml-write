@@ -10,7 +10,7 @@ interface SettingsPanelProps {
 }
 
 export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsPanelProps) {
-  const { llmConfig, setActiveProvider, updateActiveProviderProfile, setTemperature } = useAppStore();
+  const { llmConfig, setActiveProvider, updateActiveProviderProfile } = useAppStore();
   const activeProvider = llmConfig.activeProvider;
   const activeProviderMeta = getProviderMeta(activeProvider);
   const activeProfile = llmConfig.providerProfiles[activeProvider];
@@ -119,23 +119,6 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
                   <option key={preset.value} value={preset.value}>{preset.label}</option>
                 ))}
               </datalist>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-xs text-muted">温度 (temperature)</label>
-                <span className="font-mono text-xs text-secondary">{llmConfig.temperature.toFixed(1)}</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="1.5"
-                step="0.1"
-                value={llmConfig.temperature}
-                onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                className="w-full cursor-pointer accent-white"
-              />
-              <p className="text-[11px] text-muted">越低越稳健克制，越高越发散大胆；默认 0.7，范围 0–1.5，全局生效。</p>
             </div>
           </div>
 

@@ -2,6 +2,9 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 
 MAX_CHAPTER_CONTENT_CHARS = 30000
+# 自适应提取：整本直提（小档）与弧窗（中/大档）的输入上限。
+MAX_DIRECT_INPUT_CHARS = 200000
+MAX_ARC_CONTENT_CHARS = 48000
 
 # ============================================================
 # 阶段一：单章 Map 提取
@@ -23,14 +26,20 @@ class ChapterMapInput(BaseModel):
 
 
 # ============================================================
-# 阶段二：全书 DNA 卡片 (Reduce)
+# 阶段二：全书 DNA 卡片 (Reduce / Direct) — v2 四层「引擎 / 皮」模型
+# 引擎层（①②）结构化、可干净迁移；皮层（③④）自由文本、可替换。
+# 与 app/db.ts 的 StructureBeat / NovelDNACard 逐字段同步（camelCase）。
 # ============================================================
+class StructureBeat(BaseModel):
+    function: str = Field(..., description="可迁移的功能节拍 / 角色功能（Propp 功能；如「废柴受辱」「获得金手指」「打脸打压者」）")
+    summary: str = Field(..., description="该功能节拍在原书中的具体体现（一句话，具象、克制、无陈词滥调）")
+
+
 class NovelDNACardResponse(BaseModel):
-    theme: str = Field(..., description="底层母题与核心冲突（充满张力与文学隐喻的表述）")
-    worldview: str = Field(..., description="世界观底层运行规则与代价体系（逻辑自洽且深刻）")
-    characters: str = Field(..., description="核心角色灵魂原型（刻画其矛盾性与致命缺陷）")
-    narrativeStyle: str = Field(..., description="叙事结构特征与视角排布规律")
-    styleFingerprint: str = Field(..., description="文字指纹（如：语言颗粒度、冷白描特征、意象风格）")
+    structureSkeleton: List[StructureBeat] = Field(..., min_length=1, description="① 引擎·结构骨架：可迁移的功能节拍序列（结构化）")
+    pacingSyuzhet: str = Field(..., description="② 引擎·编排节奏：视角排布 / 悬念铺陈 / 爽点曲线（syuzhet 表层叙事编排）")
+    themeSkin: str = Field(..., description="③ 皮·题材：题材类型 / 世界观底层规则与代价 / 核心意象（可替换的自由文本）")
+    proseStyle: str = Field(..., description="④ 文笔：语感、语言颗粒度、白描/意象风格（换皮时默认贴新题材重生成）")
 
 
 class ChapterMapItem(BaseModel):
@@ -49,6 +58,26 @@ class BookReduceInput(BaseModel):
     temperature: float = Field(0.7, ge=0.0, le=1.5)
 
 
+# 小档「整本直提」：整本（或大块）净化文本一次喂入 → 直接产 4 层 DNA（跳过逐章 map）。
+class BookDirectInput(BaseModel):
+    novelName: str = Field("", max_length=300)
+    content: str = Field(..., min_length=1, max_length=MAX_DIRECT_INPUT_CHARS)
+    apiKey: str = Field(..., min_length=1, max_length=512)
+    baseUrl: str = Field(..., min_length=1, max_length=512)
+    model: str = Field(..., min_length=1, max_length=200)
+    temperature: float = Field(0.7, ge=0.0, le=1.5)
+
+
+# 中/大档「弧窗 map」：若干连续章节拼接成弧文本 → 一条 ChapterMapSummary（上限高于单章）。
+class ArcMapInput(BaseModel):
+    title: str = Field(..., min_length=1, max_length=600)
+    content: str = Field(..., min_length=1, max_length=MAX_ARC_CONTENT_CHARS)
+    apiKey: str = Field(..., min_length=1, max_length=512)
+    baseUrl: str = Field(..., min_length=1, max_length=512)
+    model: str = Field(..., min_length=1, max_length=200)
+    temperature: float = Field(0.7, ge=0.0, le=1.5)
+
+
 # ============================================================
 # 阶段三：创意融合方向（3 个绝对不同的原创方向）
 # ============================================================
@@ -56,10 +85,11 @@ class FusionDirection(BaseModel):
     title: str = Field(..., description="变体创意方向标题")
     concept: str = Field(..., description="核心变体创意理念（一句话震撼人心的冲突描述）")
     catalyst: str = Field(..., description="注入的催化变量及其产生的质变")
-    worldviewBlock: str = Field(..., description="融合与重塑后的世界观设定")
-    protagonistBlock: str = Field(..., description="融合与重塑后的主角设定")
-    antagonistBlock: str = Field(..., description="融合与重塑后的对手/阻碍设定")
-    narrativeTone: str = Field(..., description="全新的文本风格基调建议")
+    worldviewBlock: str = Field(..., description="换皮后的新书世界观设定")
+    protagonistBlock: str = Field(..., description="换皮后的新书主角设定")
+    antagonistBlock: str = Field(..., description="换皮后的新书对手/阻碍设定")
+    narrativeTone: str = Field(..., description="新书的文本风格基调建议")
+    transferNote: str = Field(..., description="换皮溯源：一句话说明本方向如何把骨架引擎的结构节拍嫁接到新题材（类推迁移说明：保留了哪条引擎结构、替换成了什么题材皮）")
 
 
 class FusionDirectionsResponse(BaseModel):
@@ -75,11 +105,89 @@ class DNACardItem(BaseModel):
     styleFingerprint: str = ""
 
 
+# v2 换皮迁移（角色制）输入：指认「哪本骨架(引擎) / 哪本题材(皮)」。
+# Phase 0 先定义形状；Phase 2 改写 generate-fusion-directions 端点时接通，届时移除 dnaCards/fusionBias 旧路。
+class StructureBeatItem(BaseModel):
+    function: str = ""
+    summary: str = ""
+
+
+class EngineCardInput(BaseModel):
+    """骨架书的引擎层（①结构 + ②编排）——迁移的「不变量」。"""
+    novelName: str = ""
+    structureSkeleton: List[StructureBeatItem] = Field(default_factory=list)
+    pacingSyuzhet: str = ""
+
+
+class SkinSourceInput(BaseModel):
+    """题材来源：交叉融合取题材书的 ③④层；自我裂变留空 novelName，由 userBrief 口述新题材。"""
+    novelName: str = ""
+    themeSkin: str = ""
+    proseStyle: str = ""
+    userBrief: str = ""
+
+
 class FusionDirectionsInput(BaseModel):
-    dnaCards: List[DNACardItem] = Field(..., min_length=1)
+    # 旧路（圆桌融合）：Phase 2 移除。
+    dnaCards: List[DNACardItem] = Field(default_factory=list)
+    fusionBias: float = Field(0.5, ge=0.01, le=0.99)
+    # 新路（换皮迁移·角色制）：engineCard 为骨架，skinSource 为题材皮 / 口述。
+    engineCard: Optional[EngineCardInput] = None
+    skinSource: Optional[SkinSourceInput] = None
+    mode: Optional[str] = Field(None, pattern="^(self|cross)$")
     userCustomPrompt: Optional[str] = Field(None, max_length=2000)
     adversarialRules: Optional[str] = Field(None, max_length=2000)
-    fusionBias: float = Field(0.5, ge=0.01, le=0.99)
+    apiKey: str = Field(..., min_length=1, max_length=512)
+    baseUrl: str = Field(..., min_length=1, max_length=512)
+    model: str = Field(..., min_length=1, max_length=200)
+    temperature: float = Field(0.7, ge=0.0, le=1.5)
+
+
+# ============================================================
+# 阶段三点二：补洞（gap-repair）——质量护城河
+# 逐结构节拍核对新题材能否支撑，定位断裂点并补入自洽事件/设定（Riedl：朴素迁移不保证自洽）。
+# ============================================================
+class RepairGap(BaseModel):
+    beat: str = Field(..., description="撑不住的结构节拍 / 功能")
+    issue: str = Field(..., description="新题材下该节拍的逻辑断裂点")
+    patch: str = Field(..., description="补入的自洽事件 / 设定（使该节拍在新题材成立）")
+
+
+class RepairSettingGapsResponse(BaseModel):
+    worldviewBlock: str = Field(..., description="补洞后的新书世界观设定")
+    protagonistBlock: str = Field(..., description="补洞后的新书主角设定")
+    antagonistBlock: str = Field(..., description="补洞后的新书对手设定")
+    narrativeTone: str = Field(..., description="补洞后的叙事色调")
+    gaps: List[RepairGap] = Field(default_factory=list, description="本次定位并补入的断裂点清单（供展示「补了什么」）")
+
+
+class RepairSettingGapsInput(BaseModel):
+    worldviewBlock: str = ""
+    protagonistBlock: str = ""
+    antagonistBlock: str = ""
+    narrativeTone: str = ""
+    structureSkeleton: List[StructureBeatItem] = Field(default_factory=list)
+    themeSkin: str = ""
+    adversarialRules: Optional[str] = Field(None, max_length=2000)
+    apiKey: str = Field(..., min_length=1, max_length=512)
+    baseUrl: str = Field(..., min_length=1, max_length=512)
+    model: str = Field(..., min_length=1, max_length=200)
+    temperature: float = Field(0.7, ge=0.0, le=1.5)
+
+
+# ============================================================
+# 阶段三点三：✨意图增强（meta-prompt 带确认门）
+# 糙指令 → 精确创作简报 +「我理解你要…对吗」，前端先确认再执行 tweak（不带约束/不展示意图的 meta-prompt 只产泛化结果）。
+# ============================================================
+class EnhanceInstructionResponse(BaseModel):
+    interpretedBrief: str = Field(..., description="把用户糙指令翻译成的精确、可执行创作简报（改什么/改成什么/保留什么约束）")
+    confirmation: str = Field(..., description="一句『我理解你要……，对吗？』确认话术，供前端确认门展示")
+
+
+class EnhanceInstructionInput(BaseModel):
+    userInstruction: str = Field(..., min_length=1, max_length=2000)
+    targetBlock: Optional[str] = Field(None, pattern="^(worldviewBlock|protagonistBlock|antagonistBlock|narrativeTone)$")
+    blockContext: str = Field("", max_length=4000)
     apiKey: str = Field(..., min_length=1, max_length=512)
     baseUrl: str = Field(..., min_length=1, max_length=512)
     model: str = Field(..., min_length=1, max_length=200)

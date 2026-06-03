@@ -1,9 +1,11 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Novel, type FusionSession } from './db';
-import { useAppStore } from './store';
+import { useAppStore, type LLMConfig } from './store';
+import { runDnaExtraction } from './dnaEngine';
+import { ensureLlmConfigReady } from './llmClient';
 import NovelUploader from '../components/NovelUploader';
 import NovelDetail from '../components/NovelDetail';
 import FusionWorkshop from '../components/FusionWorkshop';
@@ -16,6 +18,63 @@ function getStatus(novel: Novel): string {
   if (novel.analysisStatus === 'mapping' || novel.analysisStatus === 'reducing') return 'extracting';
   if (novel.splitStatus === 'needs_review') return 'review';
   return 'pending';
+}
+
+// 后台自适应提取（NFR1）：导入/选中一部 idle 且无 DNA 的作品时，自动在后台起提取——
+// 用户可离开（page.tsx 常驻，run 不随面板切换中止），跑完弹「DNA 就绪」通知。单飞 + 完成后再评估（队列推进）。
+// 仅作用于「当前选中」作品，避免应用启动时对历史未提取作品批量开跑。提取本身可续跑、挂载自愈（见 dnaEngine/NovelDetail）。
+function useBackgroundExtraction(selectedNovelId: string | null, llmConfig: LLMConfig) {
+  const novel = useLiveQuery(
+    () => (selectedNovelId ? db.novels.get(selectedNovelId) : undefined),
+    [selectedNovelId],
+  );
+  const chapterCount = useLiveQuery(
+    () => (selectedNovelId ? db.chapters.where('novelId').equals(selectedNovelId).count() : 0),
+    [selectedNovelId],
+  ) ?? 0;
+  const runningRef = useRef<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const [doneToast, setDoneToast] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (runningRef.current) return; // 单飞：一次只跑一部
+    if (!selectedNovelId || !novel) return;
+    if (!ensureLlmConfigReady(llmConfig).ok) return; // 未配密钥不自动跑（配好后本 effect 因 llmConfig 变化重评）
+    if (novel.analysisStatus !== 'idle' || novel.dnaCard) return; // 已就绪/进行中/出错都不自动起
+    if (chapterCount === 0 || novel.splitStatus !== 'ok') return; // 未切分/切分异常先不自动跑（出问题才提示）
+
+    const id = selectedNovelId;
+    const name = novel.name;
+    runningRef.current = id;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    void (async () => {
+      try {
+        await runDnaExtraction(id, { signal: controller.signal });
+        const after = await db.novels.get(id);
+        if (after?.analysisStatus === 'done') setDoneToast(`《${name}》DNA 已就绪`);
+      } catch {
+        /* 失败落到 analysisStatus='error'，书详情展示原因与重试入口 */
+      } finally {
+        runningRef.current = null;
+        abortRef.current = null;
+        setTick((t) => t + 1); // 完成后再评估当前选中是否仍需提取
+      }
+    })();
+  }, [novel, selectedNovelId, chapterCount, llmConfig, tick]);
+
+  // 卸载（应用关闭）时中止在飞提取；进度已逐章持久化，下次可续跑。
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  // 通知 ~5s 自动消隐。
+  useEffect(() => {
+    if (!doneToast) return;
+    const t = setTimeout(() => setDoneToast(null), 5000);
+    return () => clearTimeout(t);
+  }, [doneToast]);
+
+  return { doneToast, dismissToast: () => setDoneToast(null) };
 }
 
 export default function Home() {
@@ -68,11 +127,12 @@ export default function Home() {
     []
   );
   const creations = (creationsRaw || []).filter(
-    (c) => c.step === 'creator' || Object.keys(c.sceneTexts || {}).length > 0
+    (c) => c.step === 'creator' || c.step === 'manuscript' || Object.keys(c.sceneTexts || {}).length > 0
   );
 
   const readyCount = novels.filter((novel) => novel.analysisStatus === 'done' && novel.dnaCard).length;
   const llmReadiness = useMemo(() => getLlmReadinessSummary(llmConfig), [llmConfig]);
+  const { doneToast, dismissToast } = useBackgroundExtraction(selectedNovelId, llmConfig);
   const workflowSummary = useMemo(
     () => getNovelWorkflowSummary(selectedNovel, llmConfig, readyCount),
     [selectedNovel, llmConfig, readyCount]
@@ -176,8 +236,15 @@ export default function Home() {
           mobileNavOpen ? 'fixed inset-y-0 left-0 z-40 flex' : 'hidden'
         } w-56 flex-col border-r bg-black lg:static lg:z-auto lg:flex`}
       >
-        <div className="flex h-12 items-center border-b px-4">
-          <span className="text-sm text-secondary">创作 DNA 工坊</span>
+        <div className="flex h-12 items-center gap-2.5 border-b px-4">
+          <span
+            className="grid h-7 w-7 place-items-center rounded-md text-[15px] font-bold text-white"
+            style={{ background: 'var(--vermilion)', fontFamily: 'var(--font-serif)', boxShadow: '0 2px 10px rgba(207,74,46,.35)' }}
+          >墨</span>
+          <div className="leading-tight">
+            <div className="text-[14px] text-primary" style={{ fontFamily: 'var(--font-display)', fontWeight: 600 }}>创作DNA工坊</div>
+            <div className="text-[9px] tracking-[1.5px] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>VARIATION ATELIER</div>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto py-2">
@@ -366,6 +433,19 @@ export default function Home() {
           setSettingsIntent(null);
         }}
       />
+
+      {/* 后台提取完成通知（NFR1：发起→通知） */}
+      {doneToast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-emerald-500/30 bg-black/90 px-4 py-2.5 text-sm text-emerald-400 shadow-2xl"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+          {doneToast}
+          <button onClick={dismissToast} className="text-muted hover:text-primary" aria-label="关闭通知">×</button>
+        </div>
+      )}
     </main>
   );
 }

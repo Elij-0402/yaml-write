@@ -2,34 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type FusionSession } from '../app/db';
+import { db, isFourLayerDnaCard, type FusionSession, type SettingSnapshot, type StructureBeat } from '../app/db';
 import { RateLimitSignal, withRateLimitRetry } from '../app/dnaEngine';
 import { StreamSseError, ensureLlmConfigReady, postWithLlmConfig, readApiErrorMessage, streamSse } from '../app/llmClient';
+import { appendSnapshot, popSnapshot } from '../app/settingHistory';
+import { computeDiff, type DiffSegment } from '../app/diff';
 import { useAppStore } from '../app/store';
-
-const interpolateColor = (color1: string, color2: string, factor: number) => {
-  const f = typeof factor === 'number' && !isNaN(factor) ? factor : 0.5;
-  
-  const parseHex = (hex: string, start: number, end: number) => {
-    if (!hex || hex.length < end) return 0;
-    const val = parseInt(hex.substring(start, end), 16);
-    return isNaN(val) ? 0 : val;
-  };
-
-  const r1 = parseHex(color1, 1, 3);
-  const g1 = parseHex(color1, 3, 5);
-  const b1 = parseHex(color1, 5, 7);
-
-  const r2 = parseHex(color2, 1, 3);
-  const g2 = parseHex(color2, 3, 5);
-  const b2 = parseHex(color2, 5, 7);
-
-  const r = Math.round(r1 + f * (r2 - r1));
-  const g = Math.round(g1 + f * (g2 - g1));
-  const b = Math.round(b1 + f * (b2 - b1));
-
-  return `rgb(${r}, ${g}, ${b})`;
-};
 
 interface FusionDirection {
   title: string;
@@ -39,14 +17,15 @@ interface FusionDirection {
   protagonistBlock: string;
   antagonistBlock: string;
   narrativeTone: string;
+  transferNote?: string;
 }
 
-interface StoryboardScene {
-  sceneNumber: number;
-  sceneTitle: string;
-  plotOutline: string;
-  tensionLevel: string;
-  visualCues: string;
+interface RepairGap { beat: string; issue: string; patch: string; }
+
+interface FusionRecipe {
+  engineCard: { novelName: string; structureSkeleton: StructureBeat[]; pacingSyuzhet: string };
+  skinSource: { novelName: string; themeSkin: string; proseStyle: string; userBrief: string };
+  mode: 'self' | 'cross';
 }
 
 type BlockKey = 'worldviewBlock' | 'protagonistBlock' | 'antagonistBlock' | 'narrativeTone';
@@ -59,149 +38,80 @@ const BLOCKS: { key: BlockKey; label: string }[] = [
   { key: 'narrativeTone', label: '叙事' },
 ];
 const isBlockKey = (value: string): value is BlockKey => BLOCKS.some((block) => block.key === value);
-const COLLISION_PARTICLES = 16;
+
 const ANTI_SLOP_PHRASES = [
-  '命运的齿轮',
-  '那一刻',
-  '逆天改命',
-  '眼神变得坚定',
-  '嘴角勾起一抹弧度',
-  '仿佛整个世界都安静了',
-  '空气仿佛凝固',
-  '心中一紧',
-  '缓缓睁开眼',
-  '不知为何',
+  '命运的齿轮', '那一刻', '逆天改命', '眼神变得坚定', '嘴角勾起一抹弧度',
+  '仿佛整个世界都安静了', '空气仿佛凝固', '心中一紧', '缓缓睁开眼', '不知为何',
 ];
-
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// 前端兜底护栏（真相源仍是后端 prompt 约束）。
+const applyAntiSlopFallback = (text: string): string =>
+  ANTI_SLOP_PHRASES.reduce((acc, phrase, idx) => acc.replace(new RegExp(escapeRegExp(phrase), 'g'), `[已过滤陈词滥调#${idx + 1}]`), text);
 
-// Frontend filter is only a fallback guardrail; source-of-truth constraints remain in backend prompts.
-const applyAntiSlopFallback = (text: string): string => {
-  return ANTI_SLOP_PHRASES.reduce((acc, phrase, idx) => {
-    const reg = new RegExp(escapeRegExp(phrase), 'g');
-    return acc.replace(reg, `[已过滤陈词滥调#${idx + 1}]`);
-  }, text);
-};
+const EMPTY_BLOCKS = { worldviewBlock: '', protagonistBlock: '', antagonistBlock: '', narrativeTone: '' };
+const OPENING_SCENE_NUM = 1; // 成稿为单一连续开篇，复用 sceneTexts[1] 持久化（不引入 db 形状变更）
 
-const STORYBOARD_BLOCK_RE =
-  /\[SCENE-(\d+)\]\s*title:\s*([\s\S]*?)\s*plot:\s*([\s\S]*?)\s*tension:\s*([\s\S]*?)\s*visual:\s*([\s\S]*?)\s*\[\/SCENE-\1\]/gi;
-
-const parseStoryboardStreamText = (raw: string): StoryboardScene[] => {
-  const scenes: StoryboardScene[] = [];
-  STORYBOARD_BLOCK_RE.lastIndex = 0;
-  let match: RegExpExecArray | null = STORYBOARD_BLOCK_RE.exec(raw);
-  while (match) {
-    scenes.push({
-      sceneNumber: Number(match[1] || scenes.length + 1),
-      sceneTitle: applyAntiSlopFallback(match[2]?.trim() || `分镜 ${match[1]}`),
-      plotOutline: applyAntiSlopFallback(match[3]?.trim() || ''),
-      tensionLevel: applyAntiSlopFallback(match[4]?.trim() || ''),
-      visualCues: applyAntiSlopFallback(match[5]?.trim() || ''),
-    });
-    match = STORYBOARD_BLOCK_RE.exec(raw);
-  }
-  return scenes
-    .filter((scene) => scene.sceneTitle && scene.plotOutline)
-    .sort((a, b) => a.sceneNumber - b.sceneNumber);
-};
-
-const normalizeScenesPayload = (value: unknown): StoryboardScene[] => {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null;
-      const scene = item as Record<string, unknown>;
-      const sceneNumber = Number(scene.sceneNumber);
-      const sceneTitle = typeof scene.sceneTitle === 'string' ? scene.sceneTitle : '';
-      const plotOutline = typeof scene.plotOutline === 'string' ? scene.plotOutline : '';
-      const tensionLevel = typeof scene.tensionLevel === 'string' ? scene.tensionLevel : '';
-      const visualCues = typeof scene.visualCues === 'string' ? scene.visualCues : '';
-      if (!Number.isFinite(sceneNumber) || !sceneTitle || !plotOutline) return null;
-      return {
-        sceneNumber,
-        sceneTitle: applyAntiSlopFallback(sceneTitle),
-        plotOutline: applyAntiSlopFallback(plotOutline),
-        tensionLevel: applyAntiSlopFallback(tensionLevel),
-        visualCues: applyAntiSlopFallback(visualCues),
-      };
-    })
-    .filter((scene): scene is StoryboardScene => Boolean(scene))
-    .sort((a, b) => a.sceneNumber - b.sceneNumber);
-};
+interface PendingDiff { block: BlockKey; oldText: string; newText: string; why: string; }
+interface IntentState { instruction: string; brief: string; confirmation: string; }
+interface FragmentDraft { original: string; rewritten: string; }
 
 export default function FusionWorkshop() {
-  const { setSelectedNovelId, setWorkshopOpen, fusionBias, setFusionBias, rateLimited, activeCreationId, setWorkshopBusy } = useAppStore((state) => ({
+  const { setSelectedNovelId, setWorkshopOpen, rateLimited, activeCreationId, setWorkshopBusy } = useAppStore((state) => ({
     setSelectedNovelId: state.setSelectedNovelId,
     setWorkshopOpen: state.setWorkshopOpen,
-    fusionBias: state.fusionBias,
-    setFusionBias: state.setFusionBias,
     rateLimited: state.rateLimited,
     activeCreationId: state.activeCreationId,
     setWorkshopBusy: state.setWorkshopBusy,
   }));
   const novels = useLiveQuery(() => db.novels.reverse().toArray(), []) || [];
   const readyNovels = novels.filter((novel) => novel.analysisStatus === 'done' && novel.dnaCard);
-  const missingReadyCount = Math.max(0, 1 - readyNovels.length);
   const firstIncompleteNovel = novels.find((novel) => novel.analysisStatus !== 'done' || !novel.dnaCard) || novels[0] || null;
 
-  const [step, setStep] = useState<'material' | 'directions' | 'creator'>('material');
+  const [step, setStep] = useState<'material' | 'directions' | 'creator' | 'manuscript'>('material');
+  // selectedIds[0] = 骨架(引擎)，selectedIds[1] = 题材(皮)；皮可缺省（自我裂变，题材取口述）。
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [customPrompt, setCustomPrompt] = useState('');
   const [colliding, setColliding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [directions, setDirections] = useState<FusionDirection[]>([]);
-  const [blocks, setBlocks] = useState<Record<BlockKey, string>>({
-    worldviewBlock: '',
-    protagonistBlock: '',
-    antagonistBlock: '',
-    narrativeTone: '',
-  });
+  const [blocks, setBlocks] = useState<Record<BlockKey, string>>(EMPTY_BLOCKS);
   const [directionTitle, setDirectionTitle] = useState('');
+  const [tweakTarget, setTweakTarget] = useState<BlockKey>('worldviewBlock');
   const [command, setCommand] = useState('');
   const [tweaking, setTweaking] = useState(false);
-  const [tweakingTarget, setTweakingTarget] = useState<BlockKey | null>(null);
-  const [tweakTarget, setTweakTarget] = useState<BlockKey>('worldviewBlock');
-  const [storyboard, setStoryboard] = useState<StoryboardScene[]>([]);
-  const [storyboardStreamText, setStoryboardStreamText] = useState('');
-  const [generatingBoard, setGeneratingBoard] = useState(false);
+
   const [sceneTexts, setSceneTexts] = useState<Record<number, string>>({});
   const [streamingScene, setStreamingScene] = useState<number | null>(null);
   const [sceneResumeStatus, setSceneResumeStatus] = useState<Record<number, SceneResumeStatus>>({});
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
-  const [collisionPhase, setCollisionPhase] = useState<'idle' | 'igniting' | 'charging'>('idle');
-  const [showParticles, setShowParticles] = useState(false);
-  const [directionsRevealNonce, setDirectionsRevealNonce] = useState(0);
   const [adversarialRules, setAdversarialRules] = useState('');
-  const [sceneCount, setSceneCount] = useState(3);
-  const [copiedScene, setCopiedScene] = useState<number | null>(null);
+  const [copied, setCopied] = useState(false);
 
-  const collisionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const collisionResolveRef = useRef<(() => void) | null>(null);
+  const [repairing, setRepairing] = useState(false);
+  const [repairGaps, setRepairGaps] = useState<RepairGap[]>([]);
+  const [settingHistory, setSettingHistory] = useState<SettingSnapshot[]>([]);
+
+  // 创世台共创态
+  const [editingBlock, setEditingBlock] = useState<BlockKey | null>(null);
+  const [editDraft, setEditDraft] = useState('');
+  const [pendingDiff, setPendingDiff] = useState<PendingDiff | null>(null);
+  const [intent, setIntent] = useState<IntentState | null>(null);
+  const [enhancing, setEnhancing] = useState(false);
+  // 成稿选中句轻量改写
+  const [selectedFragment, setSelectedFragment] = useState<string>('');
+  const [fragmentDraft, setFragmentDraft] = useState<FragmentDraft | null>(null);
+  const [rewriting, setRewriting] = useState(false);
+
   const mountedRef = useRef(true);
   const streamAbortRef = useRef<AbortController | null>(null);
   const hydratedRef = useRef(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const clearCollisionTimer = () => {
-    if (collisionTimerRef.current) {
-      clearTimeout(collisionTimerRef.current);
-      collisionTimerRef.current = null;
-    }
-    if (collisionResolveRef.current) {
-      const resolve = collisionResolveRef.current;
-      collisionResolveRef.current = null;
-      resolve();
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false;
-      clearCollisionTimer();
-      streamAbortRef.current?.abort();
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    };
+  useEffect(() => () => {
+    mountedRef.current = false;
+    streamAbortRef.current?.abort();
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -217,15 +127,11 @@ export default function FusionWorkshop() {
     return () => mediaQuery.removeListener(sync);
   }, []);
 
-  // 工坊会话持久化：按 store 的 activeCreationId 从 IndexedDB 还原对应创作的方向 / 积木 / 故事板 / 正文；
-  // 切换创作（含「新建」铸新 id）即重新水合：命中则还原，未命中则重置为各 useState 初值的空白态。
+  // 按 activeCreationId 水合 / 重置（切换创作即重水合，禁回写期覆盖）。
   useEffect(() => {
-    if (!activeCreationId) {
-      hydratedRef.current = false;
-      return;
-    }
+    if (!activeCreationId) { hydratedRef.current = false; return; }
     let cancelled = false;
-    hydratedRef.current = false; // 水合期间禁回写，避免空白态覆盖刚切入的创作
+    hydratedRef.current = false;
     void (async () => {
       const saved = await db.fusionSessions.get(activeCreationId);
       if (cancelled) return;
@@ -235,48 +141,30 @@ export default function FusionWorkshop() {
         setAdversarialRules(saved.adversarialRules || '');
         setStep(saved.step || 'material');
         setDirections(saved.directions || []);
-        setBlocks(
-          saved.blocks || { worldviewBlock: '', protagonistBlock: '', antagonistBlock: '', narrativeTone: '' }
-        );
+        setBlocks(saved.blocks || EMPTY_BLOCKS);
         setDirectionTitle(saved.directionTitle || '');
-        setSceneCount(saved.sceneCount || 3);
-        setStoryboard(saved.storyboard || []);
         setSceneTexts(saved.sceneTexts || {});
         setSceneResumeStatus((saved.sceneResumeStatus as Record<number, SceneResumeStatus>) || {});
+        setSettingHistory(saved.settingHistory || []);
       } else {
-        // 新建创作：重置全部 session 状态为各 useState 初值
-        setSelectedIds([]);
-        setCustomPrompt('');
-        setAdversarialRules('');
-        setStep('material');
-        setDirections([]);
-        setBlocks({ worldviewBlock: '', protagonistBlock: '', antagonistBlock: '', narrativeTone: '' });
-        setDirectionTitle('');
-        setSceneCount(3);
-        setStoryboard([]);
-        setSceneTexts({});
-        setSceneResumeStatus({});
+        setSelectedIds([]); setCustomPrompt(''); setAdversarialRules(''); setStep('material');
+        setDirections([]); setBlocks(EMPTY_BLOCKS); setDirectionTitle('');
+        setSceneTexts({}); setSceneResumeStatus({}); setSettingHistory([]);
       }
+      setPendingDiff(null); setIntent(null); setEditingBlock(null); setRepairGaps([]);
+      setSelectedFragment(''); setFragmentDraft(null); setTweakTarget('worldviewBlock');
       if (!cancelled) hydratedRef.current = true;
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [activeCreationId]);
 
-  // 仅在空闲时刻落盘（流式 / 碰撞 / 调整进行中跳过，避免逐 token 写盘）；一幕流式收尾归 idle 时即落盘。
-  // 回写前先 get 既有记录以保留 name/createdAt（DB 为单一真相源，防侧栏重命名被空闲回写清掉）；空会话不入库。
+  // 空闲落盘（流式/碰撞/补洞/微调/改写进行中跳过）；get+put 同事务保 name/createdAt。
   useEffect(() => {
     if (!hydratedRef.current || !activeCreationId) return;
-    if (streamingScene !== null || generatingBoard || colliding || tweaking) return;
-    const isEmpty =
-      selectedIds.length === 0 &&
-      directions.length === 0 &&
-      storyboard.length === 0 &&
-      Object.keys(sceneTexts).length === 0;
+    if (streamingScene !== null || colliding || tweaking || repairing || rewriting) return;
+    const isEmpty = selectedIds.length === 0 && directions.length === 0 && Object.keys(sceneTexts).length === 0;
     if (isEmpty) return;
     const id = activeCreationId;
-    // get+put 包进同一 rw 事务，IDB 串行化，关闭与侧栏重命名（独立事务）的竞态窗口。
     void db.transaction('rw', db.fusionSessions, async () => {
       const prev = await db.fusionSessions.get(id);
       const session: FusionSession = {
@@ -290,322 +178,296 @@ export default function FusionWorkshop() {
         directions,
         blocks,
         directionTitle,
-        sceneCount,
-        storyboard,
+        sceneCount: 1,
+        storyboard: [],
         sceneTexts,
         sceneResumeStatus,
+        settingHistory,
         updatedAt: Date.now(),
       };
       await db.fusionSessions.put(session);
     });
   }, [
-    activeCreationId,
-    step,
-    selectedIds,
-    customPrompt,
-    adversarialRules,
-    directions,
-    blocks,
-    directionTitle,
-    sceneCount,
-    storyboard,
-    sceneTexts,
-    sceneResumeStatus,
-    streamingScene,
-    generatingBoard,
-    colliding,
-    tweaking,
+    activeCreationId, step, selectedIds, customPrompt, adversarialRules, directions, blocks,
+    directionTitle, sceneTexts, sceneResumeStatus, settingHistory,
+    streamingScene, colliding, tweaking, repairing, rewriting,
   ]);
 
-  // 生成进行中（未落盘窗口）离开页面前提示，避免流式正文丢失。
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
-      if (streamingScene !== null || generatingBoard || colliding) {
-        e.preventDefault();
-        e.returnValue = '';
-      }
+      if (streamingScene !== null || colliding || repairing || rewriting) { e.preventDefault(); e.returnValue = ''; }
     };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
-  }, [streamingScene, generatingBoard, colliding]);
+  }, [streamingScene, colliding, repairing, rewriting]);
 
-  // 把工坊忙碌态上抛给侧栏：流式/生成/碰撞/微调进行中时，page.tsx 禁止切换/新建创作，避免跨创作 stale-write。
   useEffect(() => {
-    setWorkshopBusy(streamingScene !== null || generatingBoard || colliding || tweaking);
-  }, [streamingScene, generatingBoard, colliding, tweaking, setWorkshopBusy]);
+    setWorkshopBusy(streamingScene !== null || colliding || tweaking || repairing || rewriting || enhancing);
+  }, [streamingScene, colliding, tweaking, repairing, rewriting, enhancing, setWorkshopBusy]);
   useEffect(() => () => setWorkshopBusy(false), [setWorkshopBusy]);
 
   const guardLlm = (): boolean => {
-    const readiness = ensureLlmConfigReady();
-    if (!readiness.ok) {
-      window.dispatchEvent(new CustomEvent('open-settings-panel', { detail: { intent: '融合变体' } }));
+    if (!ensureLlmConfigReady().ok) {
+      window.dispatchEvent(new CustomEvent('open-settings-panel', { detail: { intent: '换皮创作' } }));
       return false;
     }
     return true;
   };
 
-  const toggleNovel = (id: string) => {
-    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
+  const engineNovel = readyNovels.find((n) => n.id === selectedIds[0]) || null;
+  const skinNovel = readyNovels.find((n) => n.id === selectedIds[1]) || null;
+
+  const pickEngine = (id: string) => setSelectedIds((prev) => (prev[1] && prev[1] !== id ? [id, prev[1]] : [id]));
+  const pickSkin = (id: string) => setSelectedIds((prev) => {
+    const eng = prev[0];
+    if (!eng) return prev;
+    return id ? [eng, id] : [eng];
+  });
+  const swapRoles = () => setSelectedIds((prev) => (prev.length === 2 ? [prev[1], prev[0]] : prev));
+
+  // 角色制配方：骨架须 4 层 DNA；皮取题材书 ③④ 或单本模式的口述。
+  const buildRecipe = (): FusionRecipe | { error: string } => {
+    if (!engineNovel) return { error: '请先指认一本「骨架」书。' };
+    const engineDna = engineNovel.dnaCard;
+    if (!isFourLayerDnaCard(engineDna)) {
+      return { error: `《${engineNovel.name}》还是旧版 DNA，请在书架对它「重新提取」升级为 4 层后再作骨架。` };
+    }
+    const skinDna = skinNovel ? skinNovel.dnaCard : null;
+    const mode: 'self' | 'cross' = skinNovel ? 'cross' : 'self';
+    return {
+      mode,
+      engineCard: { novelName: engineNovel.name, structureSkeleton: engineDna.structureSkeleton, pacingSyuzhet: engineDna.pacingSyuzhet },
+      skinSource: {
+        novelName: skinNovel?.name ?? '',
+        themeSkin: isFourLayerDnaCard(skinDna) ? skinDna.themeSkin : '',
+        proseStyle: isFourLayerDnaCard(skinDna) ? skinDna.proseStyle : '',
+        userBrief: mode === 'self' ? customPrompt.trim() : '',
+      },
+    };
   };
 
   const collide = async () => {
-    if (!guardLlm() || selectedIds.length < 1 || colliding) return;
-    const reduceMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const cinematicCollision = selectedIds.length === 2;
-    const collisionDurationMs = cinematicCollision ? (reduceMotion ? 100 : 1500) : 100;
-
+    if (!guardLlm() || colliding) return;
+    const recipe = buildRecipe();
+    if ('error' in recipe) { setError(recipe.error); return; }
     setError(null);
     setColliding(true);
-    clearCollisionTimer();
-    setCollisionPhase(cinematicCollision ? 'igniting' : 'idle');
-    setShowParticles(cinematicCollision && !reduceMotion);
-
     try {
-      const animationDone = new Promise<void>((resolve) => {
-        collisionResolveRef.current = resolve;
-        collisionTimerRef.current = setTimeout(() => {
-          collisionTimerRef.current = null;
-          const done = collisionResolveRef.current;
-          collisionResolveRef.current = null;
-          if (mountedRef.current) {
-            setShowParticles(false);
-            setCollisionPhase(cinematicCollision && !reduceMotion ? 'charging' : 'idle');
-          }
-          done?.();
-        }, collisionDurationMs);
-      });
-      const dnaCards = selectedIds
-        .map((id) => readyNovels.find((novel) => novel.id === id))
-        .filter(Boolean)
-        .map((novel) => ({ novelName: novel!.name, ...novel!.dnaCard! }));
-      const collideAbort = new AbortController();
-      const data = await withRateLimitRetry(
-        async () => {
-          const response = await postWithLlmConfig(
-            '/api/py/generate-fusion-directions',
-            {
-              dnaCards,
-              userCustomPrompt: customPrompt.trim() || undefined,
-              adversarialRules: adversarialRules.trim() || undefined,
-              fusionBias: selectedIds.length === 2 ? fusionBias : 0.5,
-            },
-            { signal: collideAbort.signal }
-          );
-          if (response.status === 429) throw new RateLimitSignal();
-          if (!response.ok) throw new Error(await readApiErrorMessage(response));
-          return (await response.json()) as { directions: FusionDirection[] };
-        },
-        { signal: collideAbort.signal }
-      );
-      await animationDone;
+      const ac = new AbortController();
+      const data = await withRateLimitRetry(async () => {
+        const response = await postWithLlmConfig('/api/py/generate-fusion-directions', {
+          engineCard: recipe.engineCard,
+          skinSource: recipe.skinSource,
+          mode: recipe.mode,
+          userCustomPrompt: recipe.mode === 'cross' ? (customPrompt.trim() || undefined) : undefined,
+          adversarialRules: adversarialRules.trim() || undefined,
+        }, { signal: ac.signal });
+        if (response.status === 429) throw new RateLimitSignal();
+        if (!response.ok) throw new Error(await readApiErrorMessage(response));
+        return (await response.json()) as { directions: FusionDirection[] };
+      }, { signal: ac.signal });
       if (!mountedRef.current) return;
-
       setDirections(data.directions || []);
-      setDirectionsRevealNonce((prev) => prev + 1);
       setStep('directions');
-      setCollisionPhase('idle');
-      setShowParticles(false);
     } catch (err) {
-      clearCollisionTimer();
       if (!mountedRef.current) return;
-      setCollisionPhase('idle');
-      setShowParticles(false);
-      setError(err instanceof Error ? err.message : '碰撞失败');
+      setError(err instanceof Error ? err.message : '生成方向失败');
     } finally {
-      if (mountedRef.current) {
-        setColliding(false);
-      }
+      if (mountedRef.current) setColliding(false);
     }
   };
 
-  const chooseDirection = (direction: FusionDirection) => {
-    if (
-      Object.keys(sceneTexts).length > 0 &&
-      !window.confirm('切换方向会清空当前已生成的故事板与分镜正文，确定切换？')
-    ) {
-      return;
-    }
-    setDirectionTitle(direction.title);
-    setBlocks({
+  const chooseDirection = async (direction: FusionDirection) => {
+    if (Object.keys(sceneTexts).length > 0 && !window.confirm('切换方向会清空当前开篇正文，确定切换？')) return;
+    const baseBlocks = {
       worldviewBlock: direction.worldviewBlock,
       protagonistBlock: direction.protagonistBlock,
       antagonistBlock: direction.antagonistBlock,
       narrativeTone: direction.narrativeTone,
-    });
-    setStoryboard([]);
-    setStoryboardStreamText('');
-    setSceneTexts({});
-    setSceneResumeStatus({});
+    };
+    setDirectionTitle(direction.title);
+    setBlocks(baseBlocks);
+    setSceneTexts({}); setSceneResumeStatus({}); setRepairGaps([]); setSettingHistory([]);
+    setPendingDiff(null); setIntent(null); setEditingBlock(null);
     setTweakTarget('worldviewBlock');
     setStep('creator');
+
+    const recipe = buildRecipe();
+    if ('error' in recipe) return;
+    setError(null);
+    setRepairing(true);
+    try {
+      const ac = new AbortController();
+      const repaired = await withRateLimitRetry(async () => {
+        const response = await postWithLlmConfig('/api/py/repair-setting-gaps', {
+          ...baseBlocks,
+          structureSkeleton: recipe.engineCard.structureSkeleton,
+          themeSkin: recipe.skinSource.themeSkin || recipe.skinSource.userBrief || '',
+          adversarialRules: adversarialRules.trim() || undefined,
+        }, { signal: ac.signal });
+        if (response.status === 429) throw new RateLimitSignal();
+        if (!response.ok) throw new Error(await readApiErrorMessage(response));
+        return (await response.json()) as { worldviewBlock: string; protagonistBlock: string; antagonistBlock: string; narrativeTone: string; gaps?: RepairGap[] };
+      }, { signal: ac.signal });
+      if (!mountedRef.current) return;
+      setBlocks({
+        worldviewBlock: repaired.worldviewBlock || baseBlocks.worldviewBlock,
+        protagonistBlock: repaired.protagonistBlock || baseBlocks.protagonistBlock,
+        antagonistBlock: repaired.antagonistBlock || baseBlocks.antagonistBlock,
+        narrativeTone: repaired.narrativeTone || baseBlocks.narrativeTone,
+      });
+      setRepairGaps(Array.isArray(repaired.gaps) ? repaired.gaps : []);
+    } catch {
+      /* 补洞失败：保留方向原始设定，不阻断 */
+    } finally {
+      if (mountedRef.current) setRepairing(false);
+    }
   };
 
-  const runTweak = async () => {
-    if (!guardLlm() || !command.trim() || tweaking) return;
-    const snapshot = { ...blocks };
+  // ---- 创世台：手动直接编辑 ----
+  const startEdit = (key: BlockKey) => { setPendingDiff(null); setEditingBlock(key); setEditDraft(blocks[key]); };
+  const cancelEdit = () => { setEditingBlock(null); setEditDraft(''); };
+  const saveEdit = (key: BlockKey) => {
+    if (editDraft === blocks[key]) { cancelEdit(); return; }
+    setSettingHistory((h) => appendSnapshot(h, blocks, `手改：${BLOCKS.find((b) => b.key === key)?.label ?? ''}`, Date.now()));
+    setBlocks((prev) => ({ ...prev, [key]: editDraft }));
+    cancelEdit();
+  };
+
+  // ---- 创世台：AI 指令 → diff（不静默覆盖）----
+  const runTweak = async (rawInstruction?: string) => {
+    const instruction = (rawInstruction ?? command).trim();
+    if (!guardLlm() || !instruction || tweaking) return;
     setError(null);
+    setEditingBlock(null);
     setTweaking(true);
-    setTweakingTarget(tweakTarget);
     try {
-      const tweakAbort = new AbortController();
-      const data = await withRateLimitRetry(
-        async () => {
-          const response = await postWithLlmConfig(
-            '/api/py/tweak-fusion-blocks',
-            {
-              ...blocks,
-              targetBlock: tweakTarget,
-              userInstruction: command.trim(),
-              adversarialRules: adversarialRules.trim() || undefined,
-            },
-            { signal: tweakAbort.signal }
-          );
-          if (response.status === 429) throw new RateLimitSignal();
-          if (!response.ok) throw new Error(await readApiErrorMessage(response));
-          return (await response.json()) as Partial<Record<BlockKey, string>> & { modifiedBlocks: BlockKey[] };
-        },
-        { signal: tweakAbort.signal }
-      );
-      const reported = (data.modifiedBlocks || []).filter((key): key is BlockKey => isBlockKey(key));
-      const applied = reported.filter((key) => key === tweakTarget && typeof data[key] === 'string');
-      if (applied.length === 0) {
-        // 模型判断该指令未改动目标卡（或只动了非目标卡）：保留指令文本，给出可操作反馈而非静默吞掉。
-        setError('该指令未改动当前微调目标卡，换个说法或先切换微调目标后再发送。');
+      const ac = new AbortController();
+      const data = await withRateLimitRetry(async () => {
+        const response = await postWithLlmConfig('/api/py/tweak-fusion-blocks', {
+          ...blocks,
+          targetBlock: tweakTarget,
+          userInstruction: instruction,
+          adversarialRules: adversarialRules.trim() || undefined,
+        }, { signal: ac.signal });
+        if (response.status === 429) throw new RateLimitSignal();
+        if (!response.ok) throw new Error(await readApiErrorMessage(response));
+        return (await response.json()) as Partial<Record<BlockKey, string>> & { modifiedBlocks: BlockKey[] };
+      }, { signal: ac.signal });
+      if (!mountedRef.current) return;
+      const reported = (data.modifiedBlocks || []).filter((k): k is BlockKey => isBlockKey(k));
+      const newText = reported.includes(tweakTarget) && typeof data[tweakTarget] === 'string' ? (data[tweakTarget] as string) : null;
+      if (newText === null || newText === blocks[tweakTarget]) {
+        setError('该指令未改动当前目标卡，换个说法或先切换目标卡。');
         return;
       }
-      setBlocks((prev) => {
-        const next = { ...prev };
-        applied.forEach((key) => {
-          next[key] = data[key] as string;
-        });
-        return next;
-      });
+      // 不直接套用：先出 diff，待用户接受/拒绝。
+      setPendingDiff({ block: tweakTarget, oldText: blocks[tweakTarget], newText, why: instruction });
       setCommand('');
     } catch (err) {
-      setBlocks(snapshot);
       setError(err instanceof Error ? err.message : '调整失败');
     } finally {
-      setTweaking(false);
-      setTweakingTarget(null);
+      if (mountedRef.current) setTweaking(false);
     }
   };
+  const acceptDiff = () => {
+    if (!pendingDiff) return;
+    setSettingHistory((h) => appendSnapshot(h, blocks, `AI 改：${pendingDiff.why}`, Date.now()));
+    setBlocks((prev) => ({ ...prev, [pendingDiff.block]: pendingDiff.newText }));
+    setPendingDiff(null);
+  };
+  const rejectDiff = () => setPendingDiff(null);
 
-  const selectedDirection = () => ({ title: directionTitle, ...blocks });
-
-  const generateStoryboard = async () => {
-    if (!guardLlm() || generatingBoard || streamingScene !== null) return;
+  // ---- ✨ 意图增强（带确认门）----
+  const enhance = async () => {
+    const instruction = command.trim();
+    if (!guardLlm() || !instruction || enhancing) return;
     setError(null);
-    setGeneratingBoard(true);
-    setStoryboard([]);
-    setSceneTexts({});
-    setSceneResumeStatus({});
-    setStoryboardStreamText('');
-    let streamedText = '';
-    let hasParsedScenes = false;
-    const ac = new AbortController();
-    streamAbortRef.current = ac;
+    setEnhancing(true);
     try {
-      await streamSse(
-        '/api/py/stream-storyboard',
-        {
-          selectedDirection: selectedDirection(),
-          sceneCount,
-          adversarialRules: adversarialRules.trim() || undefined,
-        },
-        {
-          signal: ac.signal,
-          onDelta: (text) => {
-            streamedText += text;
-            setStoryboardStreamText((prev) => prev + applyAntiSlopFallback(text));
-          },
-          onDone: (payload) => {
-            const fromDone = normalizeScenesPayload(payload.scenes);
-            const fromText = parseStoryboardStreamText(streamedText);
-            const finalScenes = fromDone.length > 0 ? fromDone : fromText;
-            if (finalScenes.length > 0) {
-              hasParsedScenes = true;
-              setStoryboard(finalScenes);
-            }
-          },
-        }
-      );
-      if (!hasParsedScenes && parseStoryboardStreamText(streamedText).length === 0) {
-        setError('故事板流式完成，但未能解析分镜结构，请重试。');
-      }
+      const ac = new AbortController();
+      const data = await withRateLimitRetry(async () => {
+        const response = await postWithLlmConfig('/api/py/enhance-instruction', {
+          userInstruction: instruction,
+          targetBlock: tweakTarget,
+          blockContext: blocks[tweakTarget] || '',
+        }, { signal: ac.signal });
+        if (response.status === 429) throw new RateLimitSignal();
+        if (!response.ok) throw new Error(await readApiErrorMessage(response));
+        return (await response.json()) as { interpretedBrief: string; confirmation: string };
+      }, { signal: ac.signal });
+      if (!mountedRef.current) return;
+      setIntent({ instruction, brief: data.interpretedBrief, confirmation: data.confirmation });
     } catch (err) {
-      if (ac.signal.aborted) {
-        // 用户主动停止：保留已流式片段（可解析则填入故事板），不报错。
-        const partial = parseStoryboardStreamText(streamedText);
-        if (partial.length > 0) setStoryboard(partial);
-      } else {
-        setError(err instanceof Error ? err.message : '生成故事板失败');
-      }
+      setError(err instanceof Error ? err.message : '增强意图失败');
     } finally {
-      setGeneratingBoard(false);
-      streamAbortRef.current = null;
+      if (mountedRef.current) setEnhancing(false);
     }
   };
+  const confirmIntent = () => {
+    if (!intent) return;
+    const brief = intent.brief;
+    setIntent(null);
+    void runTweak(brief);
+  };
+  const cancelIntent = () => setIntent(null);
 
-  const generateScene = async (scene: StoryboardScene, mode: 'fresh' | 'resume' = 'fresh') => {
+  const revertSetting = () => {
+    const { restored, history } = popSnapshot(settingHistory);
+    if (!restored) return;
+    setBlocks(restored.blocks);
+    setSettingHistory(history);
+    setPendingDiff(null);
+  };
+
+  // ---- 成稿：单一连续开篇正文（复用 stream-scene-text，合成开篇 scene）----
+  const selectedDirection = () => ({ title: directionTitle, ...blocks });
+  const openingScene = () => ({
+    sceneNumber: OPENING_SCENE_NUM,
+    sceneTitle: `${directionTitle || '新作'} · 开篇`,
+    plotOutline: '小说开篇：用具象的画面、动作与器物自然带出世界观、主角处境与核心钩子；不写大纲、不解释设定、不空泛抒情。',
+    tensionLevel: '低开埋钩子，结尾留一个让人想读下一章的悬念',
+    visualCues: '按世界观与叙事色调营造开篇画面与氛围',
+  });
+
+  const streamOpening = async (mode: 'fresh' | 'resume' = 'fresh') => {
     if (!guardLlm() || streamingScene !== null) return;
     setError(null);
-    const num = scene.sceneNumber;
+    const num = OPENING_SCENE_NUM;
     const existingDraft = sceneTexts[num] || '';
-    let receivedSceneText = mode === 'resume' ? existingDraft : '';
-    const precedingTexts: Record<number, string> = {};
-    [num - 2, num - 1].forEach((n) => {
-      if (n >= 1 && sceneTexts[n]) precedingTexts[n] = sceneTexts[n];
-    });
+    let received = mode === 'resume' ? existingDraft : '';
     setSceneResumeStatus((prev) => ({ ...prev, [num]: mode === 'resume' ? 'resuming' : 'idle' }));
-    if (mode === 'fresh') {
-      setSceneTexts((prev) => ({ ...prev, [num]: '' }));
-    }
+    if (mode === 'fresh') setSceneTexts((prev) => ({ ...prev, [num]: '' }));
     setStreamingScene(num);
     const ac = new AbortController();
     streamAbortRef.current = ac;
     try {
-      await streamSse(
-        '/api/py/stream-scene-text',
-        {
-          selectedDirection: selectedDirection(),
-          currentScene: scene,
-          precedingTexts,
-          // 续写仅传 currentDraft（后端 build_scene_user_prompt 以它为准），去掉与之重复的 resumeFromText。
-          currentDraft: mode === 'resume' ? existingDraft : undefined,
-          adversarialRules: adversarialRules.trim() || undefined,
+      await streamSse('/api/py/stream-scene-text', {
+        selectedDirection: selectedDirection(),
+        currentScene: openingScene(),
+        precedingTexts: {},
+        currentDraft: mode === 'resume' ? existingDraft : undefined,
+        adversarialRules: adversarialRules.trim() || undefined,
+      }, {
+        signal: ac.signal,
+        onDelta: (text) => {
+          const sanitized = applyAntiSlopFallback(text);
+          received += sanitized;
+          setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
         },
-        {
-          signal: ac.signal,
-          onDelta: (text) => {
-            const sanitized = applyAntiSlopFallback(text);
-            receivedSceneText += sanitized;
-            setSceneTexts((prev) => ({
-              ...prev,
-              [num]: (prev[num] || '') + sanitized,
-            }));
-          },
-        }
-      );
+      });
       setSceneResumeStatus((prev) => ({ ...prev, [num]: 'done' }));
     } catch (err) {
       const aborted = ac.signal.aborted;
-      const reason = err instanceof StreamSseError ? err.code : aborted ? 'aborted' : 'unknown_stream_error';
       const message = err instanceof Error ? err.message : String(err);
-      const hasText = receivedSceneText.trim().length > 0 || existingDraft.trim().length > 0;
+      const hasText = received.trim().length > 0 || existingDraft.trim().length > 0;
       const resumable = aborted || (err instanceof StreamSseError && err.resumable) || hasText;
       if (resumable) {
         setSceneResumeStatus((prev) => ({ ...prev, [num]: 'failed-resumable' }));
-        setError(
-          aborted
-            ? `第 ${num} 分镜已停止，可点击「继续接写」续写。`
-            : `第 ${num} 分镜中断（${reason}）：${message}，可继续接写。`
-        );
+        setError(aborted ? '已停止，可点「继续接写」续写。' : `中断：${message}，可继续接写。`);
       } else {
         setSceneResumeStatus((prev) => ({ ...prev, [num]: 'idle' }));
-        setSceneTexts((prev) => ({
-          ...prev,
-          [num]: `${prev[num] || ''}\n\n[生成失败: ${message}]`,
-        }));
+        setError(message);
       }
     } finally {
       setStreamingScene(null);
@@ -613,651 +475,425 @@ export default function FusionWorkshop() {
     }
   };
 
-  const copyScene = async (num: number) => {
+  const goManuscript = () => {
+    setStep('manuscript');
+    if (!(sceneTexts[OPENING_SCENE_NUM] || '').trim()) void streamOpening('fresh');
+  };
+
+  const copyManuscript = async () => {
     try {
-      await navigator.clipboard.writeText(sceneTexts[num] || '');
+      await navigator.clipboard.writeText(sceneTexts[OPENING_SCENE_NUM] || '');
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      setCopiedScene(num);
-      copyTimerRef.current = setTimeout(() => {
-        if (mountedRef.current) setCopiedScene(null);
-      }, 1500);
+      setCopied(true);
+      copyTimerRef.current = setTimeout(() => { if (mountedRef.current) setCopied(false); }, 1500);
     } catch {
-      setError('复制失败，请手动选择正文文本复制（部分浏览器需 HTTPS 或用户手势才允许写入剪贴板）。');
+      setError('复制失败，请手动选择正文复制（部分浏览器需 HTTPS 或用户手势）。');
     }
   };
 
-  const saveScene = (scene: StoryboardScene) => {
-    const blob = new Blob([sceneTexts[scene.sceneNumber] || ''], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    const safeTitle = (scene.sceneTitle || 'scene').replace(/[\\/:*?"<>|\r\n]+/g, '_').trim().slice(0, 80) || 'scene';
-    anchor.download = `${safeTitle}.txt`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  };
-
-  // 整篇导出：标题 + 4 块设定 + 按镜号升序、仅含已生成正文的镜，拼成一个 .md 下载。块标题复用工坊既有 4 块中文标签。
-  const saveWork = () => {
+  const exportMd = () => {
     const title = directionTitle || '未命名创作';
     const settingLines = BLOCKS.map(({ key, label }) => `- ${label}：${blocks[key] || ''}`).join('\n');
-    const sceneSections = [...storyboard]
-      .sort((a, b) => a.sceneNumber - b.sceneNumber)
-      .filter((scene) => (sceneTexts[scene.sceneNumber] || '').trim().length > 0)
-      .map((scene) => `## ${scene.sceneNumber}. ${scene.sceneTitle}\n${sceneTexts[scene.sceneNumber]}`)
-      .join('\n\n');
-    if (!sceneSections) return;
-    const md = `# ${title}\n\n## 设定\n${settingLines}\n\n---\n\n${sceneSections}\n`;
+    const prose = sceneTexts[OPENING_SCENE_NUM] || '';
+    if (!prose.trim()) return;
+    const md = `# ${title}\n\n## 设定\n${settingLines}\n\n---\n\n${prose}\n`;
     const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    const safeTitle = title.replace(/[\\/:*?"<>|\r\n]+/g, '_').trim().slice(0, 80) || 'scene';
-    anchor.download = `${safeTitle}.md`;
+    anchor.download = `${title.replace(/[\\/:*?"<>|\r\n]+/g, '_').trim().slice(0, 80) || 'manuscript'}.md`;
     anchor.click();
     URL.revokeObjectURL(url);
   };
 
-  // 至少需要 1 部 DNA 就绪作品（单本=自我裂变，多本=交叉融合）
+  // 选中句轻量改写：捕获选区 → AI 改写片段 → 接受/拒绝（只换选中片段，无整篇 diff）。
+  const onProseSelect = () => {
+    if (streamingScene !== null) return;
+    const sel = typeof window !== 'undefined' ? window.getSelection() : null;
+    const text = sel ? sel.toString().trim() : '';
+    setSelectedFragment(text && (sceneTexts[OPENING_SCENE_NUM] || '').includes(text) ? text : '');
+  };
+  const rewriteFragment = async (style: string) => {
+    if (!guardLlm() || rewriting || !selectedFragment) return;
+    setError(null);
+    setRewriting(true);
+    const original = selectedFragment;
+    try {
+      let received = '';
+      const ac = new AbortController();
+      streamAbortRef.current = ac;
+      await streamSse('/api/py/stream-scene-text', {
+        selectedDirection: selectedDirection(),
+        currentScene: {
+          sceneNumber: OPENING_SCENE_NUM,
+          sceneTitle: '选中句改写',
+          plotOutline: `只改写下面引号内的这一小段，使其${style}。只输出改写后的这一段文字本身，不要加引号、不要前后文、不要解释。`,
+          tensionLevel: '保持与上下文一致',
+          visualCues: '保持与上下文一致',
+        },
+        precedingTexts: {},
+        currentDraft: original,
+        adversarialRules: adversarialRules.trim() || undefined,
+      }, {
+        signal: ac.signal,
+        onDelta: (text) => { received += applyAntiSlopFallback(text); },
+      });
+      if (!mountedRef.current) return;
+      const rewritten = received.trim();
+      if (rewritten) setFragmentDraft({ original, rewritten });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '改写失败');
+    } finally {
+      if (mountedRef.current) { setRewriting(false); streamAbortRef.current = null; }
+    }
+  };
+  const acceptFragment = () => {
+    if (!fragmentDraft) return;
+    setSceneTexts((prev) => ({
+      ...prev,
+      [OPENING_SCENE_NUM]: (prev[OPENING_SCENE_NUM] || '').replace(fragmentDraft.original, fragmentDraft.rewritten),
+    }));
+    setFragmentDraft(null);
+    setSelectedFragment('');
+  };
+  const rejectFragment = () => { setFragmentDraft(null); setSelectedFragment(''); };
+
+  // ============================ 渲染 ============================
   if (readyNovels.length < 1) {
     return (
-      <div className="max-w-xl space-y-4">
-        <h2 className="text-lg">融合工坊</h2>
-        <p className="text-secondary">
-          还差 {missingReadyCount} 部 DNA 就绪作品即可进入引力室。当前 {readyNovels.length} 部。
-        </p>
-        <p className="text-xs text-muted">单本可做「自我裂变」，多本可做「交叉融合」。</p>
+      <div className="atelier max-w-xl">
+        <div className="eyebrow">Workbench · 工作台</div>
+        <h2 className="atelier-h1">先让书<span className="it">就绪</span>。</h2>
+        <p className="lede">还没有 DNA 就绪的作品。导入一本 TXT，工坊会在后台自动提取它的创作 DNA，就绪后即可来这里换皮起书。</p>
         {firstIncompleteNovel && (
-          <button
-            onClick={() => {
-              setWorkshopOpen(false);
-              setSelectedNovelId(firstIncompleteNovel.id);
-            }}
-            className="text-sm text-secondary hover:text-primary"
-          >
-            继续提取 DNA →
+          <button className="cta ghost" onClick={() => { setWorkshopOpen(false); setSelectedNovelId(firstIncompleteNovel.id); }}>
+            ← 去看《{firstIncompleteNovel.name}》的提取进度
           </button>
         )}
       </div>
     );
   }
 
-  // Step 1: Material Selection
+  // ===== 配方台 =====
   if (step === 'material') {
-    const selectedNovels = selectedIds
-      .map((id) => readyNovels.find((novel) => novel.id === id))
-      .filter(Boolean);
-    const showOrbit = selectedIds.length === 2 && selectedNovels.length === 2;
-
+    const recipe = buildRecipe();
+    const recipeErr = 'error' in recipe ? recipe.error : null;
+    const engineDna = engineNovel && isFourLayerDnaCard(engineNovel.dnaCard) ? engineNovel.dnaCard : null;
+    const skinDna = skinNovel && isFourLayerDnaCard(skinNovel.dnaCard) ? skinNovel.dnaCard : null;
     return (
-      <div className="max-w-2xl space-y-6">
-        <style>{`
-          @keyframes orbit-rotate-anim {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-          }
-          @keyframes orbit-ignite-anim {
-            0% { transform: rotate(0deg) scale(1); }
-            60% { transform: rotate(540deg) scale(0.92); }
-            100% { transform: rotate(960deg) scale(0.82); }
-          }
-          @keyframes orbit-ring-collapse-anim {
-            0% { transform: scale(1); opacity: 0.4; }
-            70% { transform: scale(0.7); opacity: 0.68; }
-            100% { transform: scale(0.5); opacity: 0; }
-          }
-          @keyframes planet-a-collision-anim {
-            0% { transform: translateX(-50%) translateX(0) scale(1); opacity: 1; }
-            100% { transform: translateX(-50%) translateX(80px) scale(0.35); opacity: 0; }
-          }
-          @keyframes planet-b-collision-anim {
-            0% { transform: translateX(-50%) translateX(0) scale(1); opacity: 1; }
-            100% { transform: translateX(-50%) translateX(-80px) scale(0.35); opacity: 0; }
-          }
-          @keyframes core-charge-anim {
-            0%, 100% { opacity: 0.95; transform: scale(1); }
-            50% { opacity: 1; transform: scale(1.04); }
-          }
-          @keyframes gravity-wave-particle-anim {
-            0% { opacity: 1; transform: translateX(0) scale(1); }
-            100% { opacity: 0; transform: translateX(78px) scale(0.2); }
-          }
-          .animate-orbit-rotate {
-            animation: orbit-rotate-anim 12s linear infinite;
-          }
-          .animate-orbit-ignite {
-            animation: orbit-ignite-anim 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-          }
-          .animate-orbit-ring-collapse {
-            animation: orbit-ring-collapse-anim 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-          }
-          .animate-planet-a-collision {
-            animation: planet-a-collision-anim 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-          }
-          .animate-planet-b-collision {
-            animation: planet-b-collision-anim 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-          }
-          .animate-core-charge {
-            animation: core-charge-anim 1.2s ease-in-out infinite;
-          }
-          .gravity-wave-particle {
-            will-change: transform, opacity;
-            animation: gravity-wave-particle-anim 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-          }
-          .will-change-transform {
-            will-change: transform;
-          }
-          @media (prefers-reduced-motion: reduce) {
-            .animate-orbit-rotate {
-              animation: none !important;
-            }
-            .animate-orbit-ignite,
-            .animate-orbit-ring-collapse,
-            .animate-planet-a-collision,
-            .animate-planet-b-collision,
-            .animate-core-charge,
-            .gravity-wave-particle {
-              animation: none !important;
-            }
-            .gravity-wave-layer {
-              opacity: 0 !important;
-            }
-          }
-          .glowing-slider {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 100%;
-            height: 4px;
-            border-radius: 9999px;
-            outline: none;
-          }
-          .glowing-slider::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 14px;
-            height: 14px;
-            border-radius: 50%;
-            background: #ffffff;
-            box-shadow: 0 0 8px rgba(6, 182, 212, 0.9);
-            cursor: pointer;
-            transition: transform 0.1s ease;
-          }
-          .glowing-slider::-webkit-slider-thumb:hover {
-            transform: scale(1.2);
-          }
-        `}</style>
+      <div className="atelier">
+        <div className="eyebrow">Recipe · 配方台</div>
+        <h2 className="atelier-h1">谁当<span className="it">骨架</span>，谁换<span className="it">皮</span>?</h2>
+        <p className="lede">这是你唯一要拧的「旋钮」——没有滑块、没有参数。指认两本书的角色（或单本自我裂变），其余交给工坊。</p>
 
-        <div>
-          <p className="text-xs text-muted">1/3</p>
-          <h2 className="text-lg">选择素材</h2>
-          <p className="mt-1 text-sm text-secondary">选择 1 部做自我裂变，或 2 部以上交叉碰撞融合</p>
-        </div>
-
-        <div className="space-y-2">
-          {readyNovels.map((novel) => {
-            const selected = selectedIds.includes(novel.id);
-            return (
-              <button
-                key={novel.id}
-                onClick={() => toggleNovel(novel.id)}
-                className={`block w-full border p-3 text-left text-sm ${selected ? 'border-primary' : 'border-default hover:border-secondary'}`}
-              >
-                <span className={selected ? 'text-primary' : 'text-secondary'}>{novel.name}</span>
-                {selected && <span className="ml-2 text-muted">✓</span>}
-              </button>
-            );
-          })}
-        </div>
-
-        {showOrbit && (
-          <div className="border border-[#1b1e36] bg-[#0c0e20]/60 p-6 rounded-lg backdrop-blur-md space-y-6">
-
-            <div className="text-center">
-              <span className="text-xs font-semibold tracking-wider text-[#5e6ad2] uppercase">引力公轨视图 (Gravity Orbit)</span>
-            </div>
-
-            {/* Celestial Orbit View */}
-            <div className="relative w-64 h-64 mx-auto my-4 border border-[#1b1e36]/30 rounded-full [perspective:800px] flex items-center justify-center overflow-hidden bg-black/40">
-              {/* Dashed Orbit Ring */}
-              <div 
-                className={`absolute inset-4 border border-dashed rounded-full will-change-transform ${collisionPhase === 'igniting' ? 'animate-orbit-ring-collapse' : 'animate-orbit-rotate'}`}
-                style={{
-                  borderColor: interpolateColor('#06b6d4', '#5e6ad2', fusionBias),
-                  boxShadow: `0 0 10px ${interpolateColor('#06b6d4', '#5e6ad2', fusionBias)}`,
-                  opacity: 0.4
-                }}
-              />
-
-              {/* Center Black Hole Collision Core */}
-              <div 
-                role="button"
-                aria-label="触发星体碰撞"
-                aria-disabled={selectedIds.length < 1 || colliding}
-                tabIndex={selectedIds.length < 1 || colliding ? -1 : 0}
-                onClick={() => {
-                  if (!colliding) {
-                    void collide();
-                  }
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    if (!colliding) {
-                      void collide();
-                    }
-                  }
-                }}
-                className={`relative z-10 w-10 h-10 rounded-full bg-black border border-[#1b1e36] flex items-center justify-center transition-all duration-300 ${selectedIds.length < 1 || colliding ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'} ${collisionPhase === 'charging' ? 'animate-core-charge' : ''}`}
-                style={{
-                  boxShadow: `0 0 20px ${interpolateColor('#06b6d4', '#5e6ad2', fusionBias)}`
-                }}
-              >
-                <span className="text-xs animate-pulse">💥</span>
-              </div>
-
-              {showParticles && (
-                <div className="gravity-wave-layer pointer-events-none absolute inset-0 z-20">
-                  {Array.from({ length: COLLISION_PARTICLES }).map((_, index) => {
-                    const angle = (360 / COLLISION_PARTICLES) * index;
-                    const delay = (index % 4) * 0.04;
-                    return (
-                      <div
-                        key={`particle-${index}`}
-                        className="absolute left-1/2 top-1/2 will-change-transform"
-                        style={{ transform: `translate(-50%, -50%) rotate(${angle}deg)` }}
-                      >
-                        <svg width="4" height="4" viewBox="0 0 4 4" className="overflow-visible">
-                          <circle
-                            cx="2"
-                            cy="2"
-                            r={index % 3 === 0 ? 2 : 1.5}
-                            className="gravity-wave-particle"
-                            style={{
-                              animationDelay: `${delay}s`,
-                              fill: index % 2 === 0 ? '#e2e8f0' : interpolateColor('#06b6d4', '#5e6ad2', fusionBias)
-                            }}
-                          />
-                        </svg>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Orbit Rotating Planets Container (GPU offloaded rotation) */}
-              <div className={`absolute inset-0 flex items-center justify-center will-change-transform ${collisionPhase === 'igniting' ? 'animate-orbit-ignite' : 'animate-orbit-rotate'}`}>
-                {/* Planet A (Cyan #06b6d4) at opposite end (-80px) */}
-                <div 
-                  className={`absolute rounded-full will-change-transform transition-all duration-300 shadow-[0_0_15px_#06b6d4] ${collisionPhase === 'igniting' ? 'animate-planet-a-collision' : ''}`}
-                  style={{
-                    left: 'calc(50% - 80px)',
-                    transform: 'translateX(-50%)',
-                    width: `${16 + (1 - fusionBias) * 16}px`,
-                    height: `${16 + (1 - fusionBias) * 16}px`,
-                    backgroundColor: '#06b6d4',
-                    opacity: 1 - fusionBias + 0.15,
-                    boxShadow: `0 0 ${10 + (1 - fusionBias) * 20}px #06b6d4`
-                  }}
-                />
-
-                {/* Planet B (Blue #5e6ad2) at end (+80px) */}
-                <div 
-                  className={`absolute rounded-full will-change-transform transition-all duration-300 shadow-[0_0_15px_#5e6ad2] ${collisionPhase === 'igniting' ? 'animate-planet-b-collision' : ''}`}
-                  style={{
-                    left: 'calc(50% + 80px)',
-                    transform: 'translateX(-50%)',
-                    width: `${16 + fusionBias * 16}px`,
-                    height: `${16 + fusionBias * 16}px`,
-                    backgroundColor: '#5e6ad2',
-                    opacity: fusionBias + 0.15,
-                    boxShadow: `0 0 ${10 + fusionBias * 20}px #5e6ad2`
-                  }}
-                />
-              </div>
-            </div>
-
-            {collisionPhase === 'charging' && (
-              <p className="text-center text-xs text-[#e2e8f0]">星轨能量充能中...</p>
+        <div className="recipe">
+          <div className="slab engine">
+            <div className="role">🔧 骨架 · ENGINE</div>
+            <select
+              className="bk"
+              style={{ background: 'transparent', border: 'none', outline: 'none', cursor: 'pointer', maxWidth: '100%' }}
+              value={selectedIds[0] || ''}
+              onChange={(e) => pickEngine(e.target.value)}
+            >
+              <option value="" disabled>选择骨架书…</option>
+              {readyNovels.map((n) => (
+                <option key={n.id} value={n.id} className="bg-black">{n.name}{isFourLayerDnaCard(n.dnaCard) ? '' : '（旧版DNA）'}</option>
+              ))}
+            </select>
+            {engineDna ? (
+              <>
+                <div className="layerline"><span className="k">结构骨架</span>{engineDna.structureSkeleton.map((b) => b.function).filter(Boolean).slice(0, 6).join(' → ') || '—'}</div>
+                <div className="layerline"><span className="k">编排节奏</span>{engineDna.pacingSyuzhet || '—'}</div>
+              </>
+            ) : (
+              <div className="layerline"><span className="k">提示</span>{engineNovel ? '此书还是旧版 DNA，请先重新提取升级为 4 层' : '从上方选一本已就绪的书作骨架'}</div>
             )}
-
-            {/* Sliders and Labels */}
-            <div className="space-y-3">
-              <div className="flex justify-between text-xs text-muted">
-                <span className="text-[#06b6d4] font-medium">偏向 《{selectedNovels[0]?.name}》</span>
-                <span className="text-[#5e6ad2] font-medium">偏向 《{selectedNovels[1]?.name}》</span>
-              </div>
-
-              <input 
-                type="range"
-                min="0.01"
-                max="0.99"
-                step="0.01"
-                value={fusionBias ?? 0.5}
-                onChange={(e) => setFusionBias(parseFloat(e.target.value))}
-                className="glowing-slider bg-[#1b1e36] cursor-pointer"
-              />
-
-              <div className="text-center font-mono text-xs tracking-wide text-secondary leading-relaxed bg-[#05060f]/60 p-2.5 rounded border border-[#1b1e36]/40">
-                《{selectedNovels[0]?.name}》: <span className="text-[#06b6d4] font-semibold">{Math.round((1 - fusionBias) * 100)}%</span> 
-                <span className="mx-2 text-muted">|</span> 
-                《{selectedNovels[1]?.name}》: <span className="text-[#5e6ad2] font-semibold">{Math.round(fusionBias * 100)}%</span>
-              </div>
-            </div>
           </div>
-        )}
 
-        <div className="space-y-2">
-          <p className="text-xs text-muted">偏航指令（可选）</p>
-          <textarea
+          <div className="swap"><button title="对调骨架 / 题材" onClick={swapRoles} disabled={selectedIds.length !== 2}>⇅</button></div>
+
+          <div className="slab skin">
+            <div className="role">🎨 题材 · SKIN</div>
+            <select
+              className="bk"
+              style={{ background: 'transparent', border: 'none', outline: 'none', cursor: 'pointer', maxWidth: '100%', color: 'var(--paper-text)' }}
+              value={selectedIds[1] || ''}
+              onChange={(e) => pickSkin(e.target.value)}
+              disabled={!engineNovel}
+            >
+              <option value="">（口述题材 · 自我裂变）</option>
+              {readyNovels.filter((n) => n.id !== selectedIds[0]).map((n) => (
+                <option key={n.id} value={n.id}>{n.name}</option>
+              ))}
+            </select>
+            {skinNovel && skinDna ? (
+              <>
+                <div className="layerline"><span className="k">题材皮</span>{skinDna.themeSkin || '—'}</div>
+                <div className="layerline"><span className="k">文笔</span>{skinDna.proseStyle || '—'}</div>
+              </>
+            ) : (
+              <div className="layerline"><span className="k">自我裂变</span>无题材书——在下方「想往哪写」里口述你想要的新题材，工坊据此另起一炉。</div>
+            )}
+          </div>
+        </div>
+
+        <div className="wishbar">
+          <input
             value={customPrompt}
             onChange={(e) => setCustomPrompt(e.target.value)}
-            rows={2}
-            placeholder="自定义碰撞方向..."
-            className="w-full border bg-transparent p-2 text-sm focus:outline-none"
+            placeholder={skinNovel ? '想往哪写?想避开什么套路?（可留空，留空=纯靠两本书的 DNA）' : '口述新题材 / 想往哪写（自我裂变必填一点方向）'}
           />
+          <span className="opt">{skinNovel ? '可选' : '建议填写'}</span>
         </div>
 
         <div className="space-y-2">
-          <p className="text-xs text-muted">反套路红队约束（可选）</p>
           <textarea
             value={adversarialRules}
             onChange={(e) => setAdversarialRules(e.target.value)}
             rows={2}
-            placeholder="例如：禁止王子救公主套路、禁止开局废柴逆袭、对手必须有合理动机..."
-            className="w-full border bg-transparent p-2 text-sm focus:outline-none"
+            placeholder="反套路约束（可选）：例如 禁止王子救公主、禁止开局废柴龙傲天、对手必须有合理动机…"
+            className="w-full rounded-[11px] border border-default bg-secondary p-3 text-sm text-secondary focus:outline-none focus:border-[color:var(--vermilion-line)]"
+            style={{ fontFamily: 'var(--font-serif)' }}
           />
-          <p className="text-[11px] text-muted">将作为硬约束贯穿碰撞 / 微调 / 故事板 / 正文全流程。</p>
         </div>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        {rateLimited && (
-          <p className="text-xs text-amber-400">⏳ 云端限速中，已自动退避重试，请稍候…</p>
-        )}
+        {recipeErr && <p className="mt-3 text-sm" style={{ color: 'var(--del)' }}>{recipeErr}</p>}
+        {error && <p className="mt-2 text-sm" style={{ color: 'var(--del)' }}>{error}</p>}
+        {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--vermilion)' }}>云端有些拥挤，已自动放缓退避重试，请稍候…</p>}
 
-        <button
-          onClick={collide}
-          disabled={selectedIds.length < 1 || colliding}
-          className="text-sm disabled:text-muted disabled:cursor-not-allowed"
-        >
-          {colliding ? '碰撞中...' : `触发星体碰撞 💥 (${selectedIds.length})`}
-        </button>
+        <div className="mt-6">
+          <button className="cta" onClick={collide} disabled={colliding || !engineNovel}>
+            {colliding ? '生成中…' : '生成 3 个方向'} <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>→</span>
+          </button>
+        </div>
       </div>
     );
   }
 
-  // Step 2: Direction Selection
+  // ===== 三方向 =====
   if (step === 'directions') {
+    const idxLabel = ['i.', 'ii.', 'iii.', 'iv.', 'v.'];
+    const engName = engineNovel?.name || '骨架';
+    const skinLabel = skinNovel?.name || '口述题材';
     return (
-      <div className="max-w-2xl space-y-6">
-        <style>{`
-          @keyframes direction-card-reveal-anim {
-            0% { opacity: 0; transform: translateY(8px) scale(0.99); }
-            100% { opacity: 1; transform: translateY(0) scale(1); }
-          }
-          .direction-card-reveal {
-            opacity: 0;
-            animation: direction-card-reveal-anim 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-            will-change: transform, opacity;
-          }
-          @media (prefers-reduced-motion: reduce) {
-            .direction-card-reveal {
-              animation-duration: 100ms !important;
-              animation-timing-function: ease-out !important;
-            }
-          }
-        `}</style>
-        <div className="flex items-center gap-4">
-          <button onClick={() => setStep('material')} className="text-secondary hover:text-primary">←</button>
-          <div>
-            <p className="text-xs text-muted">2/3</p>
-            <h2 className="text-lg">选择方向</h2>
-          </div>
-        </div>
-
-        <div key={`directions-${directionsRevealNonce}`} className="space-y-4">
+      <div className="atelier">
+        <div className="eyebrow">Directions · 三方向</div>
+        <h2 className="atelier-h1">三种<span className="it">嫁接</span>法。挑一个。</h2>
+        <p className="lede">同一套「{engName} 的引擎 × {skinLabel} 的皮」，三个不同的化学反应。这是你的第一个创作决定。</p>
+        <div className="dirs">
           {directions.map((dir, idx) => (
-            <button
-              key={idx}
-              onClick={() => chooseDirection(dir)}
-              className="direction-card-reveal block w-full border border-[#1b1e36] bg-[#0c0e20] p-4 text-left text-white hover:border-[#e2e8f0]/70"
-              style={{
-                animationDelay: `${idx * 90}ms`,
-                boxShadow: 'inset 0 0 0 1px rgba(226,232,240,0.35), 0 10px 26px rgba(6,8,20,0.45)',
-              }}
-            >
-              <p className="text-sm">{dir.title}</p>
-              <p className="mt-2 text-sm text-[#e2e8f0]">{dir.concept}</p>
-              <p className="mt-1 text-xs text-[#8a8f98]">{dir.catalyst}</p>
+            <button key={idx} className="dir" onClick={() => void chooseDirection(dir)}>
+              <span className="idx">{idxLabel[idx] || `${idx + 1}.`}</span>
+              <h4>{dir.title}</h4>
+              <p className="concept">{dir.concept}</p>
+              {dir.transferNote && <p className="concept" style={{ color: 'var(--ink-faint)', fontSize: 12 }}>🧬 {dir.transferNote}</p>}
+              <div className="recipe-tag">
+                <span className="chip eng">{engName}</span>
+                <span className="chip skn">{skinLabel}</span>
+              </div>
+              <span className="pick">选择此方向 ↗</span>
             </button>
           ))}
+        </div>
+        <div className="mt-7">
+          <button className="cta ghost" onClick={() => setStep('material')}>← 回配方台</button>
         </div>
       </div>
     );
   }
 
-  // Step 3: Creator
-  return (
-    <div className="max-w-3xl space-y-6">
-      <style>{`
-        .tweak-glow-pulse {
-          animation: tweak-glow-pulse-anim 1.1s ease-in-out infinite;
-        }
-        @keyframes tweak-glow-pulse-anim {
-          0%, 100% { box-shadow: 0 0 0 rgba(94,106,210,0.0); }
-          50% { box-shadow: 0 0 16px rgba(94,106,210,0.55); }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .tweak-glow-pulse {
-            animation: none !important;
-            transition: opacity 100ms ease-out;
-          }
-        }
-      `}</style>
-      <div className="flex items-center gap-4">
-        <button onClick={() => setStep('directions')} className="text-secondary hover:text-primary">←</button>
-        <div>
-          <p className="text-xs text-muted">3/3</p>
-          <h2 className="text-lg">{directionTitle}</h2>
-        </div>
-      </div>
+  // ===== 创世台 / 成稿 共享的配方溯源名 =====
+  const recipeNow = buildRecipe();
+  const eng = 'error' in recipeNow ? null : recipeNow.engineCard;
+  const engSrc = eng?.novelName || engineNovel?.name || '骨架书';
+  const skinSrc = skinNovel?.name || '口述题材';
 
-      {/* Blocks */}
-      <div className="grid gap-4 sm:grid-cols-2">
-        {BLOCKS.map(({ key, label }) => (
-          <div
-            key={key}
-            className={`border p-3 transition-all ${tweakTarget === key ? 'border-primary' : 'border-default'} ${
-              tweakingTarget && tweakingTarget !== key ? 'opacity-65' : 'opacity-100'
-            } ${tweakingTarget === key && !prefersReducedMotion ? 'tweak-glow-pulse' : ''}`}
-          >
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-muted">{label}</p>
-              {tweakingTarget === key ? (
-                <span className="text-[11px] text-primary">{prefersReducedMotion ? '更新中' : '脉冲更新中'}</span>
-              ) : tweakingTarget && tweakingTarget !== key ? (
-                <span className="text-[11px] text-muted">只读锁</span>
-              ) : null}
-            </div>
-            <p className="mt-1 text-sm text-secondary leading-relaxed">{blocks[key]}</p>
-          </div>
-        ))}
-      </div>
+  // ===== 创世台 =====
+  if (step === 'creator') {
+    const diffSegments = (seg: DiffSegment[]) =>
+      seg.map((s, i) => s.op === 'equal'
+        ? <span key={i}>{s.text}</span>
+        : <span key={i} className={s.op === 'add' ? 'add' : 'del'}>{s.text}</span>);
 
-      {/* Tweak */}
-      <div className="space-y-2">
-        <div className="flex flex-wrap gap-2 text-xs">
-          {BLOCKS.map(({ key, label }) => (
-            <button
-              key={`tweak-target-${key}`}
-              onClick={() => setTweakTarget(key)}
-              disabled={tweaking}
-              className={`border px-2 py-1 ${
-                tweakTarget === key ? 'border-primary text-primary' : 'border-default text-secondary'
-              } disabled:opacity-60`}
-            >
-              微调目标: {label}
-            </button>
-          ))}
-        </div>
-      <div className="flex gap-2">
-        <input
-          value={command}
-          onChange={(e) => setCommand(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && runTweak()}
-          placeholder={`对「${BLOCKS.find((block) => block.key === tweakTarget)?.label || '当前卡'}」输入调整指令...`}
-          className="flex-1 border bg-transparent p-2 text-sm focus:outline-none"
-          disabled={tweaking}
-        />
-        <button
-          onClick={runTweak}
-          disabled={tweaking || !command.trim()}
-          className="px-3 text-sm text-secondary hover:text-primary disabled:text-muted"
-        >
-          {tweaking ? '发送中...' : '发送'}
-        </button>
-      </div>
-      </div>
+    return (
+      <div className="atelier">
+        <div className="eyebrow">Studio · 创世台 · 确认设定</div>
+        <h2 className="atelier-h1">定<span className="it">地基</span>。想改就跟我说。</h2>
+        <p className="lede">换皮已自动完成并补好逻辑洞。这是你的第二个、也是最后一个创作决定——任何 AI 改动都先给你看 diff，你说了算。</p>
 
-      <p className="sr-only" aria-live="polite">
-        {generatingBoard
-          ? '故事板生成中'
-          : streamingScene !== null
-            ? `正在流式生成第 ${streamingScene} 分镜正文`
-            : Object.values(sceneResumeStatus).some((status) => status === 'failed-resumable')
-              ? '检测到中断，可点击继续接写'
-            : error
-              ? `发生错误：${error}`
-              : '创作流程就绪'}
-      </p>
-
-      {error && <p className="text-sm text-red-400">{error}</p>}
-      {rateLimited && (
-        <p className="text-xs text-amber-400">⏳ 云端限速中，已自动退避重试，请稍候…</p>
-      )}
-
-      {/* Storyboard */}
-      <div className="space-y-4">
-        <style>{`
-          .storyboard-stream-panel {
-            transition: opacity 100ms ease-out;
-          }
-        `}</style>
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-sm">故事板</span>
-          <div className="flex items-center gap-3">
-            {storyboard.some((s) => (sceneTexts[s.sceneNumber] || '').trim().length > 0) && (
-              <button onClick={saveWork} className="text-sm text-secondary hover:text-primary">
-                导出全篇
-              </button>
-            )}
-            {!generatingBoard && streamingScene === null && (
-              <label className="flex items-center gap-1 text-xs text-muted">
-                分镜数
-                <select
-                  value={sceneCount}
-                  onChange={(e) => setSceneCount(Number(e.target.value))}
-                  className="border border-default bg-transparent px-1 py-0.5 text-xs text-secondary focus:outline-none"
-                >
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
-                    <option key={n} value={n} className="bg-black">
-                      {n}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            {generatingBoard ? (
-              <button onClick={() => streamAbortRef.current?.abort()} className="text-sm text-amber-400 hover:text-amber-300">
-                停止生成
-              </button>
-            ) : (
-              <button
-                onClick={generateStoryboard}
-                disabled={streamingScene !== null}
-                className="text-sm text-secondary hover:text-primary disabled:text-muted"
-              >
-                {storyboard.length > 0 ? '重新生成故事板' : '生成故事板'}
-              </button>
-            )}
-          </div>
-        </div>
-
-        {(generatingBoard || storyboardStreamText) && (
-          <div
-            aria-live="polite"
-            className={`storyboard-stream-panel border border-default p-3 text-sm text-secondary leading-relaxed whitespace-pre-wrap ${
-              prefersReducedMotion ? 'opacity-95' : 'opacity-100'
-            }`}
-          >
-            {storyboardStreamText || '正在构建故事板流...'}
-            {generatingBoard && !prefersReducedMotion && (
-              <span className="inline-block w-1 h-3 bg-primary animate-pulse ml-0.5" />
-            )}
+        {repairing && (
+          <div className="mb-4 flex items-center gap-2 rounded-[9px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--vermilion-line)', background: 'var(--vermilion-soft)', color: 'var(--vermilion)' }}>
+            <span className="inline-block h-1.5 w-1.5 rounded-full animate-pulse motion-reduce:animate-none" style={{ background: 'var(--vermilion)' }} />
+            正在补洞：核对新题材能否撑起原结构骨架，修补逻辑断裂点…
           </div>
         )}
+        {!repairing && repairGaps.length > 0 && (
+          <details className="mb-4 rounded-[9px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--add)', background: 'var(--add-soft)', color: '#a7d8b4' }}>
+            <summary className="cursor-pointer select-none">🩹 已自动补洞 {repairGaps.length} 处，使换皮设定逻辑自洽（点开查看）</summary>
+            <ul className="mt-2 space-y-1.5" style={{ color: 'var(--ink-dim)' }}>
+              {repairGaps.map((g, i) => (<li key={i}><b style={{ color: '#a7d8b4' }}>{g.beat}</b>：{g.issue} → {g.patch}</li>))}
+            </ul>
+          </details>
+        )}
 
-        {storyboard.length > 0 && (
-          <div className="space-y-4">
-            {storyboard.map((scene) => (
-              <div key={scene.sceneNumber} className="border border-default p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">{scene.sceneTitle}</span>
-                  <span className="text-xs text-muted">#{scene.sceneNumber}</span>
+        <div className="studio">
+          <div className="setcards">
+            {/* 引擎来源（只读溯源）：迁移不变量 */}
+            {eng && (
+              <>
+                <div className="setcard eng">
+                  <div className="lab"><span className="l">① 结构骨架</span><span className="src">来自《{engSrc}》</span></div>
+                  <div className="body">{eng.structureSkeleton.map((b) => b.function).filter(Boolean).join(' → ') || '—'}</div>
                 </div>
-                <p className="mt-2 text-sm text-secondary">{scene.plotOutline}</p>
+                <div className="setcard eng">
+                  <div className="lab"><span className="l">② 编排节奏</span><span className="src">来自《{engSrc}》</span></div>
+                  <div className="body">{eng.pacingSyuzhet || '—'}</div>
+                </div>
+              </>
+            )}
 
-                {sceneTexts[scene.sceneNumber] ? (
-                  <div className="mt-4 space-y-2">
-                    <div className="max-h-48 overflow-y-auto border border-default p-3 text-sm text-secondary leading-relaxed whitespace-pre-wrap">
-                      {sceneTexts[scene.sceneNumber]}
-                      {streamingScene === scene.sceneNumber && (
-                        <span className={`inline-block w-1 h-3 bg-primary ml-0.5 ${prefersReducedMotion ? 'opacity-80' : 'animate-pulse'}`} />
-                      )}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-4 text-xs">
-                      <button onClick={() => copyScene(scene.sceneNumber)} className="text-muted hover:text-secondary">
-                        {copiedScene === scene.sceneNumber ? '已复制 ✓' : '复制'}
-                      </button>
-                      <button onClick={() => saveScene(scene)} className="text-muted hover:text-secondary">下载</button>
-                      {streamingScene === scene.sceneNumber ? (
-                        <button onClick={() => streamAbortRef.current?.abort()} className="text-amber-400 hover:text-amber-300">
-                          停止生成
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => generateScene(scene, 'fresh')}
-                          disabled={streamingScene !== null}
-                          className="text-muted hover:text-secondary disabled:opacity-50"
-                        >
-                          重写
-                        </button>
-                      )}
-                      {sceneResumeStatus[scene.sceneNumber] === 'failed-resumable' && (
-                        <button
-                          onClick={() => generateScene(scene, 'resume')}
-                          disabled={streamingScene !== null}
-                          className="rounded border border-white/20 bg-white/10 px-2 py-0.5 text-primary backdrop-blur-sm hover:text-white disabled:text-muted"
-                          aria-live="polite"
-                        >
-                          {sceneResumeStatus[scene.sceneNumber] === 'resuming' ? '续写中...' : '继续接写 ↩️'}
-                        </button>
-                      )}
-                    </div>
+            {/* 换皮后的具体新书设定（可编辑、走 diff）；溯源标呈现引擎/皮二元 */}
+            {BLOCKS.map(({ key, label }) => {
+              const active = tweakTarget === key;
+              const showDiff = pendingDiff?.block === key;
+              const editing = editingBlock === key;
+              return (
+                <div
+                  key={key}
+                  className={`setcard skn ${showDiff ? 'diff' : ''}`}
+                  style={active ? { borderColor: 'var(--vermilion-line)' } : undefined}
+                  onClick={() => { if (!editing) setTweakTarget(key); }}
+                >
+                  <div className="lab">
+                    <span className="l">{label}</span>
+                    <span className="src">引擎《{engSrc}》· 题材《{skinSrc}》</span>
+                    {!editing && !showDiff && <button className="editbtn" onClick={(e) => { e.stopPropagation(); startEdit(key); }}>✎ 改</button>}
                   </div>
-                ) : (
-                  <button
-                    onClick={() => generateScene(scene, 'fresh')}
-                    disabled={streamingScene !== null}
-                    className="mt-3 text-sm text-secondary hover:text-primary disabled:text-muted"
-                  >
-                    {streamingScene === scene.sceneNumber ? '生成中...' : '生成正文'}
-                  </button>
-                )}
-              </div>
-            ))}
+                  {editing ? (
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <textarea value={editDraft} onChange={(e) => setEditDraft(e.target.value)} />
+                      <div className="diffbar"><span className="why">手动编辑</span>
+                        <button className="mini" onClick={cancelEdit}>取消</button>
+                        <button className="mini accept" onClick={() => saveEdit(key)}>保存</button>
+                      </div>
+                    </div>
+                  ) : showDiff && pendingDiff ? (
+                    <>
+                      <div className="body">{diffSegments(computeDiff(pendingDiff.oldText, pendingDiff.newText))}</div>
+                      <div className="diffbar" onClick={(e) => e.stopPropagation()}>
+                        <span className="why">✨ {pendingDiff.why}</span>
+                        <button className="mini" onClick={rejectDiff}>拒绝</button>
+                        <button className="mini accept" onClick={acceptDiff}>接受改动</button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="body">{blocks[key] || '—'}</div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-        )}
+
+          <aside className="copilot">
+            <h5>与 AI 共创</h5>
+            <div className="sub">点一张卡选中目标（当前：{BLOCKS.find((b) => b.key === tweakTarget)?.label}）。说一句大白话，或点 ✨ 让我先理清你的意图。</div>
+            {intent && (
+              <div className="intent">我理解你要：<b>{intent.brief}</b>{intent.confirmation ? <><br />{intent.confirmation}</> : null}
+                <div className="ic">
+                  <button className="mini" onClick={cancelIntent}>不对，我再说</button>
+                  <button className="mini accept" onClick={confirmIntent}>对，改</button>
+                </div>
+              </div>
+            )}
+            <div className="aibox">
+              <textarea
+                value={command}
+                onChange={(e) => setCommand(e.target.value)}
+                placeholder={`对「${BLOCKS.find((b) => b.key === tweakTarget)?.label}」说：把主角换成女性 / 开篇更孤独 / 金手指更克制…`}
+              />
+              <div className="ar">
+                <button className="enhance" onClick={() => void enhance()} disabled={enhancing || tweaking || !command.trim()}>✨ {enhancing ? '理清中…' : '增强我的意图'}</button>
+                <button className="send" onClick={() => void runTweak()} disabled={tweaking || enhancing || !command.trim()} title="发送指令">{tweaking ? '…' : '↑'}</button>
+              </div>
+            </div>
+            {settingHistory.length > 0 && (
+              <button className="ver" onClick={revertSetting} disabled={tweaking || repairing}>⟲ 版本历史 · 一键回退上一步（已存 {settingHistory.length} 版）</button>
+            )}
+          </aside>
+        </div>
+
+        {error && <p className="mt-4 text-sm" style={{ color: 'var(--del)' }}>{error}</p>}
+        {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--vermilion)' }}>云端有些拥挤，已自动退避重试，请稍候…</p>}
+
+        <div className="mt-7 flex gap-3">
+          <button className="cta" onClick={goManuscript} disabled={repairing || !!pendingDiff}>确认设定 · 开始写开篇 →</button>
+          <button className="cta ghost" onClick={() => setStep('directions')}>← 换个方向</button>
+        </div>
       </div>
+    );
+  }
+
+  // ===== 成稿 =====
+  const prose = sceneTexts[OPENING_SCENE_NUM] || '';
+  const resume = sceneResumeStatus[OPENING_SCENE_NUM];
+  const streaming = streamingScene === OPENING_SCENE_NUM;
+  return (
+    <div className="atelier">
+      <div className="eyebrow">Manuscript · 成稿</div>
+      <h2 className="atelier-h1">墨，正落在<span className="it">纸</span>上。</h2>
+      <p className="lede">开篇正文流式生成中。选中任意一句，就能让 AI 就地改写——改动同样先给你看、你接受才算数。</p>
+
+      <div className="manuscript">
+        <div className="sheet">
+          <div className="stamp">稿</div>
+          <div className="m-title">{directionTitle || '新作'} · 第一章</div>
+          <div className="by">骨架《{engSrc}》 × 题材《{skinSrc}》 · 自动生成</div>
+          <div className="prose" onMouseUp={onProseSelect}>
+            {prose ? <>{prose}{streaming && !prefersReducedMotion && <span className="caret" />}</> : (
+              <span style={{ color: 'var(--paper-dim)' }}>{streaming ? '墨正落下…' : '点右侧「生成开篇」开始。'}</span>
+            )}
+          </div>
+        </div>
+
+        <div className="tools">
+          <div className="th">本篇</div>
+          {streaming ? (
+            <button className="tool primary" onClick={() => streamAbortRef.current?.abort()}><b>■ 停止生成</b></button>
+          ) : (
+            <button className="tool primary" onClick={() => void streamOpening('fresh')}><b>{prose ? '↻ 重写开篇' : '✍ 生成开篇'}</b></button>
+          )}
+          {!streaming && resume === 'failed-resumable' && (
+            <button className="tool" onClick={() => void streamOpening('resume')}><b>↧ 继续接写</b></button>
+          )}
+          <button className="tool" onClick={() => void copyManuscript()} disabled={!prose.trim()}><b>{copied ? '✓ 已复制' : '⎘ 复制'}</b></button>
+          <button className="tool" onClick={exportMd} disabled={!prose.trim()}><b>⤓ 导出 .md</b></button>
+          <button className="tool" onClick={() => setStep('creator')}><b>← 回创世台</b></button>
+
+          {fragmentDraft ? (
+            <div className="selnote" style={{ color: 'var(--ink-dim)' }}>
+              改写预览：<br /><span style={{ color: 'var(--del)' }}>{fragmentDraft.original}</span><br />→ <span style={{ color: 'var(--add)' }}>{fragmentDraft.rewritten}</span>
+              <div className="mt-2 flex gap-2">
+                <button className="mini" onClick={rejectFragment}>拒绝</button>
+                <button className="mini accept" onClick={acceptFragment}>接受</button>
+              </div>
+            </div>
+          ) : selectedFragment ? (
+            <div className="selnote">
+              选中「{selectedFragment.length > 18 ? `${selectedFragment.slice(0, 18)}…` : selectedFragment}」<br />让 AI：
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {['更有画面感', '更短促', '改写'].map((s) => (
+                  <button key={s} className="mini" disabled={rewriting} onClick={() => void rewriteFragment(s)}>{rewriting ? '…' : s}</button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="selnote">在左侧正文里选中一句，可让 AI 就地改写（先预览、你接受才替换）。</div>
+          )}
+        </div>
+      </div>
+
+      {error && <p className="mt-4 text-sm" style={{ color: 'var(--del)' }}>{error}</p>}
+      {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--vermilion)' }}>云端有些拥挤，已自动退避重试，请稍候…</p>}
     </div>
   );
 }

@@ -1,6 +1,13 @@
 import { db, type Chapter, type ChapterMapSummary, type NovelDNACard } from './db';
 import { postWithLlmConfig, readApiErrorMessage } from './llmClient';
 import { useAppStore } from './store';
+import {
+  routeBySize,
+  planExtractionUnits,
+  ARC_WINDOW_BUDGET_CHARS,
+  SAMPLE_WINDOW_CAP,
+  type ExtractionUnit,
+} from './dnaRouting';
 
 // Resumable, concurrency-limited book-level DNA extraction (Map-Reduce).
 // Map: one /extract-chapter-map call per chapter, persisted immediately so a
@@ -46,10 +53,8 @@ function leaveRateLimitWait(): void {
 }
 
 // 可被打断的退避 sleep：等待期间 signal 一旦 abort 立即解除（事件驱动 + 150ms 轮询兜底，
-// 严禁裸 await sleep() 阻断手刹）。关键：Map 阶段传入 linkedSignal——「暂停」与「阶段汇总」
-// 都会经既有订阅（L199-209：shouldReduceEarly → mappingAbortController.abort()）同步 abort 它，
-// 故只观察 signal.aborted 即同时覆盖两类手刹；Reduce 阶段传入父 signal，仅「暂停」可中断退避，
-// 从而保证 early-reduce 后的 Reduce 仍能穿越 429 续测（AC5）。
+// 严禁裸 await sleep() 阻断手刹）。Map 阶段传入 linkedSignal（镜像父 signal 的「暂停」），
+// 故只观察 signal.aborted 即覆盖暂停；Reduce 阶段传入父 signal，「暂停」可中断退避。
 function interruptibleSleep(ms: number, signal: AbortSignal): Promise<'ok' | 'aborted'> {
   return new Promise((resolve) => {
     if (signal.aborted) {
@@ -116,10 +121,22 @@ export async function withRateLimitRetry<T>(
   }
 }
 
-async function mapOneChapter(chapter: Chapter, signal: AbortSignal): Promise<void> {
+const MAX_ARC_INPUT_CHARS = 48000;     // 与后端 ArcMapInput.content 上限一致
+const MAX_DIRECT_INPUT_CHARS = 200000; // 与后端 BookDirectInput.content 上限一致
+
+// 弧窗 map：把若干连续章节拼成弧文本 → 一条摘要；摘要落在 lead 章，其余成员标 done（不重复摘要，
+// reduce 据 mapSummary 仅纳入 lead），让章节列表状态与覆盖一致、且续跑只看 lead 是否 done。
+async function mapOneUnit(unit: ExtractionUnit, byId: Map<string, Chapter>, signal: AbortSignal): Promise<void> {
+  const parts: string[] = [];
+  for (const cid of unit.chapterIds) {
+    const ch = byId.get(cid);
+    if (ch && ch.content) parts.push(`【${ch.name}】\n${ch.content}`);
+  }
+  let content = parts.join('\n\n');
+  if (content.length > MAX_ARC_INPUT_CHARS) content = content.slice(0, MAX_ARC_INPUT_CHARS);
   const response = await postWithLlmConfig(
-    '/api/py/extract-chapter-map',
-    { title: chapter.name, content: chapter.content },
+    '/api/py/extract-arc-map',
+    { title: unit.label, content },
     { signal }
   );
   if (response.status === 429) {
@@ -129,7 +146,30 @@ async function mapOneChapter(chapter: Chapter, signal: AbortSignal): Promise<voi
     throw new Error(await readApiErrorMessage(response));
   }
   const summary = (await response.json()) as ChapterMapSummary;
-  await db.chapters.update(chapter.id, { mapStatus: 'done', mapSummary: summary, mapCompletedAt: Date.now(), errorMsg: undefined });
+  await db.chapters.update(unit.id, { mapStatus: 'done', mapSummary: summary, mapCompletedAt: Date.now(), errorMsg: undefined });
+  for (const cid of unit.chapterIds) {
+    if (cid !== unit.id) {
+      await db.chapters.update(cid, { mapStatus: 'done', errorMsg: undefined });
+    }
+  }
+}
+
+// 小档「整本直提」：整本净化文本一次喂入 → 4 层 DNA（跳过逐章 map / reduce）。
+async function extractBookDirect(novelName: string, content: string, signal: AbortSignal): Promise<NovelDNACard> {
+  let text = content;
+  if (text.length > MAX_DIRECT_INPUT_CHARS) text = text.slice(0, MAX_DIRECT_INPUT_CHARS);
+  const response = await postWithLlmConfig(
+    '/api/py/extract-book-direct',
+    { novelName, content: text },
+    { signal }
+  );
+  if (response.status === 429) {
+    throw new RateLimitSignal();
+  }
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
+  return (await response.json()) as NovelDNACard;
 }
 
 async function computeSha256(text: string): Promise<string> {
@@ -163,132 +203,130 @@ export async function ensureIncrementalHashes(
 
 /**
  * Extract (or resume extracting) the book-level DNA for a novel.
- * @param limit  cap the scope to the first N chapters (e.g. 100); omit for全量.
+ * 零参数：按净化字数自动路由（小=整本直提 / 中=弧窗逐组 / 大=饱和采样）。可中断、可续跑、挂载自愈。
  */
 export async function runDnaExtraction(
   novelId: string,
-  opts: { limit?: number; targetChapterId?: string; signal: AbortSignal }
+  opts: { signal: AbortSignal }
 ): Promise<void> {
-  const { limit, targetChapterId, signal } = opts;
+  const { signal } = opts;
 
   try {
-    await ensureIncrementalHashes(novelId, { onlyChapterId: targetChapterId, signal });
+    const novel = await db.novels.get(novelId);
+    if (!novel) {
+      throw new Error('未找到该小说。');
+    }
 
     const all = await db.chapters.where('novelId').equals(novelId).sortBy('chapterIndex');
-    const scope = typeof limit === 'number' ? all.slice(0, limit) : all;
-    if (scope.length === 0) {
+    if (all.length === 0) {
       await db.novels.update(novelId, { analysisStatus: 'error' });
       throw new Error('该小说还没有切分出章节，请先切分。');
     }
 
-    let targets: Chapter[] = [];
-    if (targetChapterId) {
-      const targetCh = scope.find((c) => c.id === targetChapterId);
-      if (!targetCh) {
-        throw new Error('未找到指定章节。');
+    const wordCount = novel.wordCount || novel.sourceTextCleaned?.length || all.reduce((s, c) => s + (c.wordCount || 0), 0);
+    const route = routeBySize(wordCount);
+
+    // —— 小档：整本直提（跳过逐章 map / reduce）——
+    if (route === 'direct') {
+      await db.novels.update(novelId, { analysisStatus: 'reducing', mapProgress: { total: 1, current: 0 } });
+      const content = (novel.sourceTextCleaned && novel.sourceTextCleaned.trim())
+        ? novel.sourceTextCleaned
+        : all.map((c) => `【${c.name}】\n${c.content}`).join('\n\n');
+      try {
+        const dnaCard = await withRateLimitRetry(
+          () => extractBookDirect(novel.name, content, signal),
+          { signal }
+        );
+        if (signal.aborted) {
+          await db.novels.update(novelId, { analysisStatus: 'idle' });
+          return;
+        }
+        await db.novels.update(novelId, { dnaCard, dnaCardVersion: 2, analysisStatus: 'done', mapProgress: { total: 1, current: 1 } });
+      } catch (err) {
+        if (signal.aborted) {
+          await db.novels.update(novelId, { analysisStatus: 'idle' });
+          return;
+        }
+        await db.novels.update(novelId, { analysisStatus: 'error' });
+        throw err;
       }
-      if (targetCh.wordCount > 30000) {
-        throw new Error('本章字数已超过 30,000 字上限，为了保护大模型上下文及本地 IndexedDB 性能，请先用剪刀裁剪成小章。');
-      }
-      targets = [targetCh];
-    } else {
-      const overlimitChapters = scope.filter((c) => c.wordCount > 30000);
-      if (overlimitChapters.length > 0) {
-        throw new Error(`章节「${overlimitChapters[0].name}」字数已超过 30,000 字上限，为了保护大模型上下文及本地 IndexedDB 性能，请先用剪刀裁剪成小章。`);
-      }
-      targets = scope.filter((c) => c.mapStatus !== 'done');
+      return;
     }
 
-    const doneCount = scope.filter((c) => c.mapStatus === 'done').length;
-    // Single-chapter 精测 reports progress for just the targeted chapter, not the whole scope.
-    const progressTotal = targetChapterId ? targets.length : scope.length;
-    const progressBase = targetChapterId ? 0 : doneCount;
+    // —— 中/大档：弧窗逐组 map → reduce ——
+    await ensureIncrementalHashes(novelId, { signal });
+    const chaptersForPlan = await db.chapters.where('novelId').equals(novelId).sortBy('chapterIndex');
+    const byId = new Map(chaptersForPlan.map((c) => [c.id, c]));
+    const units = planExtractionUnits(
+      chaptersForPlan.map((c) => ({ id: c.id, name: c.name, wordCount: c.wordCount })),
+      route,
+      { budgetChars: ARC_WINDOW_BUDGET_CHARS, sampleCap: SAMPLE_WINDOW_CAP },
+    );
+    if (units.length === 0) {
+      await db.novels.update(novelId, { analysisStatus: 'error' });
+      throw new Error('未能规划出可提取的弧窗，请先确认章节切分正常。');
+    }
+    // 大档采样会跳过部分章节——明确告知覆盖范围（禁止静默截断）。
+    if (route === 'sampling') {
+      const covered = units.reduce((s, u) => s + u.chapterIds.length, 0);
+      console.info(`[dnaEngine] 饱和采样：在 ${chaptersForPlan.length} 章中实测 ${units.length} 个弧窗（覆盖约 ${covered} 章），以避免上千章卡死。`);
+    }
+
+    // 续跑：仅测 lead 章未 done 的窗口。
+    const targets = units.filter((u) => byId.get(u.id)?.mapStatus !== 'done');
+    const doneUnits = units.length - targets.length;
+    const progressTotal = units.length;
+
     await db.novels.update(novelId, {
       analysisStatus: 'mapping',
-      mapProgress: { total: progressTotal, current: progressBase },
+      mapProgress: { total: progressTotal, current: doneUnits },
     });
-    
-    // Linked abort controller for the mapping phase to support immediate soft-abort on early reduce
+
+    // 链接 abort 控制器：父 signal「暂停」→ 同步 abort 本阶段所有在飞调用。
     const mappingAbortController = new AbortController();
     const linkedSignal = mappingAbortController.signal;
-    
-    const onParentAbort = () => {
-      mappingAbortController.abort();
-    };
-    if (signal) {
-      signal.addEventListener('abort', onParentAbort);
-    }
-    
+    const onParentAbort = () => mappingAbortController.abort();
+    if (signal) signal.addEventListener('abort', onParentAbort);
+
     let activeWorkers = 0;
     let nextIndex = 0;
-    let completed = progressBase;
+    let completed = doneUnits;
     let failures = 0;
-
-    const getConcurrencyLimit = () => {
-      const gear = useAppStore.getState().sequencingGear || 'balanced';
-      if (gear === 'safe') return 1;
-      if (gear === 'speed') return 8;
-      return 3;
-    };
+    const CONCURRENCY = route === 'sampling' ? 6 : 3;
 
     let resolveMapPhase: (() => void) | null = null;
-    const mapPhasePromise = new Promise<void>((resolve) => {
-      resolveMapPhase = resolve;
-    });
+    const mapPhasePromise = new Promise<void>((resolve) => { resolveMapPhase = resolve; });
 
     const checkFinished = () => {
-      if (activeWorkers === 0 && (nextIndex >= targets.length || linkedSignal.aborted || useAppStore.getState().shouldReduceEarly)) {
+      if (activeWorkers === 0 && (nextIndex >= targets.length || linkedSignal.aborted)) {
         resolveMapPhase?.();
       }
     };
 
     const runWorker = async () => {
       while (!linkedSignal.aborted) {
-        if (useAppStore.getState().shouldReduceEarly) {
-          activeWorkers--;
-          checkFinished();
-          return;
-        }
-
-        const currentLimit = getConcurrencyLimit();
-        if (activeWorkers > currentLimit) {
-          activeWorkers--;
-          checkFinished();
-          return;
-        }
-
+        if (activeWorkers > CONCURRENCY) { activeWorkers--; checkFinished(); return; }
         const i = nextIndex++;
-        if (i >= targets.length) {
-          activeWorkers--;
-          checkFinished();
-          return;
-        }
-
-        const chapter = targets[i];
+        if (i >= targets.length) { activeWorkers--; checkFinished(); return; }
+        const unit = targets[i];
         try {
-          await db.chapters.update(chapter.id, { mapStatus: 'mapping' });
-          await withRateLimitRetry(() => mapOneChapter(chapter, linkedSignal), { signal: linkedSignal });
-          // O(1) atomic increment instead of re-querying + sorting every chapter per completion
+          await db.chapters.update(unit.id, { mapStatus: 'mapping' });
+          await withRateLimitRetry(() => mapOneUnit(unit, byId, linkedSignal), { signal: linkedSignal });
           completed += 1;
           await db.novels.update(novelId, { mapProgress: { total: progressTotal, current: completed } });
         } catch (err) {
           if (linkedSignal.aborted) {
-            // Roll back the in-flight chapter so it isn't left stuck in 'mapping'
-            // (covers both plain pause and early-reduce); it re-analyzes next run.
-            await db.chapters.update(chapter.id, { mapStatus: 'pending' });
-            activeWorkers--;
-            checkFinished();
-            return;
+            // 回滚在飞窗口的 lead 至 pending，下轮可续跑。
+            await db.chapters.update(unit.id, { mapStatus: 'pending' });
+            activeWorkers--; checkFinished(); return;
           }
-          // 429 频限已在 withRateLimitRetry 内静默退避重试；能落到这里的只有非 429 错误，
-          // 或退避次数耗尽的兜底失败——此时才计入 failures 并标 error。
+          // 429 已在 withRateLimitRetry 内静默退避；落到这里的是非 429 错误或退避耗尽兜底。
           failures += 1;
-          await db.chapters.update(chapter.id, {
+          await db.chapters.update(unit.id, {
             mapStatus: 'error',
             errorMsg: err instanceof Error ? err.message : String(err),
           });
         }
-
         spawnWorkersIfNeeded();
       }
       activeWorkers--;
@@ -296,83 +334,52 @@ export async function runDnaExtraction(
     };
 
     const spawnWorkersIfNeeded = () => {
-      const currentLimit = getConcurrencyLimit();
-      while (activeWorkers < currentLimit && nextIndex < targets.length && !linkedSignal.aborted && !useAppStore.getState().shouldReduceEarly) {
+      while (activeWorkers < CONCURRENCY && nextIndex < targets.length && !linkedSignal.aborted) {
         activeWorkers++;
         runWorker();
       }
       checkFinished();
     };
 
-    // Subscribe to Zustand store changes to dynamically adjust concurrency & stage summary
-    let lastGear = useAppStore.getState().sequencingGear;
-    let lastReduce = useAppStore.getState().shouldReduceEarly;
-
-    const unsubscribe = useAppStore.subscribe((state) => {
-      if (state.sequencingGear !== lastGear || state.shouldReduceEarly !== lastReduce) {
-        lastGear = state.sequencingGear;
-        lastReduce = state.shouldReduceEarly;
-        if (state.shouldReduceEarly) {
-          mappingAbortController.abort();
-        } else {
-          spawnWorkersIfNeeded();
-        }
-      }
-    });
-
-    let isReduceEarly = false;
     try {
       spawnWorkersIfNeeded();
       await mapPhasePromise;
-      isReduceEarly = useAppStore.getState().shouldReduceEarly;
     } finally {
-      unsubscribe();
-      if (signal) {
-        signal.removeEventListener('abort', onParentAbort);
-      }
+      if (signal) signal.removeEventListener('abort', onParentAbort);
     }
 
     if (signal.aborted) {
       await db.novels.update(novelId, { analysisStatus: 'idle' });
       return;
     }
-
-    if (failures > 0 && !isReduceEarly) {
+    if (failures > 0) {
       await db.novels.update(novelId, { analysisStatus: 'error' });
-      throw new Error(`有 ${failures} 个章节解析失败，请点击继续提取重试失败章节。`);
+      throw new Error(`有 ${failures} 个弧窗解析失败，请点击继续提取重试。`);
     }
 
-    // --- Reduce phase ---
+    // —— Reduce：折叠所有 done 弧窗（lead）摘要 → 4 层 DNA ——
     await db.novels.update(novelId, { analysisStatus: 'reducing' });
-    const novel = await db.novels.get(novelId);
     const mapped = await db.chapters.where('novelId').equals(novelId).sortBy('chapterIndex');
-    
-    // Fold summaries for completed chapters
     const mapSummaries = mapped
-      .filter((c) => (typeof limit === 'number' ? c.chapterIndex < limit : true) && c.mapStatus === 'done' && c.mapSummary)
+      .filter((c) => c.mapStatus === 'done' && c.mapSummary)
       .map((c) => c.mapSummary as ChapterMapSummary);
-
     if (mapSummaries.length === 0) {
       await db.novels.update(novelId, { analysisStatus: 'error' });
-      throw new Error('没有已成功测序的章节，无法进行阶段汇总。请至少等待一个章节测序完成。');
+      throw new Error('没有已成功测序的弧窗，无法归纳 DNA。请稍后重试。');
     }
 
     try {
       const dnaCard = await withRateLimitRetry(async () => {
         const response = await postWithLlmConfig(
           '/api/py/extract-book-reduce',
-          { novelName: novel?.name ?? '', mapSummaries },
+          { novelName: novel.name, mapSummaries },
           { signal }
         );
-        if (response.status === 429) {
-          throw new RateLimitSignal(); // Reduce 同样护航退避，保证端到端「测序绝不中断」
-        }
-        if (!response.ok) {
-          throw new Error(await readApiErrorMessage(response));
-        }
+        if (response.status === 429) throw new RateLimitSignal();
+        if (!response.ok) throw new Error(await readApiErrorMessage(response));
         return (await response.json()) as NovelDNACard;
       }, { signal });
-      await db.novels.update(novelId, { dnaCard, analysisStatus: 'done' });
+      await db.novels.update(novelId, { dnaCard, dnaCardVersion: 2, analysisStatus: 'done' });
     } catch (err) {
       if (signal.aborted) {
         await db.novels.update(novelId, { analysisStatus: 'idle' });
@@ -382,9 +389,8 @@ export async function runDnaExtraction(
       throw err;
     }
   } finally {
-    // 每轮提取结束熄灭护航灯（resetSequencingState 复位 rateLimited）。退避计数 rateLimitWaiting
-    // 由 withRateLimitRetry 的 enter/leave 平衡门自行归零——此处不再强制清零，以免跨轮重叠运行时
-    // 误清另一轮仍在退避的 worker 计数、令护航灯失同步。
-    useAppStore.getState().resetSequencingState();
+    // 每轮提取结束熄灭护航灯。退避计数 rateLimitWaiting 由 withRateLimitRetry 的 enter/leave 平衡门
+    // 自行归零——此处不强制清零，以免跨轮重叠运行时误清另一轮仍在退避的 worker 计数、令护航灯失同步。
+    useAppStore.getState().setRateLimited(false);
   }
 }

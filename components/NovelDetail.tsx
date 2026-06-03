@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type NovelDNACard, type Chapter, type ChapterMapSummary } from '../app/db';
+import { db, type Chapter, isFourLayerDnaCard, isLegacyDnaCard } from '../app/db';
 import { useAppStore } from '../app/store';
 import { ensureLlmConfigReady } from '../app/llmClient';
 import { runDnaExtraction } from '../app/dnaEngine';
@@ -10,72 +10,17 @@ import { getLlmReadinessSummary } from '../app/workflow';
 
 const EMPTY_CHAPTERS: Chapter[] = [];
 
-interface LiveFeedItem {
-  chapterId: string;
-  chapterIndex: number;
-  name: string;
-  tag: string;
-  snippet: string;
-  isNew: boolean;
-}
-
-function extractGenomicsHighlights(summary?: ChapterMapSummary): { tag: string; snippet: string } {
-  if (!summary) {
-    return { tag: '数据装载', snippet: '正在分析本章微观主线与世界规则...' };
-  }
-  const { worldviewUpdates, keyPlotTurns, characterDevelopments } = summary;
-  
-  if (worldviewUpdates && worldviewUpdates.trim() !== '无') {
-    return {
-      tag: '设定觉醒',
-      snippet: worldviewUpdates.length > 45 ? `${worldviewUpdates.substring(0, 45)}...` : worldviewUpdates
-    };
-  }
-  if (characterDevelopments && characterDevelopments.trim() !== '无') {
-    return {
-      tag: '人设高光',
-      snippet: characterDevelopments.length > 45 ? `${characterDevelopments.substring(0, 45)}...` : characterDevelopments
-    };
-  }
-  if (keyPlotTurns && keyPlotTurns.trim() !== '无') {
-    return {
-      tag: '爽点碰撞',
-      snippet: keyPlotTurns.length > 45 ? `${keyPlotTurns.substring(0, 45)}...` : keyPlotTurns
-    };
-  }
-  return { tag: '奇遇推进', snippet: '核心剧情与命运脉络平稳向前展开...' };
-}
-
-const DNA_FIELDS: { key: keyof NovelDNACard; label: string }[] = [
-  { key: 'theme', label: '母题' },
-  { key: 'worldview', label: '世界观' },
-  { key: 'characters', label: '角色' },
-  { key: 'narrativeStyle', label: '叙事' },
-  { key: 'styleFingerprint', label: '风格' },
-];
-
 function formatWordCount(count: number): string {
   if (count >= 10000) return `${(count / 10000).toFixed(1)}万字`;
   return `${count}字`;
 }
 
 export default function NovelDetail({ novelId }: { novelId: string }) {
-  const { 
-    llmConfig, 
-    setManageMode, 
-    setWorkshopOpen,
-    sequencingGear,
-    setSequencingGear,
-    setShouldReduceEarly,
-    rateLimited
-  } = useAppStore((state) => ({
+  const { llmConfig, setManageMode, setWorkshopOpen, rateLimited } = useAppStore((state) => ({
     llmConfig: state.llmConfig,
     setManageMode: state.setManageMode,
     setWorkshopOpen: state.setWorkshopOpen,
-    sequencingGear: state.sequencingGear,
-    setSequencingGear: state.setSequencingGear,
-    setShouldReduceEarly: state.setShouldReduceEarly,
-    rateLimited: state.rateLimited
+    rateLimited: state.rateLimited,
   }));
 
   const novel = useLiveQuery(() => db.novels.get(novelId), [novelId]);
@@ -84,34 +29,15 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
 
   const [extracting, setExtracting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<keyof NovelDNACard>(DNA_FIELDS[0].key);
-  const [flipped, setFlipped] = useState(false);
-  const [draft, setDraft] = useState('');
   const [savedToast, setSavedToast] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const reconciledRef = useRef(false);
-  const [liveFeed, setLiveFeed] = useState<LiveFeedItem[]>([]);
-  const renderedIdsRef = useRef<Set<string>>(new Set());
-  const feedContainerRef = useRef<HTMLDivElement>(null);
-  const userScrollingRef = useRef(false);
-  const autoScrollingRef = useRef(false);
-  // Story 2.5: 五维 Tabs + 3D 翻转编辑——背面输入框 ref（Safari autofocus）与定时器 ref（卸载需清理）
-  const backTextareaRef = useRef<HTMLTextAreaElement>(null);
-  const flipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Reset feed + DNA codex view on novelId change
-  useEffect(() => {
-    setLiveFeed([]);
-    renderedIdsRef.current = new Set();
-    setFlipped(false);
-    setActiveTab(DNA_FIELDS[0].key);
-    reconciledRef.current = false;
-  }, [novelId]);
+  useEffect(() => { reconciledRef.current = false; }, [novelId]);
 
-  // 挂载对账（Critical）：刷新/崩溃后 analysisStatus 仍持久化为 mapping/reducing，但本会话没有活动的
-  // AbortController（abortRef 为空且未在提取）——这是上一次被中断的孤儿态。直接复位为可继续态，
-  // 并把卡在 mapping 的章回滚 pending，否则用户会被假进度面板永久卡死、暂停按钮空操作、提取按钮被隐藏。
+  // 挂载对账（Critical）：刷新/崩溃后 analysisStatus 仍为 mapping/reducing 的孤儿态复位为 idle、
+  // 把卡在 mapping 的章回滚 pending；复位后由 page.tsx 的后台 manager 自动续跑（提取可续跑）。
   useEffect(() => {
     if (!novel || extracting || abortRef.current) return;
     if (novel.analysisStatus !== 'mapping' && novel.analysisStatus !== 'reducing') return;
@@ -120,97 +46,30 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
     void (async () => {
       await db.novels.update(novelId, { analysisStatus: 'idle' });
       await db.chapters.where('novelId').equals(novelId).and((c) => c.mapStatus === 'mapping').modify({ mapStatus: 'pending' });
-      setSavedToast('检测到上次提取被中断，已自动复位，可继续提取。');
+      setSavedToast('检测到上次提取被中断，已自动复位，将自动续跑。');
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
       toastTimerRef.current = setTimeout(() => setSavedToast(null), 3500);
     })();
   }, [novel, novelId, extracting]);
 
-  // Story 2.5: 卸载时清理翻转 autofocus / toast 定时器，防内存泄漏与跨小说串扰
-  useEffect(() => () => {
-    if (flipTimerRef.current) clearTimeout(flipTimerRef.current);
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-  }, []);
+  useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
 
-  // Track finished chapters and build the live feed in true completion order
-  useEffect(() => {
-    if (!chapters || chapters.length === 0) return;
-
-    // Order by actual Map-completion time (mapCompletedAt), falling back to
-    // chapterIndex for chapters mapped before that field existed — this reconstructs
-    // the real concurrent finish order rather than mechanical chapterIndex order (AC2).
-    const doneChapters = chapters
-      .filter((c) => c.mapStatus === 'done' && c.mapSummary)
-      .sort((a, b) => (a.mapCompletedAt ?? 0) - (b.mapCompletedAt ?? 0) || a.chapterIndex - b.chapterIndex);
-
-    const firstRun = renderedIdsRef.current.size === 0;
-
-    setLiveFeed((prev) => {
-      const prevById = new Map(prev.map((it) => [it.chapterId, it]));
-      let changed = prev.length !== doneChapters.length;
-      const next: LiveFeedItem[] = doneChapters.map((c) => {
-        const { tag, snippet } = extractGenomicsHighlights(c.mapSummary);
-        const existing = prevById.get(c.id);
-        // First-run chapters are historical noise (silent); brand-new completions animate.
-        // Re-tested chapters keep their flag but refresh tag/snippet so the card updates.
-        const isNew = existing ? existing.isNew : !firstRun;
-        if (!existing || existing.tag !== tag || existing.snippet !== snippet
-            || existing.name !== c.name || existing.chapterIndex !== c.chapterIndex) {
-          changed = true;
-        }
-        return { chapterId: c.id, chapterIndex: c.chapterIndex, name: c.name, tag, snippet, isNew };
-      });
-      doneChapters.forEach((c) => renderedIdsRef.current.add(c.id));
-      return changed ? next : prev;
-    });
-  }, [chapters]);
-
-  // Auto-scroll to the newest card unless the user scrolled up
-  useEffect(() => {
-    if (userScrollingRef.current) return;
-    const timer = setTimeout(() => {
-      const el = feedContainerRef.current;
-      if (el) {
-        autoScrollingRef.current = true;
-        el.scrollTo({
-          top: el.scrollHeight,
-          behavior: 'smooth',
-        });
-      }
-    }, 50);
-    return () => clearTimeout(timer);
-  }, [liveFeed]);
-
-  const handleScroll = () => {
-    const el = feedContainerRef.current;
-    if (!el) return;
-    const { scrollTop, scrollHeight, clientHeight } = el;
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 15;
-    if (isAtBottom) {
-      userScrollingRef.current = false;
-      autoScrollingRef.current = false;
-    } else if (!autoScrollingRef.current) {
-      // Only a genuine user scroll-up (not our own smooth auto-scroll) suspends the lock
-      userScrollingRef.current = true;
-    }
-  };
-
-  if (!novel) {
-    return <div className="text-secondary">加载中...</div>;
-  }
+  if (!novel) return <div className="text-secondary">加载中...</div>;
 
   const llmReadiness = getLlmReadinessSummary(llmConfig);
   const progress = novel.mapProgress || { total: 0, current: 0 };
   const status = novel.analysisStatus;
   const busy = extracting || status === 'mapping' || status === 'reducing';
   const dnaReady = status === 'done' && novel.dnaCard;
+  const dnaCard = novel.dnaCard ?? null;
   const needsReview = novel.splitStatus === 'needs_review';
   const oversizedChapter = chapters.find((c) => c.wordCount > 30000) || null;
   const failedChapters = chapters.filter((c) => c.mapStatus === 'error');
+  const pct = progress.total ? Math.round((progress.current / progress.total) * 100) : status === 'reducing' ? 100 : 0;
 
-  const handleExtract = async (limit?: number) => {
-    const readiness = ensureLlmConfigReady(llmConfig);
-    if (!readiness.ok) {
+  // 重新提取 / 重试失败章（idle 起跑由 page.tsx 后台 manager 负责；这里仅覆盖 done/error 的手动入口）。
+  const handleExtract = async () => {
+    if (!ensureLlmConfigReady(llmConfig).ok) {
       window.dispatchEvent(new CustomEvent('open-settings-panel', { detail: { intent: 'DNA 提取' } }));
       return;
     }
@@ -219,7 +78,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      await runDnaExtraction(novelId, { limit, signal: controller.signal });
+      await runDnaExtraction(novelId, { signal: controller.signal });
     } catch (err) {
       setError(err instanceof Error ? err.message : '提取失败');
     } finally {
@@ -228,605 +87,157 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
     }
   };
 
-  const pause = () => {
-    if (abortRef.current) {
-      abortRef.current.abort();
-    } else {
-      // 孤儿态兜底：无活动会话时直接复位，避免假进度卡死（与挂载对账互为双保险）。
-      void db.novels.update(novelId, { analysisStatus: 'idle' });
-    }
-  };
-
-  const handleReduceEarly = () => {
-    if (progress.current === 0) {
-      setError('请至少等待一个章节测序完成，再进行阶段汇总。');
-      return;
-    }
-    setShouldReduceEarly(true);
-  };
-
-  // Story 2.5: 打开背面表单（预填当前值），翻转后与 150ms 翻转对齐对背面输入框 autofocus（Safari 3D 防护）
-  const openEdit = (key: keyof NovelDNACard) => {
-    setActiveTab(key);
-    setDraft(novel.dnaCard?.[key] ?? '');
-    setFlipped(true);
-    if (flipTimerRef.current) clearTimeout(flipTimerRef.current);
-    flipTimerRef.current = setTimeout(() => backTextareaRef.current?.focus(), 150);
-  };
-
-  // 切换维度 Tab：先复位翻转，避免把上一维度的 draft 带到新维度
-  const selectTab = (key: keyof NovelDNACard) => {
-    if (key === activeTab) return;
-    setFlipped(false);
-    setActiveTab(key);
-    if (flipTimerRef.current) {
-      clearTimeout(flipTimerRef.current);
-      flipTimerRef.current = null;
-    }
-  };
-
-  const cancelEdit = () => {
-    setFlipped(false);
-    setDraft('');
-    if (flipTimerRef.current) {
-      clearTimeout(flipTimerRef.current);
-      flipTimerRef.current = null;
-    }
-  };
-
-  // 保存：复用既有原子写回 novel.dnaCard（非新建 dnaCards 表）；翻回正面 + 生机绿成功 Toast（~2.5s 自动消隐）
-  const saveField = async (key: keyof NovelDNACard) => {
-    if (!novel.dnaCard) return;
-    try {
-      await db.novels.update(novelId, { dnaCard: { ...novel.dnaCard, [key]: draft } });
-      setFlipped(false);
-      setSavedToast('已保存微调 ✓');
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-      toastTimerRef.current = setTimeout(() => setSavedToast(null), 2500);
-    } catch (err) {
-      console.error('Failed to save DNA card:', err);
-      setError(err instanceof Error ? err.message : '保存修改失败，请重试');
-    }
-  };
-
-  const gearOptions = [
-    { id: 'safe', label: '稳健档', speed: '1x', desc: '单轨慢频，绝对控温' },
-    { id: 'balanced', label: '均衡档', speed: '3x', desc: '三轨并发，高效首选' },
-    { id: 'speed', label: '疾风档', speed: '8x', desc: '八轨全开，超凡拉满' },
-  ] as const;
-
-  const renderSpeedDial = () => {
-    if (!llmReadiness.ok) return null;
-    return (
-      <div className="space-y-3 border border-zinc-850 bg-zinc-950/20 rounded-xl p-5 shadow-sm">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-bold text-zinc-300 tracking-wide flex items-center gap-1.5">
-            <span>⚙️</span> 测序档速拨码器 (实时生效)
-          </span>
-          <span className="text-[10px] text-zinc-500 font-mono">
-            ACTIVE CONCURRENCY: {sequencingGear === 'safe' ? '1' : sequencingGear === 'speed' ? '8' : '3'} THREADS
-          </span>
-        </div>
-        
-        {/* Segmented Control Dial */}
-        <div className="bg-zinc-950/80 border border-zinc-900 p-1 rounded-lg flex gap-1 relative">
-          {gearOptions.map((opt) => {
-            const isActive = sequencingGear === opt.id;
-            return (
-              <button
-                key={opt.id}
-                onClick={() => setSequencingGear(opt.id)}
-                className={`flex-1 py-2 px-1 rounded-md flex flex-col items-center justify-center cursor-pointer transition-all duration-300 relative z-10 select-none ${
-                  isActive 
-                    ? 'bg-gradient-to-b from-zinc-800 to-zinc-900 border border-zinc-700/40 text-white shadow-md' 
-                    : 'border border-transparent text-secondary hover:text-zinc-300 hover:bg-zinc-900/30'
-                }`}
-              >
-                <span className="text-xs font-bold">{opt.label}</span>
-                <span className={`text-[10px] mt-0.5 font-mono ${
-                  isActive
-                    ? opt.id === 'speed'
-                      ? 'text-cyan-400 font-bold'
-                      : opt.id === 'safe'
-                      ? 'text-emerald-400 font-bold'
-                      : 'text-violet-400 font-bold'
-                    : 'text-zinc-500'
-                }`}>
-                  {opt.speed} 并发
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Helper text based on active gear */}
-        <p className="text-[11px] text-muted leading-relaxed pl-1">
-          {gearOptions.find((o) => o.id === sequencingGear)?.desc}。可在此测序期间实时平滑拨码换挡，无需暂停。
-        </p>
-      </div>
-    );
-  };
-
   return (
-    <div className="max-w-3xl space-y-8">
-      {/* Header */}
-      <div className="flex items-start justify-between border-b border-zinc-800 pb-4">
+    <div className="atelier max-w-3xl">
+      <div className="flex items-start justify-between border-b border-default pb-4">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-white">{novel.name}</h1>
-          <p className="mt-1 text-sm text-secondary">
-            {formatWordCount(novel.wordCount)} · {chapters.length}章
-          </p>
+          <div className="eyebrow">Book DNA · 创作 DNA</div>
+          <h1 className="atelier-h1" style={{ fontSize: 26 }}>{novel.name}</h1>
+          <p className="mt-1 text-sm text-secondary">{formatWordCount(novel.wordCount)} · {chapters.length} 章</p>
         </div>
-        <button 
-          onClick={() => setManageMode(true)} 
-          className="text-xs px-3 py-1.5 rounded bg-zinc-900 border border-zinc-800 text-secondary hover:text-white hover:border-zinc-700 transition-all shadow-sm"
-        >
-          章节微调裁切 ✂️
-        </button>
+        <button onClick={() => setManageMode(true)} className="mini">章节裁切 ✂︎</button>
       </div>
 
-      {/* DNA Ready */}
       {dnaReady ? (
-        <div className="dna-codex space-y-6">
-          {/* Story 2.5: 五维 Tabs + 3D 翻转编辑 / Tab 切换 / 面板绽放 / reduced-motion 降级（组件内联 <style>，勿动 globals.css） */}
-          <style>{`
-            .dna-codex { animation: dnaBloom 300ms ease-out; }
-            @keyframes dnaBloom {
-              0% { opacity: 0; transform: translateY(8px) scale(0.99); }
-              100% { opacity: 1; transform: none; }
-            }
-            .dna-flip-inner { transition: transform 150ms ease-in-out; transform-style: preserve-3d; -webkit-transform-style: preserve-3d; }
-            .dna-flip-inner.is-flipped { transform: rotateY(180deg); -webkit-transform: rotateY(180deg); }
-            .dna-face { -webkit-backface-visibility: hidden; backface-visibility: hidden; }
-            .dna-face-front { transform: rotateY(0deg); -webkit-transform: rotateY(0deg); }
-            .dna-face-back { transform: rotateY(180deg); -webkit-transform: rotateY(180deg); }
-            .dna-panel-content { animation: dnaTabFade 150ms ease-in-out; }
-            @keyframes dnaTabFade { 0% { opacity: 0.35; } 100% { opacity: 1; } }
-            /* ♿ NFR5：reduced-motion 下屏蔽 rotateY 3D 与绽放，正/背面以 display 即时替换（≤0.1s） */
-            @media (prefers-reduced-motion: reduce) {
-              .dna-codex { animation: none !important; }
-              .dna-flip-inner { transition: none !important; transform: none !important; }
-              .dna-flip-inner .dna-face-back { position: relative; transform: none; }
-              .dna-flip-inner:not(.is-flipped) .dna-face-back { display: none; }
-              .dna-flip-inner.is-flipped .dna-face-front { display: none; }
-              .dna-panel-content { animation: none !important; }
-            }
-          `}</style>
-
-          <div className="flex items-center justify-between border-b border-zinc-850 pb-4">
-            <span className="flex items-center gap-2 text-sm text-emerald-400 font-medium">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse motion-reduce:animate-none" />
-              DNA 基因组图谱已固化就绪
+        <div className="mt-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-2 text-sm" style={{ color: 'var(--add)' }}>
+              <span className="h-2 w-2 rounded-full" style={{ background: 'var(--add)' }} />
+              DNA 已就绪
             </span>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => { if (window.confirm('将基于全部章节重新测序并覆盖当前 DNA，确定继续？')) void handleExtract(undefined); }}
-                className="text-xs px-3 py-1.5 rounded bg-zinc-900 border border-zinc-800 text-secondary hover:text-white hover:border-zinc-700 transition-all"
-                title="补测剩余章节并基于全书重新归纳 DNA（覆盖当前结果）"
-              >
-                补测 / 重测
-              </button>
+                onClick={() => { if (window.confirm('将基于全书重新提取并覆盖当前 DNA，确定继续？')) void handleExtract(); }}
+                className="mini"
+                title="基于全书重新归纳 DNA（覆盖当前结果）"
+              >重新提取</button>
               {readyNovelCount >= 1 && (
-                <button
-                  onClick={() => setWorkshopOpen(true)}
-                  className="text-xs px-3 py-1.5 rounded bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-medium shadow-lg hover:shadow-indigo-500/10 transition-all duration-300"
-                >
-                  进入融合工坊 →
-                </button>
+                <button onClick={() => setWorkshopOpen(true)} className="cta" style={{ padding: '8px 16px', fontSize: 13 }}>进入工坊 →</button>
               )}
             </div>
           </div>
 
-          {/* 五维高奢 Tabs（母题/世界观/角色/叙事/风格），同一时刻仅显选中维度卡 */}
-          <div role="tablist" aria-label="五维 DNA 结晶报告" className="flex flex-wrap gap-2">
-            {DNA_FIELDS.map(({ key, label }) => {
-              const isActive = key === activeTab;
-              return (
-                <button
-                  key={key}
-                  role="tab"
-                  id={`dna-tab-${key}`}
-                  aria-selected={isActive}
-                  aria-controls={`dna-panel-${key}`}
-                  onClick={() => selectTab(key)}
-                  className={`px-4 py-2 rounded-lg text-xs font-semibold tracking-wide border transition-all duration-150 ease-in-out ${
-                    isActive
-                      ? 'border-[#06b6d4]/50 bg-[#06b6d4]/10 text-[#06b6d4] shadow-[0_0_12px_rgba(6,182,212,0.15)]'
-                      : 'border-[#1b1e36] bg-[#0c0e20]/40 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* 当前维度 3D 翻转卡：正面展示 / 背面发丝描边毛玻璃编辑表单 */}
-          {DNA_FIELDS.filter((f) => f.key === activeTab).map(({ key, label }) => (
-            <div
-              key={key}
-              role="tabpanel"
-              id={`dna-panel-${key}`}
-              aria-labelledby={`dna-tab-${key}`}
-              className="dna-panel-content [perspective:1600px]"
-            >
-              <div className={`dna-flip-inner relative min-h-[220px] ${flipped ? 'is-flipped' : ''}`}>
-                {/* 正面：翻转时 pointer-events:none + 不可聚焦 + aria-hidden（Safari 3D 防穿透 / 防焦点落到不可见正面） */}
-                <div aria-hidden={flipped} className={`dna-face dna-face-front border border-[#1b1e36] bg-[#0c0e20]/60 backdrop-blur-md rounded-xl p-6 ${flipped ? 'pointer-events-none' : ''}`}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-[#8a8f98] font-semibold tracking-wider uppercase">{label}</span>
-                    <button
-                      onClick={() => openEdit(key)}
-                      tabIndex={flipped ? -1 : 0}
-                      className="text-xs px-2.5 py-1 rounded border border-[#1b1e36] text-zinc-400 hover:text-[#06b6d4] hover:border-[#06b6d4]/40 transition-colors"
-                    >
-                      微调 ✎
-                    </button>
-                  </div>
-                  <p className="mt-3 text-sm text-[#e2e8f0] leading-relaxed whitespace-pre-wrap">
-                    {novel.dnaCard?.[key] || '—'}
-                  </p>
+          {isFourLayerDnaCard(dnaCard) ? (
+            <div className="setcards">
+              <div className="setcard eng">
+                <div className="lab"><span className="l">① 结构骨架 · 引擎</span></div>
+                <div className="body">
+                  {dnaCard.structureSkeleton.length === 0 ? '—' : dnaCard.structureSkeleton.map((b, i) => (
+                    <div key={i}>{b.function}{b.summary ? ` — ${b.summary}` : ''}</div>
+                  ))}
                 </div>
-                {/* 背面：发丝描边毛玻璃修改表单（textarea 复用 draft，保存复用 saveField）；未翻转时禁用指针/焦点/读屏 */}
-                <div aria-hidden={!flipped} className={`dna-face dna-face-back absolute inset-0 flex flex-col border border-[#1b1e36] bg-[#0c0e20]/70 backdrop-blur-md rounded-xl p-6 ${flipped ? '' : 'pointer-events-none'}`}>
-                  <span className="text-xs text-[#06b6d4] font-semibold tracking-wider uppercase">微调 · {label}</span>
-                  <textarea
-                    ref={backTextareaRef}
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    tabIndex={flipped ? 0 : -1}
-                    className="mt-3 min-h-[120px] flex-1 w-full resize-none rounded-lg border border-[#1b1e36] bg-[#05060f]/80 p-3 text-sm text-white leading-relaxed font-sans focus:border-[#06b6d4]/50 focus:outline-none focus:ring-1 focus:ring-[#06b6d4]/30 transition-all"
-                  />
-                  <div className="mt-3 flex gap-3 text-xs justify-end">
-                    <button
-                      onClick={cancelEdit}
-                      tabIndex={flipped ? 0 : -1}
-                      className="px-3 py-1.5 rounded border border-[#1b1e36] text-zinc-400 hover:text-white transition-colors"
-                    >
-                      取消
-                    </button>
-                    <button
-                      onClick={() => void saveField(key)}
-                      tabIndex={flipped ? 0 : -1}
-                      className="px-3 py-1.5 rounded bg-[#10b981] text-[#05060f] hover:bg-[#0ea371] font-semibold transition-colors"
-                    >
-                      保存
-                    </button>
-                  </div>
-                </div>
+              </div>
+              <div className="setcard eng">
+                <div className="lab"><span className="l">② 编排节奏 · 引擎</span></div>
+                <div className="body">{dnaCard.pacingSyuzhet || '—'}</div>
+              </div>
+              <div className="setcard skn">
+                <div className="lab"><span className="l">③ 题材皮</span></div>
+                <div className="body">{dnaCard.themeSkin || '—'}</div>
+              </div>
+              <div className="setcard skn">
+                <div className="lab"><span className="l">④ 文笔</span></div>
+                <div className="body">{dnaCard.proseStyle || '—'}</div>
               </div>
             </div>
-          ))}
+          ) : isLegacyDnaCard(dnaCard) ? (
+            <div className="setcards">
+              <div className="rounded-[9px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--vermilion-line)', background: 'var(--vermilion-soft)', color: 'var(--vermilion)' }}>
+                旧版 5 维 DNA（原文已保留不丢）。点「重新提取」可升级为引擎/皮 4 层模型。
+              </div>
+              {[
+                { label: '母题', value: dnaCard.theme },
+                { label: '世界观', value: dnaCard.worldview },
+                { label: '角色', value: dnaCard.characters },
+                { label: '叙事', value: dnaCard.narrativeStyle },
+                { label: '风格', value: dnaCard.styleFingerprint },
+              ].map(({ label, value }) => (
+                <div key={label} className="setcard skn">
+                  <div className="lab"><span className="l">{label}</span></div>
+                  <div className="body">{value || '—'}</div>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : (
-        /* Extraction View */
-        <div className="space-y-8">
-          {/* Custom global styles for the slide-up fade animation and prefers-reduced-motion */}
-          <style>{`
-            @keyframes slideUpFade {
-              0% {
-                opacity: 0;
-                transform: translateY(16px);
-              }
-              100% {
-                opacity: 1;
-                transform: translateY(0);
-              }
-            }
-            .animate-slide-up-fade {
-              animation: slideUpFade 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-            }
-            @media (prefers-reduced-motion: reduce) {
-              .animate-slide-up-fade {
-                animation: slideUpFadeReduced 100ms ease-out forwards !important;
-              }
-              @keyframes slideUpFadeReduced {
-                0% { opacity: 0; }
-                100% { opacity: 1; }
-              }
-            }
-          `}</style>
-
+        <div className="mt-6 space-y-5 max-w-xl">
           {!busy && (needsReview || oversizedChapter) && (
-            <div className="border border-amber-500/20 bg-amber-500/5 rounded-lg p-4 text-sm max-w-xl">
-              <div className="flex items-center gap-2 text-amber-400 font-semibold">
-                <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse motion-reduce:animate-none" />
+            <div className="rounded-[11px] border p-4 text-sm" style={{ borderColor: 'var(--vermilion-line)', background: 'var(--vermilion-soft)' }}>
+              <div className="font-semibold" style={{ color: 'var(--vermilion)' }}>
                 {oversizedChapter ? '存在超大章节，建议先裁切' : '章节切分质量偏低，建议先校验'}
               </div>
-              <p className="mt-2 text-secondary text-xs leading-relaxed">
+              <p className="mt-2 text-xs text-secondary leading-relaxed">
                 {oversizedChapter
-                  ? `章节「${oversizedChapter.name}」超过 30,000 字，DNA 提取会被阻断。请先到切分校验台用剪刀或智能语义拆分裁小。`
-                  : '当前切分置信度较低，可能影响 DNA 提取质量。建议先到切分校验台修复后再提取。'}
+                  ? `章节「${oversizedChapter.name}」超过 30,000 字。请先到切分校验台用剪刀或智能拆分裁小，自动提取才会启动。`
+                  : '当前切分置信度较低，可能影响 DNA 质量。建议先校验修复，修复后会自动开始提取。'}
               </p>
-              <button
-                onClick={() => setManageMode(true)}
-                className="mt-3 text-xs inline-flex items-center gap-1 text-amber-400 hover:text-amber-300 font-medium transition-colors"
-              >
-                前往切分校验台 →
-              </button>
+              <button onClick={() => setManageMode(true)} className="mini mt-3">前往切分校验台 →</button>
             </div>
           )}
 
           {!llmReadiness.ok && (
-            <div className="border border-amber-500/20 bg-amber-500/5 rounded-lg p-4 text-sm max-w-xl">
-              <div className="flex items-center gap-2 text-amber-400 font-semibold">
-                <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
-                模型水晶卡能量未激活
-              </div>
-              <p className="mt-2 text-secondary text-xs leading-relaxed">{llmReadiness.reason}</p>
-              <button
-                onClick={() => window.dispatchEvent(new CustomEvent('open-settings-panel', { detail: { intent: 'DNA 提取' } }))}
-                className="mt-3 text-xs inline-flex items-center gap-1 text-amber-400 hover:text-amber-300 font-medium transition-colors"
-              >
-                前往配置 AI 水晶卡密钥 →
-              </button>
+            <div className="rounded-[11px] border p-4 text-sm" style={{ borderColor: 'var(--vermilion-line)', background: 'var(--vermilion-soft)' }}>
+              <div className="font-semibold" style={{ color: 'var(--vermilion)' }}>模型未配置</div>
+              <p className="mt-2 text-xs text-secondary leading-relaxed">{llmReadiness.reason}</p>
+              <button onClick={() => window.dispatchEvent(new CustomEvent('open-settings-panel', { detail: { intent: 'DNA 提取' } }))} className="mini mt-3">配置模型密钥 →</button>
             </div>
           )}
 
           {busy ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-5xl mx-auto items-start">
-              {/* Left Column: Extraction Details */}
-              <div className="space-y-6">
-                <div className="border border-zinc-800/80 bg-zinc-950/40 rounded-xl p-6 shadow-2xl relative overflow-hidden space-y-6">
-                  {/* Dynamic 0-CPU 3D Rotating Double Helix SVG */}
-                  <div className="py-4 relative flex justify-center items-center">
-                    <svg width="180" height="120" viewBox="0 0 180 120" className={`select-none overflow-visible${rateLimited ? ' helix-throttled' : ''}`}>
-                      <style>{`
-                        @keyframes orbit-a {
-                          0%, 100% { transform: translateX(-35px) scale(0.7); opacity: 0.4; fill: #5e6ad2; }
-                          50% { transform: translateX(35px) scale(1.3); opacity: 1; fill: #06b6d4; }
-                        }
-                        @keyframes orbit-b {
-                          0%, 100% { transform: translateX(35px) scale(1.3); opacity: 1; fill: #06b6d4; }
-                          50% { transform: translateX(-35px) scale(0.7); opacity: 0.4; fill: #5e6ad2; }
-                        }
-                        @keyframes line-scale {
-                          0%, 50%, 100% { transform: scaleX(0.2); opacity: 0.3; }
-                          25% { transform: scaleX(1); opacity: 0.8; }
-                          75% { transform: scaleX(1); opacity: 0.8; }
-                        }
-                        .helix-dot-a { animation: orbit-a 2.5s ease-in-out infinite; transform-origin: center; will-change: transform; }
-                        .helix-dot-b { animation: orbit-b 2.5s ease-in-out infinite; transform-origin: center; will-change: transform; }
-                        .helix-bar { animation: line-scale 2.5s ease-in-out infinite; transform-origin: center; will-change: transform; }
-
-                        /* 限速变黄护航：同一螺旋运动放缓至 0.2x（2.5s → 12.5s）并切到警告黄 #f59e0b 呼吸；
-                           class 瞬时切换天然满足「100ms 内变黄变慢」，每章 animationDelay 内联保留相位错落。 */
-                        @keyframes orbit-a-warn {
-                          0%, 100% { transform: translateX(-35px) scale(0.7); opacity: 0.45; fill: #f59e0b; }
-                          50% { transform: translateX(35px) scale(1.3); opacity: 1; fill: #fbbf24; }
-                        }
-                        @keyframes orbit-b-warn {
-                          0%, 100% { transform: translateX(35px) scale(1.3); opacity: 1; fill: #fbbf24; }
-                          50% { transform: translateX(-35px) scale(0.7); opacity: 0.45; fill: #f59e0b; }
-                        }
-                        .helix-throttled .helix-dot-a { animation-name: orbit-a-warn; animation-duration: 12.5s; }
-                        .helix-throttled .helix-dot-b { animation-name: orbit-b-warn; animation-duration: 12.5s; }
-                        .helix-throttled .helix-bar { animation-duration: 12.5s; }
-
-                        /* ♿ NFR5：限速态尊重 reduced-motion——关停呼吸脉冲，降级为静态黄色着色（无位移、无闪烁）。 */
-                        @media (prefers-reduced-motion: reduce) {
-                          .helix-throttled .helix-dot-a,
-                          .helix-throttled .helix-dot-b,
-                          .helix-throttled .helix-bar { animation: none !important; }
-                          .helix-throttled .helix-dot-a,
-                          .helix-throttled .helix-dot-b { fill: #f59e0b; }
-                        }
-                      `}</style>
-                      <g transform="translate(90, 0)">
-                        {Array.from({ length: 8 }).map((_, idx) => {
-                          const y = 15 + idx * 13;
-                          const delay = `${idx * -0.35}s`;
-                          return (
-                            <g key={idx} transform={`translate(0, ${y})`} className="overflow-visible">
-                              <line x1="-35" y1="0" x2="35" y2="0" stroke="rgba(255,255,255,0.04)" strokeWidth="1" />
-                              <line x1="-35" y1="0" x2="35" y2="0" stroke="url(#barGradient)" strokeWidth="2" className="helix-bar" style={{ animationDelay: delay }} />
-                              <circle cx="0" cy="0" r="4.5" className="helix-dot-a" style={{ animationDelay: delay }} />
-                              <circle cx="0" cy="0" r="4.5" className="helix-dot-b" style={{ animationDelay: delay }} />
-                            </g>
-                          );
-                        })}
-                      </g>
-                      <defs>
-                        <linearGradient id="barGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                          <stop offset="0%" stopColor="#5e6ad2" />
-                          <stop offset="100%" stopColor="#06b6d4" />
-                        </linearGradient>
-                      </defs>
-                    </svg>
-                  </div>
-
-                  {/* Progress Text */}
-                  <div className="space-y-2 text-center">
-                    <h3 className="text-sm font-semibold tracking-wide text-zinc-100">
-                      {status === 'reducing' ? '🧬 凝聚全书五维 DNA 终章结晶...' : `🧬 正在测序小说基因图谱 ${progress.current}/${progress.total || chapters.length}`}
-                    </h3>
-                    {status !== 'reducing' && (
-                      <p className="text-xs text-muted">
-                        已分析章节的精髓正持续汇入本地索引库...
-                      </p>
-                    )}
-                    {status === 'reducing' && (
-                      <p className="text-xs text-muted leading-relaxed">
-                        整书归纳为单次大请求，耗时较长；若部署在 Vercel 可能触及 10s 函数上限，长篇建议本地运行。
-                      </p>
-                    )}
-                  </div>
-
-                  {/* 429 限速护航气泡：至少一章进入退避（rateLimited）时即时浮现，复用既有 amber 警告范式 */}
-                  {rateLimited && (
-                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 text-amber-400">
-                      <span className="mt-0.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-400 animate-pulse motion-reduce:animate-none" />
-                      <p className="text-[11px] leading-relaxed">
-                        云端有些拥挤，我们已自动放缓测序呼吸频率进行补测，请您放心，测序绝不中断。
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Glowing Progress Bar */}
-                  <div className="space-y-1">
-                    <div className="h-1 bg-zinc-900 rounded-full overflow-hidden relative border border-zinc-800/20">
-                      <div
-                        className="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400 transition-all duration-300 rounded-full shadow-[0_0_8px_rgba(6,182,212,0.4)]"
-                        style={{ width: `${progress.total ? (progress.current / progress.total) * 100 : status === 'reducing' ? 100 : 0}%` }}
-                      />
-                    </div>
-                    <div className="flex justify-between text-[10px] text-muted font-mono px-0.5">
-                      <span>START</span>
-                      <span>{progress.total ? Math.round((progress.current / progress.total) * 100) : 0}%</span>
-                      <span>COMPLETE</span>
-                    </div>
-                  </div>
-
-                  {/* Physical Pause / Stage Summary Controls */}
-                  <div className="grid grid-cols-2 gap-3 pt-2">
-                    <button
-                      onClick={pause}
-                      className="flex items-center justify-center gap-1.5 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 hover:border-zinc-700 text-xs text-secondary hover:text-white font-medium shadow-sm transition-all"
-                    >
-                      <span>⏸️</span> 暂停测序
-                    </button>
-                    <button
-                      onClick={handleReduceEarly}
-                      disabled={progress.current === 0 || status === 'reducing'}
-                      className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold shadow-sm transition-all border ${
-                        progress.current === 0 || status === 'reducing'
-                          ? 'bg-zinc-950/20 border-zinc-900/50 text-zinc-700 cursor-not-allowed'
-                          : 'bg-gradient-to-r from-zinc-800 to-zinc-900 hover:from-zinc-750 hover:to-zinc-850 border-zinc-700/60 hover:border-zinc-600 text-secondary hover:text-white'
-                      }`}
-                      title={progress.current === 0 ? '需要至少成功分析 1 章方可提前汇总' : '生成已分析章节的临时 DNA 报告'}
-                    >
-                      <span>⏹️</span> 阶段汇总
-                    </button>
-                  </div>
-                </div>
-
-                {/* Speed Dial inside Left Column when busy */}
-                {renderSpeedDial()}
+            <div className="rounded-[14px] border border-default bg-secondary p-6 space-y-4">
+              <div className="flex items-center gap-2 text-sm text-primary">
+                <span className="h-1.5 w-1.5 rounded-full animate-pulse motion-reduce:animate-none" style={{ background: 'var(--vermilion)' }} />
+                {status === 'reducing' ? '正在归纳全书创作 DNA…' : `正在提取 DNA ${progress.current}/${progress.total || '…'}`}
               </div>
-
-              {/* Right Column: Genomics Live Feed */}
-              <div className="border border-[#1b1e36] bg-[#0c0e20]/60 backdrop-blur-md rounded-xl p-5 shadow-2xl flex flex-col h-[400px]">
-                <div className="flex items-center justify-between border-b border-[#1b1e36] pb-3 mb-3">
-                  <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
-                    <span className="animate-pulse">🧬</span> Genomics Live Feed
-                  </h3>
-                  <span className="text-[10px] text-zinc-500 font-mono">
-                    {liveFeed.length} SEGMENTS SECURED
-                  </span>
-                </div>
-                
-                <div 
-                  ref={feedContainerRef}
-                  onScroll={handleScroll}
-                  className="flex-1 overflow-y-auto space-y-3 pr-1 scrollbar-thin scrollbar-thumb-zinc-850 scrollbar-track-transparent"
-                >
-                  {liveFeed.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-center p-4">
-                      <span className="text-2xl opacity-40">📡</span>
-                      <p className="text-xs text-zinc-500 mt-2 font-sans">等待测序数据流接入...</p>
-                    </div>
-                  ) : (
-                    liveFeed.map((item) => (
-                      <div 
-                        key={item.chapterId} 
-                        className={`p-3 rounded-lg border border-[#1b1e36]/60 bg-zinc-950/30 space-y-1.5 ${item.isNew ? 'animate-slide-up-fade' : ''}`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-white font-sans">
-                            第 {item.chapterIndex} 章 · {item.name}
-                          </span>
-                          <span 
-                            className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
-                              item.tag === '设定觉醒'
-                                ? 'bg-violet-950/40 border-[#5e6ad2]/40 text-[#5e6ad2]'
-                                : item.tag === '人设高光'
-                                ? 'bg-cyan-950/40 border-[#06b6d4]/40 text-[#06b6d4]'
-                                : item.tag === '爽点碰撞' || item.tag === '奇遇推进'
-                                ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-400'
-                                : 'bg-zinc-900 border-zinc-700 text-zinc-400'
-                            }`}
-                          >
-                            {item.tag}
-                          </span>
-                        </div>
-                        <p className="text-xs text-[#e2e8f0] leading-relaxed font-sans">
-                          {item.snippet}
-                        </p>
-                      </div>
-                    ))
-                  )}
-                </div>
+              <div className="h-1 rounded-full overflow-hidden" style={{ background: 'var(--line)' }}>
+                <div className="h-full rounded-full transition-all duration-300" style={{ width: `${pct}%`, background: 'var(--vermilion)' }} />
               </div>
+              {rateLimited && (
+                <p className="text-xs" style={{ color: 'var(--vermilion)' }}>云端有些拥挤，已自动放缓退避重试，测序绝不中断。</p>
+              )}
+              <p className="text-[11px] text-muted">正在后台自动提取（按体量自适应），可切到别处，跑完会通知你。</p>
             </div>
           ) : (
             <>
-              {/* Speed Dial centered when not busy */}
-              {renderSpeedDial()}
-
-              {llmReadiness.ok && failedChapters.length > 0 && (
-                <div className="border border-rose-500/20 bg-rose-500/5 rounded-lg p-4 text-sm max-w-xl mx-auto space-y-3">
-                  <div className="flex items-center gap-2 text-rose-400 font-semibold">
-                    <span>⚠️</span> {failedChapters.length} 个章节测序失败
-                  </div>
+              {failedChapters.length > 0 && (
+                <div className="rounded-[11px] border p-4 text-sm space-y-3" style={{ borderColor: 'var(--del)', background: 'var(--del-soft)' }}>
+                  <div className="font-semibold" style={{ color: 'var(--del)' }}>{failedChapters.length} 个弧窗 / 章节提取失败</div>
                   <div className="space-y-1 max-h-24 overflow-y-auto text-xs text-secondary">
                     {failedChapters.slice(0, 6).map((c) => (
-                      <div key={c.id} className="truncate">
-                        第 {c.chapterIndex} 章 · {c.name}{c.errorMsg ? ` — ${c.errorMsg}` : ''}
-                      </div>
+                      <div key={c.id} className="truncate">第 {c.chapterIndex} 章 · {c.name}{c.errorMsg ? ` — ${c.errorMsg}` : ''}</div>
                     ))}
-                    {failedChapters.length > 6 && <div className="text-muted">…等共 {failedChapters.length} 章</div>}
+                    {failedChapters.length > 6 && <div className="text-muted">…等共 {failedChapters.length} 处</div>}
                   </div>
-                  <button
-                    onClick={() => void handleExtract(undefined)}
-                    className="text-xs px-3 py-1.5 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 transition-all"
-                  >
-                    继续提取（重试失败章）
-                  </button>
+                  <button onClick={() => void handleExtract()} className="mini">继续提取（重试失败处）</button>
                 </div>
               )}
 
               {llmReadiness.ok && (
-                <div className="flex gap-4 text-sm max-w-xl mx-auto pt-2">
-                  <button 
-                    onClick={() => handleExtract(100)} 
-                    className="flex-1 py-3 rounded-xl border border-zinc-800 bg-zinc-950 hover:bg-zinc-900 text-secondary hover:text-white font-medium text-center shadow-sm transition-all duration-200"
-                  >
-                    快速提取 (前100章)
-                  </button>
-                  <button 
-                    onClick={() => handleExtract(undefined)} 
-                    className="flex-1 py-3 rounded-xl bg-white hover:bg-zinc-100 text-zinc-950 font-semibold text-center shadow-md hover:shadow-lg transition-all duration-200"
-                  >
-                    深度全量测序 (全部章节)
-                  </button>
-                </div>
+                <p className="text-xs text-muted leading-relaxed">
+                  DNA 将自动在后台按体量提取，无需手动操作；完成后会通知你。若长时间无进展，可在上方修复切分或检查模型配置。
+                </p>
               )}
+
+              <div className="flex gap-6 text-xs text-muted border-t border-default pt-4">
+                <span>已分析: {chapters.filter((c) => c.mapStatus === 'done').length} 章</span>
+                <span>短章 (&lt;500字): {chapters.filter((c) => c.wordCount < 500).length} 章</span>
+                <span>长章 (&gt;12000字): {chapters.filter((c) => c.wordCount > 12000).length} 章</span>
+              </div>
             </>
           )}
-
-          {error && (
-            <div className="border border-red-500/20 bg-red-500/5 text-red-400 text-xs rounded-lg p-3 max-w-xl mx-auto flex items-start gap-2">
-              <span>⚠️</span>
-              <p className="flex-1 leading-relaxed">{error}</p>
-            </div>
-          )}
-
-          <div className="flex gap-8 text-xs text-muted max-w-xl mx-auto justify-center border-t border-zinc-900 pt-5">
-            <span>已分析: {chapters.filter((c) => c.mapStatus === 'done').length} 章</span>
-            <span>短章 (&lt;500字): {chapters.filter((c) => c.wordCount < 500).length} 章</span>
-            <span>长章 (&gt;12000字): {chapters.filter((c) => c.wordCount > 12000).length} 章</span>
-          </div>
         </div>
       )}
 
-      {/* Story 2.5: 保存成功生机绿 Toast（页面底部固定，~2.5s 自动消隐；置于变换祖先之外以保证 viewport 定位） */}
+      {error && (
+        <div className="mt-4 rounded-[9px] border p-3 text-xs max-w-xl flex items-start gap-2" style={{ borderColor: 'var(--del)', background: 'var(--del-soft)', color: 'var(--del)' }}>
+          <span>⚠</span><p className="flex-1 leading-relaxed">{error}</p>
+        </div>
+      )}
+
       {savedToast && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-[#0c0e20]/90 backdrop-blur-md px-4 py-2.5 text-emerald-400 text-xs font-medium shadow-2xl"
-        >
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse motion-reduce:animate-none" />
+        <div role="status" aria-live="polite" className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg border px-4 py-2.5 text-xs shadow-2xl" style={{ borderColor: 'var(--add)', background: 'var(--ink-raise)', color: 'var(--add)' }}>
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--add)' }} />
           {savedToast}
         </div>
       )}
