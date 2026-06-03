@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { useAppStore } from '../app/store';
-import { getProviderMeta, listProviderMetas } from '../app/llmProviders';
 import { getLlmConfigError } from '../app/llmClient';
+import ProviderCredentialsEditor from './ProviderCredentialsEditor';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -10,12 +10,7 @@ interface SettingsPanelProps {
 }
 
 export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsPanelProps) {
-  const { llmConfig, setActiveProvider, updateActiveProviderProfile } = useAppStore();
-  const activeProvider = llmConfig.activeProvider;
-  const activeProviderMeta = getProviderMeta(activeProvider);
-  const activeProfile = llmConfig.providerProfiles[activeProvider];
-  const providerOptions = listProviderMetas();
-  const [showKey, setShowKey] = useState(false);
+  const { llmConfig } = useAppStore();
 
   const readiness = useMemo(() => getLlmConfigError(llmConfig), [llmConfig]);
 
@@ -32,8 +27,6 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;
-
-  const requiresApiKey = activeProviderMeta.requiresApiKey;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -58,68 +51,7 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
 
           {/* Form */}
           <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-xs text-muted">提供商</label>
-              <select
-                value={activeProvider}
-                onChange={(e) => setActiveProvider(e.target.value as typeof activeProvider)}
-                className="w-full border bg-transparent p-2 text-sm focus:outline-none"
-              >
-                {providerOptions.map((provider) => (
-                  <option key={provider.id} value={provider.id}>{provider.name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs text-muted">{requiresApiKey ? 'API Key' : 'API Key（可选）'}</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type={showKey ? 'text' : 'password'}
-                  value={activeProfile.apiKey}
-                  onChange={(e) => updateActiveProviderProfile({ apiKey: e.target.value })}
-                  onBlur={(e) => updateActiveProviderProfile({ apiKey: e.target.value.trim() })}
-                  placeholder="sk-..."
-                  className="flex-1 border bg-transparent p-2 text-sm font-mono focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowKey(!showKey)}
-                  className="text-xs text-muted hover:text-secondary"
-                >
-                  {showKey ? '隐藏' : '显示'}
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs text-muted">Base URL</label>
-              <input
-                type="text"
-                value={activeProfile.baseUrl}
-                onChange={(e) => updateActiveProviderProfile({ baseUrl: e.target.value })}
-                onBlur={(e) => updateActiveProviderProfile({ baseUrl: e.target.value.trim() })}
-                placeholder="https://api.example.com/v1"
-                className="w-full border bg-transparent p-2 text-sm font-mono focus:outline-none"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs text-muted">模型</label>
-              <input
-                list="model-presets"
-                value={activeProfile.model}
-                onChange={(e) => updateActiveProviderProfile({ model: e.target.value })}
-                onBlur={(e) => updateActiveProviderProfile({ model: e.target.value.trim() })}
-                placeholder="gpt-4o"
-                className="w-full border bg-transparent p-2 text-sm font-mono focus:outline-none"
-              />
-              <datalist id="model-presets">
-                {activeProviderMeta.modelPresets.map((preset) => (
-                  <option key={preset.value} value={preset.value}>{preset.label}</option>
-                ))}
-              </datalist>
-            </div>
+            <ProviderCredentialsEditor variant="minimal" providerSelector="select" />
           </div>
 
           <p className="text-xs text-muted">密钥仅存储在浏览器本地，不会上传服务器。</p>

@@ -120,6 +120,43 @@ export async function readApiErrorMessage(response: Response, fallback = '接口
   }
 }
 
+// 模块内哨兵错误：让调用方把 429 与普通错误 / abort 严格区分（严禁 any / 字符串判型）。
+// 由 callStructured 命中 429 时抛出，dnaEngine.withRateLimitRetry 据 instanceof 静默退避重排。
+export class RateLimitSignal extends Error {
+  constructor() {
+    super('rate_limited');
+    this.name = 'RateLimitSignal';
+  }
+}
+
+type StructuredInit<TResponse> = LlmPostInit & {
+  // 默认 true：429 抛 RateLimitSignal 交给 withRateLimitRetry 静默退避；置 false 则把 429 当普通错误透出友好文案。
+  rateLimitSignal?: boolean;
+  // 可选运行时校验适配器（dnaSchema.parseX）：过网络的结构化返回不再裸 as T，坏 JSON 立即抛友好错误；缺省退回 as T。
+  parse?: (json: unknown) => TResponse;
+};
+
+/**
+ * POST 一个结构化（instructor）端点并取回其 JSON。吸收各调用点重复的三段样板：
+ *   429 → RateLimitSignal（除非 rateLimitSignal:false）；!ok → readApiErrorMessage 抛错；否则 parse(json) 或 (json as T)。
+ * 429 退避仍由调用方按需包在 withRateLimitRetry 内（行为不变）。
+ */
+export async function callStructured<TResponse>(
+  endpoint: string,
+  payload: Record<string, unknown>,
+  init?: StructuredInit<TResponse>
+): Promise<TResponse> {
+  const response = await postWithLlmConfig(endpoint, payload, init);
+  if (init?.rateLimitSignal !== false && response.status === 429) {
+    throw new RateLimitSignal();
+  }
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
+  const json: unknown = await response.json();
+  return init?.parse ? init.parse(json) : (json as TResponse);
+}
+
 // === Shared SSE streaming consumer (event: delta|done|error frames from sse_event) ===
 interface SseEventPayload {
   text?: string;

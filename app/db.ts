@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie';
+import type { ChapterMapSummary, FusionDirection, NovelDNACard } from './dnaSchema';
 
 export interface Character {
   name: string;
@@ -22,27 +23,7 @@ export interface ChapterAnalysis {
   style: string;
 }
 
-// === Book-level DNA — mirrors api/schemas.py (camelCase) ===
-export interface ChapterMapSummary {
-  worldviewUpdates: string;
-  keyPlotTurns: string;
-  characterDevelopments: string;
-  styleObservations: string;
-}
-
-// v9 四层「引擎 / 皮」DNA — 镜像 api/schemas.py NovelDNACardResponse v2。
-// 引擎层（①②）结构化、可干净迁移；皮层（③④）自由文本、可替换。
-export interface StructureBeat {
-  function: string; // 可迁移功能节拍（Propp 功能；如「废柴受辱」「获金手指」）
-  summary: string;  // 该节拍在原书的具体体现（一句话）
-}
-
-export interface NovelDNACard {
-  structureSkeleton: StructureBeat[]; // ① 引擎·结构骨架（typed）
-  pacingSyuzhet: string;              // ② 引擎·编排节奏（syuzhet）
-  themeSkin: string;                  // ③ 皮·题材世界观意象（自由文本）
-  proseStyle: string;                 // ④ 文笔（自由文本；换皮时默认重生成）
-}
+// Book-level DNA 形状（ChapterMapSummary / StructureBeat / NovelDNACard）现由 app/dnaSchema.ts 单一源定义并 import。
 
 // 存量 5 维卡：惰性迁移保留原文不丢（决策 B）。仅在重新提取时升级为 4 层 NovelDNACard。
 export interface LegacyNovelDNACard {
@@ -138,24 +119,7 @@ export interface Chapter {
 }
 
 // === Fusion workshop session (v7) — persists the融合工坊 funnel so a refresh/sidebar-click never蒸发已生成的方向/积木/正文 ===
-export interface FusionDirectionRecord {
-  title: string;
-  concept: string;
-  catalyst: string;
-  worldviewBlock: string;
-  protagonistBlock: string;
-  antagonistBlock: string;
-  narrativeTone: string;
-  transferNote?: string; // 换皮溯源：引擎结构如何嫁接到新题材（v2 换皮迁移；旧记录缺省）
-}
-
-export interface StoryboardSceneRecord {
-  sceneNumber: number;
-  sceneTitle: string;
-  plotOutline: string;
-  tensionLevel: string;
-  visualCues: string;
-}
+// FusionDirection（融合方向）形状由 app/dnaSchema.ts 单一源定义并 import（与后端 FusionDirection 逐字段同步）。
 
 // v9 版本历史：每次接受 AI 改动「前」对 4 块设定拍快照，支持一键回退（试错零成本）。
 export interface SettingSnapshot {
@@ -172,11 +136,10 @@ export interface FusionSession {
   customPrompt: string;
   adversarialRules: string;
   step: 'material' | 'directions' | 'creator' | 'manuscript';
-  directions: FusionDirectionRecord[];
+  directions: FusionDirection[];
   blocks: { worldviewBlock: string; protagonistBlock: string; antagonistBlock: string; narrativeTone: string };
   directionTitle: string;
   sceneCount: number;
-  storyboard: StoryboardSceneRecord[];
   sceneTexts: Record<number, string>;
   sceneResumeStatus: Record<number, string>;
   settingHistory?: SettingSnapshot[]; // v9：4 块设定的编辑快照栈（接受 AI 改动前入栈），缺省视为空栈
@@ -368,6 +331,17 @@ class NovelFusionDB extends Dexie {
           }
         });
         /* settingHistory 为新可选字段，存量创作留空（缺省视为空栈），首次接受 AI 改动时按需创建——不回填以免阻塞启动主线程 */
+      });
+    // v10: FusionSession 移除废弃的 storyboard 字段（成稿改为单一连续开篇后该字段恒为 []，且从不回读）。
+    // 索引串与 v9 完全一致；storyboard 非索引、纯类型层移除，存量记录残留的空数组无害，故 upgrade 为 no-op（不全表重写以免阻塞启动）。
+    this.version(10)
+      .stores({
+        novels: 'id, name, createdAt, splitStatus, analysisStatus',
+        chapters: 'id, novelId, chapterIndex, status, mapStatus',
+        fusionSessions: 'id, updatedAt, createdAt',
+      })
+      .upgrade(async () => {
+        /* storyboard 移除为纯类型层变更，存量数据无需迁移 */
       });
   }
 }

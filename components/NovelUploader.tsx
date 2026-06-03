@@ -2,14 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Chapter, type Novel, type SplitMeta, type SplitStrategyId } from '../app/db';
 import { useAppStore } from '../app/store';
-import { listProviderMetas, getProviderMeta } from '../app/llmProviders';
+import { getProviderMeta } from '../app/llmProviders';
 import { getLlmConfigError, postWithLlmConfig, readApiErrorMessage } from '../app/llmClient';
 import { rescoreSplit } from '../app/splitQuality';
+import { parseNovelFile, resplit } from '../app/novelParser';
+import { planStitch, planBulkStitch, planSplit, buildStitchBackup } from '../app/chapterOps';
+import { DEFAULT_CUSTOM_REGEX, validateLineRegex } from '../app/splitRegex';
+import ProviderCredentialsEditor from './ProviderCredentialsEditor';
 
 const MAX_UPLOAD_SIZE_MB = 50;
 const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
-const DEFAULT_CUSTOM_REGEX = '^\\s*(第\\s*[零〇一二三四五六七八九十百千万两\\d]+\\s*[章节回卷篇幕节].*?)$';
-const MAX_CUSTOM_REGEX_LENGTH = 300;
 
 // === Story 1.6: JIT 智能语义拆分 / Ollama 心跳 ===
 const SMART_SPLIT_MIN_WORDS = 8000; // 分章置信度极低判定：分章数 <= 1 且总字数 >= 此阈值
@@ -36,41 +38,6 @@ function formatWordCount(count: number): string {
   return `${count}`;
 }
 
-function toLineRegex(pattern: string): RegExp {
-  if (!pattern.trim()) throw new Error('empty regex pattern');
-  const inputRegex = new RegExp(pattern, 'm');
-  const safeFlags = inputRegex.flags.replace('g', '').replace('y', '');
-  return new RegExp(inputRegex.source, safeFlags);
-}
-
-function hasNestedQuantifierRisk(pattern: string): boolean {
-  const nestedQuantifierRules = [
-    /\((?:\\.|[^()]){0,240}(?:\*|\+|\{\d*,?\d*\})(?:\\.|[^()]){0,240}\)\s*(?:\*|\+|\{\d*,?\d*\})/,
-    /\((?:\\.|[^()]){0,240}\.\*(?:\\.|[^()]){0,240}\)\s*(?:\*|\+)/,
-    /\((?:\\.|[^()]){0,240}\.\+(?:\\.|[^()]){0,240}\)\s*(?:\*|\+)/,
-  ];
-  return nestedQuantifierRules.some((rule) => rule.test(pattern));
-}
-
-function validateLineRegex(pattern: string): string | null {
-  const trimmed = pattern.trim();
-  if (!trimmed) return '请填写正则';
-  if (trimmed.length > MAX_CUSTOM_REGEX_LENGTH) return '正则过长';
-
-  const blockedPatterns = [/\\n|\\r/, /\r|\n/, /\[\\s\\S\]/, /\(\?:\.\|\\n\)/, /\(\?s[:)]/, /\\A|\\Z/];
-  if (blockedPatterns.some((rule) => rule.test(pattern))) return '不支持跨行正则';
-  if (hasNestedQuantifierRisk(trimmed)) return '正则包含高风险嵌套量词';
-
-  try {
-    const regex = toLineRegex(trimmed);
-    const match = regex.exec('');
-    if (match && match[0].length === 0) return '正则不能匹配空字符串';
-  } catch {
-    return '正则无效';
-  }
-  return null;
-}
-
 async function computeSha256(text: string): Promise<string> {
   const msgBuffer = new TextEncoder().encode(text);
   const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
@@ -80,7 +47,7 @@ async function computeSha256(text: string): Promise<string> {
 }
 
 export default function NovelUploader() {
-  const { selectedNovelId, setSelectedNovelId, setManageMode, llmConfig, setActiveProvider, updateActiveProviderProfile } =
+  const { selectedNovelId, setSelectedNovelId, setManageMode, llmConfig } =
     useAppStore();
   const activeProvider = llmConfig.activeProvider;
   const activeProviderMeta = getProviderMeta(activeProvider);
@@ -118,7 +85,6 @@ export default function NovelUploader() {
 
   // Story 1.6 State — JIT 水晶配置卡 + Ollama 心跳 + 智能语义拆分推荐
   const [isCrystalOpen, setIsCrystalOpen] = useState(false);
-  const [showCrystalKey, setShowCrystalKey] = useState(false);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>('unknown');
   const [ollamaMessage, setOllamaMessage] = useState('');
   const [splitRecommendations, setSplitRecommendations] = useState<SplitRecommendation[]>([]);
@@ -148,20 +114,11 @@ export default function NovelUploader() {
 
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const activeWorkerRef = useRef<Worker | null>(null);
-  const activeWatchdogRef = useRef<NodeJS.Timeout | null>(null);
+  // 解析 Worker 的中止句柄：卸载时 abort，由 app/novelParser 内部 terminate + 清看门狗（替代旧的 worker/watchdog 双 ref）。
+  const parserAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    return () => {
-      if (activeWorkerRef.current) {
-        activeWorkerRef.current.terminate();
-        activeWorkerRef.current = null;
-      }
-      if (activeWatchdogRef.current) {
-        clearTimeout(activeWatchdogRef.current);
-        activeWatchdogRef.current = null;
-      }
-    };
+    return () => parserAbortRef.current?.abort();
   }, []);
 
   const novels = useLiveQuery<Novel[]>(() => db.novels.reverse().toArray(), []) || [];
@@ -257,11 +214,6 @@ export default function NovelUploader() {
   const resetChapterListView = () => { setSearchQuery(''); setActiveChapterId(null); };
 
   const backupStitchData = (novelId: string, affectedChapters: Chapter[]): boolean => {
-    const tocMap: Record<string, number> = {};
-    chapters.forEach((c) => {
-      tocMap[c.id] = c.chapterIndex;
-    });
-
     const clonedAffected = affectedChapters.map((c) => ({
       id: c.id,
       novelId: c.novelId,
@@ -274,11 +226,7 @@ export default function NovelUploader() {
       mapStatus: c.mapStatus,
     }));
 
-    const backup = {
-      novelId,
-      affectedChapters: clonedAffected,
-      tocMap,
-    };
+    const backup = buildStitchBackup(chapters, novelId, clonedAffected);
 
     const jsonStr = JSON.stringify(backup);
     if (jsonStr.length > 4 * 1024 * 1024) {
@@ -298,11 +246,10 @@ export default function NovelUploader() {
   const handleStitch = async (chapterId: string) => {
     if (processing || !selectedNovelId) return;
 
-    const currIdx = chapters.findIndex((c) => c.id === chapterId);
-    if (currIdx <= 0) return;
-
-    const curr = chapters[currIdx];
-    const prev = chapters[currIdx - 1];
+    const plan = planStitch(chapters, chapterId);
+    if (!plan) return; // 首章不可前缝 / 未找到
+    const curr = chapters.find((c) => c.id === plan.removeId)!;
+    const prev = chapters.find((c) => c.id === plan.keepId)!;
 
     setProcessing(true);
 
@@ -311,33 +258,20 @@ export default function NovelUploader() {
 
       await new Promise((resolve) => setTimeout(resolve, 200));
 
-      const mergedContent = prev.content + '\n\n' + curr.content;
-      const sha = await computeSha256(mergedContent);
+      const sha = await computeSha256(plan.mergedContent);
 
       await db.transaction('rw', [db.chapters, db.novels], async () => {
-        const dbPrev = await db.chapters.get(prev.id);
-        const dbCurr = await db.chapters.get(curr.id);
-        if (!dbPrev || !dbCurr) return;
-
-        await db.chapters.update(prev.id, {
-          content: mergedContent,
-          wordCount: mergedContent.length,
+        await db.chapters.update(plan.keepId, {
+          content: plan.mergedContent,
+          wordCount: plan.mergedContent.length,
           contentSha256: sha,
           mapStatus: 'pending'
         });
 
-        await db.chapters.delete(curr.id);
+        await db.chapters.delete(plan.removeId);
 
-        const subsequent = await db.chapters
-          .where('novelId')
-          .equals(selectedNovelId)
-          .filter((c) => c.chapterIndex > dbCurr.chapterIndex)
-          .toArray();
-
-        for (const sub of subsequent) {
-          await db.chapters.update(sub.id, {
-            chapterIndex: sub.chapterIndex - 1,
-          });
+        for (const entry of plan.reindex) {
+          await db.chapters.update(entry.id, { chapterIndex: entry.chapterIndex });
         }
 
         const updatedChapters = await db.chapters.where('novelId').equals(selectedNovelId).toArray();
@@ -350,8 +284,8 @@ export default function NovelUploader() {
 
       setSelectedChapterIds(new Set());
 
-      if (activeChapterId === curr.id) {
-        setActiveChapterId(prev.id);
+      if (activeChapterId === plan.removeId) {
+        setActiveChapterId(plan.keepId);
       }
 
       setToast({
@@ -423,93 +357,41 @@ export default function NovelUploader() {
   const handleBulkStitch = async () => {
     if (processing || !selectedNovelId || selectedChapterIds.size < 2) return;
 
-    const sortedSelected = chapters
-      .filter((c) => selectedChapterIds.has(c.id) && c.id !== chapters[0]?.id)
-      .map((c) => c.id);
-
-    if (sortedSelected.length === 0) return;
+    const plan = planBulkStitch(chapters, selectedChapterIds);
+    if (plan.removeIds.length === 0) return;
 
     setProcessing(true);
 
     try {
-      const backupChaptersSet = new Set<string>();
-      let lastKeep: Chapter | null = null;
-
-      for (const ch of chapters) {
-        const isSelected = selectedChapterIds.has(ch.id) && ch.id !== chapters[0]?.id;
-        if (!isSelected) {
-          lastKeep = ch;
-        } else if (lastKeep) {
-          backupChaptersSet.add(lastKeep.id);
-          backupChaptersSet.add(ch.id);
-        }
-      }
-
-      const affectedChapters = chapters.filter((c) => backupChaptersSet.has(c.id));
+      const affectedIds = new Set<string>([...plan.removeIds, ...plan.merges.map((m) => m.keepId)]);
+      const affectedChapters = chapters.filter((c) => affectedIds.has(c.id));
 
       setCanUndo(backupStitchData(selectedNovelId, affectedChapters));
 
       await new Promise((resolve) => setTimeout(resolve, 200));
 
-      const mergedMap = new Map<string, { content: string; sha: string }>();
-      let lastKeepMem: Chapter | null = null;
-
-      for (const ch of chapters) {
-        const isSelected = selectedChapterIds.has(ch.id) && ch.id !== chapters[0]?.id;
-        if (!isSelected) {
-          lastKeepMem = ch;
-        } else if (lastKeepMem) {
-          const currentData: { content: string; sha: string } = mergedMap.get(lastKeepMem.id) || { content: lastKeepMem.content, sha: '' };
-          const newContent: string = currentData.content + '\n\n' + ch.content;
-          mergedMap.set(lastKeepMem.id, { content: newContent, sha: '' });
-          lastKeepMem = Object.assign({}, lastKeepMem, { content: newContent }) as Chapter;
-        }
-      }
-
-      const mergedKeys = Array.from(mergedMap.keys());
-      for (const key of mergedKeys) {
-        const value = mergedMap.get(key);
-        if (value) {
-          value.sha = await computeSha256(value.content);
-        }
+      // 各保留锚点合并后正文的 sha（async crypto，先于事务算好）。
+      const shaByKeep = new Map<string, string>();
+      for (const m of plan.merges) {
+        shaByKeep.set(m.keepId, await computeSha256(m.mergedContent));
       }
 
       await db.transaction('rw', [db.chapters, db.novels], async () => {
-        let lastKeepDb: Chapter | null = null;
-
-        for (const ch of chapters) {
-          const isSelected = selectedChapterIds.has(ch.id) && ch.id !== chapters[0]?.id;
-          if (!isSelected) {
-            lastKeepDb = await db.chapters.get(ch.id) || null;
-          } else if (lastKeepDb) {
-            const dbCurr = await db.chapters.get(ch.id);
-            if (dbCurr) {
-              const mergedData = mergedMap.get(lastKeepDb.id);
-              if (mergedData) {
-                await db.chapters.update(lastKeepDb.id, {
-                  content: mergedData.content,
-                  wordCount: mergedData.content.length,
-                  contentSha256: mergedData.sha,
-                  mapStatus: 'pending'
-                });
-                lastKeepDb.content = mergedData.content;
-                lastKeepDb.wordCount = mergedData.content.length;
-              }
-
-              await db.chapters.delete(ch.id);
-            }
-          }
+        for (const m of plan.merges) {
+          await db.chapters.update(m.keepId, {
+            content: m.mergedContent,
+            wordCount: m.mergedContent.length,
+            contentSha256: shaByKeep.get(m.keepId),
+            mapStatus: 'pending',
+          });
         }
 
-        const remaining = await db.chapters
-          .where('novelId')
-          .equals(selectedNovelId)
-          .sortBy('chapterIndex');
+        for (const id of plan.removeIds) {
+          await db.chapters.delete(id);
+        }
 
-        for (let i = 0; i < remaining.length; i++) {
-          await db.chapters.update(remaining[i].id, {
-            chapterIndex: i + 1,
-          });
+        for (const entry of plan.reindex) {
+          await db.chapters.update(entry.id, { chapterIndex: entry.chapterIndex });
         }
 
         const updatedChapters = await db.chapters.where('novelId').equals(selectedNovelId).toArray();
@@ -525,7 +407,7 @@ export default function NovelUploader() {
 
       setToast({
         show: true,
-        message: `已批量缝合选中的 ${sortedSelected.length} 个章节`,
+        message: `已批量缝合选中的 ${plan.removeIds.length} 个章节`,
         countdown: 6000,
         type: 'stitch',
       });
@@ -618,19 +500,8 @@ export default function NovelUploader() {
 
     const novelId = crypto.randomUUID();
     const novelName = file.name.replace(/\.[^/.]+$/, '');
-
-    const resetWatchdog = () => {
-      if (activeWatchdogRef.current) clearTimeout(activeWatchdogRef.current);
-      activeWatchdogRef.current = setTimeout(() => {
-        if (activeWorkerRef.current) {
-          activeWorkerRef.current.terminate();
-          activeWorkerRef.current = null;
-        }
-        setUploading(false);
-        setUploadStage('idle');
-        setErrorMsg('此文档编码极度神秘，请确保它是未加密的标准 TXT 格式');
-      }, 15000); // 15 seconds timeout watchdog for robustness (triage decision)
-    };
+    const ac = new AbortController();
+    parserAbortRef.current = ac;
 
     try {
       await ensureStorageCapacity(file);
@@ -640,104 +511,58 @@ export default function NovelUploader() {
         await navigator.storage.persist();
       }
 
-      activeWorkerRef.current = new Worker('/workers/novel-parser-worker.js');
-      resetWatchdog();
+      const { chapters: parsedChapters, splitMeta: computedSplitMeta, cleanedText, purifiedCount } =
+        await parseNovelFile(file, {
+          signal: ac.signal,
+          onProgress: ({ stage, percent }) => {
+            setUploadStage(stage as UploadStage);
+            setUploadStageText(percent !== undefined ? `${percent}%` : '');
+          },
+        });
 
-      activeWorkerRef.current.onmessage = async (e) => {
-        const { type, stage, percent, data, message } = e.data;
+      setUploadStage('saving');
+      setUploadStageText('');
 
-        if (type === 'progress') {
-          resetWatchdog(); // Reset watchdog on heartbeat message
-          setUploadStage(stage);
-          setUploadStageText(percent !== undefined ? `${percent}%` : '');
-        } else if (type === 'success') {
-          if (activeWatchdogRef.current) clearTimeout(activeWatchdogRef.current);
+      await db.transaction('rw', [db.novels, db.chapters], async () => {
+        // Write to novels with camelCase fields
+        await db.novels.add({
+          id: novelId,
+          name: novelName,
+          wordCount: parsedChapters.reduce((sum, c) => sum + c.wordCount, 0),
+          createdAt: Date.now(),
+          purifiedCount,
+          sourceTextCleaned: cleanedText,
+          splitStatus: computedSplitMeta.confidenceLevel === 'low' ? 'needs_review' : 'ok',
+          splitMeta: computedSplitMeta,
+          analysisStatus: 'idle',
+          mapProgress: { total: 0, current: 0 },
+          dnaCard: null,
+        });
 
-          setUploadStage('saving');
-          setUploadStageText('');
+        // Format chapters with camelCase fields and contentSha256
+        const chaptersToSave = parsedChapters.map((chapter) => ({
+          id: crypto.randomUUID(),
+          novelId,
+          chapterIndex: chapter.chapterIndex,
+          name: chapter.title,
+          content: chapter.content,
+          wordCount: chapter.wordCount,
+          contentSha256: chapter.contentSha256,
+          status: 'unparsed' as const,
+          mapStatus: 'pending' as const,
+        }));
 
-          const { chapters: parsedChapters, splitMeta: computedSplitMeta, cleanedText, purifiedCount } = data;
+        await db.chapters.bulkAdd(chaptersToSave);
+      });
 
-          try {
-            await db.transaction('rw', [db.novels, db.chapters], async () => {
-              // Write to novels with camelCase fields
-              await db.novels.add({
-                id: novelId,
-                name: novelName,
-                wordCount: parsedChapters.reduce((sum: number, c: { wordCount: number }) => sum + c.wordCount, 0),
-                createdAt: Date.now(),
-                purifiedCount,
-                sourceTextCleaned: cleanedText,
-                splitStatus: computedSplitMeta.confidenceLevel === 'low' ? 'needs_review' : 'ok',
-                splitMeta: computedSplitMeta,
-                analysisStatus: 'idle',
-                mapProgress: { total: 0, current: 0 },
-                dnaCard: null,
-              });
-
-              // Format chapters with camelCase fields and contentSha256
-              const chaptersToSave = parsedChapters.map((chapter: { chapterIndex: number; title: string; content: string; wordCount: number; contentSha256?: string }) => ({
-                id: crypto.randomUUID(),
-                novelId,
-                chapterIndex: chapter.chapterIndex,
-                name: chapter.title,
-                content: chapter.content,
-                wordCount: chapter.wordCount,
-                contentSha256: chapter.contentSha256,
-                status: 'unparsed',
-                mapStatus: 'pending' as const,
-              }));
-
-              await db.chapters.bulkAdd(chaptersToSave);
-            });
-
-            setSelectedNovelId(novelId);
-            resetChapterListView();
-            // 导入后永远落到「校验切分」管理视图：先看见章节+质量再显式进 DNA —— 导入↔切分合为一条连续流。
-            setManageMode(true);
-          } catch (err: unknown) {
-            setErrorMsg(err instanceof Error ? err.message : '保存至本地数据库失败');
-          } finally {
-            if (activeWorkerRef.current) {
-              activeWorkerRef.current.terminate();
-              activeWorkerRef.current = null;
-            }
-            setUploading(false);
-            setUploadStage('idle');
-          }
-        } else if (type === 'error') {
-          if (activeWatchdogRef.current) clearTimeout(activeWatchdogRef.current);
-          setErrorMsg(message || '解析小说失败');
-          if (activeWorkerRef.current) {
-            activeWorkerRef.current.terminate();
-            activeWorkerRef.current = null;
-          }
-          setUploading(false);
-          setUploadStage('idle');
-        }
-      };
-
-      activeWorkerRef.current.onerror = () => {
-        if (activeWatchdogRef.current) clearTimeout(activeWatchdogRef.current);
-        setErrorMsg('Web Worker 线程发生运行期异常');
-        if (activeWorkerRef.current) {
-          activeWorkerRef.current.terminate();
-          activeWorkerRef.current = null;
-        }
-        setUploading(false);
-        setUploadStage('idle');
-      };
-
-      // Launch worker calculation
-      activeWorkerRef.current.postMessage({ file });
-
+      setSelectedNovelId(novelId);
+      resetChapterListView();
+      // 导入后永远落到「校验切分」管理视图：先看见章节+质量再显式进 DNA —— 导入↔切分合为一条连续流。
+      setManageMode(true);
     } catch (err: unknown) {
-      if (activeWatchdogRef.current) clearTimeout(activeWatchdogRef.current);
-      if (activeWorkerRef.current) {
-        activeWorkerRef.current.terminate();
-        activeWorkerRef.current = null;
-      }
-      setErrorMsg(err instanceof Error ? err.message : '初始化 Web Worker 失败');
+      if (err instanceof DOMException && err.name === 'AbortError') return; // 卸载中止：静默
+      setErrorMsg(err instanceof Error ? err.message : '解析或保存小说失败');
+    } finally {
       setUploading(false);
       setUploadStage('idle');
     }
@@ -758,130 +583,76 @@ export default function NovelUploader() {
     setUploadStage('splitting');
     setUploadStageText('');
 
-    const resetWatchdog = () => {
-      if (activeWatchdogRef.current) clearTimeout(activeWatchdogRef.current);
-      activeWatchdogRef.current = setTimeout(() => {
-        if (activeWorkerRef.current) {
-          activeWorkerRef.current.terminate();
-          activeWorkerRef.current = null;
-        }
-        setRepairing(false);
-        setUploadStage('idle');
-        setErrorMsg('重分章操作超时，请检查正则是否存在回溯风险');
-      }, 15000); // 15 seconds timeout watchdog for robustness (triage decision)
-    };
+    const ac = new AbortController();
+    parserAbortRef.current = ac;
 
     try {
-      activeWorkerRef.current = new Worker('/workers/novel-parser-worker.js');
-      resetWatchdog();
+      const { chapters: parsedChapters, splitMeta: computedSplitMeta } = await resplit(
+        activeNovel.sourceTextCleaned,
+        strategy,
+        {
+          signal: ac.signal,
+          customRegex: strategy === 'custom' ? repairRegex : undefined,
+          onProgress: ({ stage, percent }) => {
+            setUploadStage(stage as UploadStage);
+            setUploadStageText(percent !== undefined ? `${percent}%` : '');
+          },
+        },
+      );
 
-      activeWorkerRef.current.onmessage = async (e) => {
-        const { type, stage, percent, data, message } = e.data;
+      setUploadStage('saving');
+      setUploadStageText('');
 
-        if (type === 'progress') {
-          resetWatchdog();
-          setUploadStage(stage);
-          setUploadStageText(percent !== undefined ? `${percent}%` : '');
-        } else if (type === 'success') {
-          if (activeWatchdogRef.current) clearTimeout(activeWatchdogRef.current);
-          setUploadStage('saving');
-          setUploadStageText('');
+      await db.transaction('rw', [db.novels, db.chapters], async () => {
+        // Empty existing chapters first to prevent residue as per AC5
+        await db.chapters.where('novelId').equals(activeNovel.id).delete();
 
-          const { chapters: parsedChapters, splitMeta: computedSplitMeta } = data;
+        // Bulk add newly computed chapters with contentSha256
+        const chaptersToSave = parsedChapters.map((chapter) => ({
+          id: crypto.randomUUID(),
+          novelId: activeNovel.id,
+          chapterIndex: chapter.chapterIndex,
+          name: chapter.title,
+          content: chapter.content,
+          wordCount: chapter.wordCount,
+          contentSha256: chapter.contentSha256,
+          status: 'unparsed' as const,
+          mapStatus: 'pending' as const,
+        }));
 
-          try {
-            await db.transaction('rw', [db.novels, db.chapters], async () => {
-              // Empty existing chapters first to prevent residue as per AC5
-              await db.chapters.where('novelId').equals(activeNovel.id).delete();
+        await db.chapters.bulkAdd(chaptersToSave);
 
-              // Bulk add newly computed chapters with contentSha256
-              const chaptersToSave = parsedChapters.map((chapter: { chapterIndex: number; title: string; content: string; wordCount: number; contentSha256?: string }) => ({
-                id: crypto.randomUUID(),
-                novelId: activeNovel.id,
-                chapterIndex: chapter.chapterIndex,
-                name: chapter.title,
-                content: chapter.content,
-                wordCount: chapter.wordCount,
-                contentSha256: chapter.contentSha256,
-                status: 'unparsed',
-                mapStatus: 'pending' as const,
-              }));
-
-              await db.chapters.bulkAdd(chaptersToSave);
-
-              // Update novel metadata
-              await db.novels.update(activeNovel.id, {
-                wordCount: parsedChapters.reduce((sum: number, c: { wordCount: number }) => sum + c.wordCount, 0),
-                splitStatus: computedSplitMeta.confidenceLevel === 'low' ? 'needs_review' : 'ok',
-                splitMeta: computedSplitMeta,
-                analysisStatus: 'idle',
-                mapProgress: { total: 0, current: 0 },
-                dnaCard: null,
-              });
-            });
-
-            resetChapterListView();
-            setSelectedChapterIds(new Set());
-            if (computedSplitMeta.confidenceLevel === 'low') {
-              setToast({
-                show: true,
-                message: '重切后置信度仍偏低，可改用「分章规则」自定义正则，或用 ✨ 智能语义拆分。',
-                countdown: 6000,
-              });
-            } else {
-              setToast({
-                show: true,
-                message: `重切完成：${computedSplitMeta.chapterCount} 章，置信度 ${Math.round(computedSplitMeta.confidence * 100)}%。`,
-                countdown: 4000,
-                type: 'success',
-              });
-            }
-          } catch (err: unknown) {
-            setErrorMsg(err instanceof Error ? err.message : '更新本地章节失败');
-          } finally {
-            if (activeWorkerRef.current) {
-              activeWorkerRef.current.terminate();
-              activeWorkerRef.current = null;
-            }
-            setRepairing(false);
-            setUploadStage('idle');
-          }
-        } else if (type === 'error') {
-          if (activeWatchdogRef.current) clearTimeout(activeWatchdogRef.current);
-          setErrorMsg(message || '重分章引擎解析失败');
-          if (activeWorkerRef.current) {
-            activeWorkerRef.current.terminate();
-            activeWorkerRef.current = null;
-          }
-          setRepairing(false);
-          setUploadStage('idle');
-        }
-      };
-
-      activeWorkerRef.current.onerror = () => {
-        if (activeWatchdogRef.current) clearTimeout(activeWatchdogRef.current);
-        setErrorMsg('Web Worker 重分章执行期异常');
-        if (activeWorkerRef.current) {
-          activeWorkerRef.current.terminate();
-          activeWorkerRef.current = null;
-        }
-        setRepairing(false);
-        setUploadStage('idle');
-      };
-
-      activeWorkerRef.current.postMessage({
-        cleanedText: activeNovel.sourceTextCleaned,
-        strategyId: strategy,
-        customRegex: strategy === 'custom' ? repairRegex : undefined
+        // Update novel metadata
+        await db.novels.update(activeNovel.id, {
+          wordCount: parsedChapters.reduce((sum, c) => sum + c.wordCount, 0),
+          splitStatus: computedSplitMeta.confidenceLevel === 'low' ? 'needs_review' : 'ok',
+          splitMeta: computedSplitMeta,
+          analysisStatus: 'idle',
+          mapProgress: { total: 0, current: 0 },
+          dnaCard: null,
+        });
       });
 
-    } catch (err: unknown) {
-      if (activeWatchdogRef.current) clearTimeout(activeWatchdogRef.current);
-      if (activeWorkerRef.current) {
-        activeWorkerRef.current.terminate();
-        activeWorkerRef.current = null;
+      resetChapterListView();
+      setSelectedChapterIds(new Set());
+      if (computedSplitMeta.confidenceLevel === 'low') {
+        setToast({
+          show: true,
+          message: '重切后置信度仍偏低，可改用「分章规则」自定义正则，或用 ✨ 智能语义拆分。',
+          countdown: 6000,
+        });
+      } else {
+        setToast({
+          show: true,
+          message: `重切完成：${computedSplitMeta.chapterCount} 章，置信度 ${Math.round(computedSplitMeta.confidence * 100)}%。`,
+          countdown: 4000,
+          type: 'success',
+        });
       }
-      setErrorMsg(err instanceof Error ? err.message : '启动重分章 Worker 失败');
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') return; // 卸载中止：静默
+      setErrorMsg(err instanceof Error ? err.message : '重分章引擎解析失败');
+    } finally {
       setRepairing(false);
       setUploadStage('idle');
     }
@@ -948,45 +719,33 @@ export default function NovelUploader() {
 
       await new Promise((resolve) => setTimeout(resolve, tearDuration));
 
-      const lines = activeChapter.content.split('\n');
-      const origLineIdx = originalLineIndices[pIdx];
-      const contentA = lines.slice(0, origLineIdx + 1).join('\n').trim();
-      const contentB = lines.slice(origLineIdx + 1).join('\n').trim();
+      const plan = planSplit(activeChapter, originalLineIndices[pIdx], chapters);
 
-      const shaA = await computeSha256(contentA);
-      const shaB = await computeSha256(contentB);
+      const shaA = await computeSha256(plan.contentA);
+      const shaB = await computeSha256(plan.contentB);
 
       const newChapterId = crypto.randomUUID();
-      const currentChapterIndex = activeChapter.chapterIndex;
 
       await db.transaction('rw', [db.chapters, db.novels], async () => {
         await db.chapters.update(activeChapter.id, {
-          content: contentA,
-          wordCount: contentA.length,
+          content: plan.contentA,
+          wordCount: plan.contentA.length,
           contentSha256: shaA,
           status: 'unparsed',
           mapStatus: 'pending'
         });
 
-        const subsequent = await db.chapters
-          .where('novelId')
-          .equals(selectedNovelId)
-          .filter((c) => c.chapterIndex > currentChapterIndex)
-          .toArray();
-
-        for (const sub of subsequent) {
-          await db.chapters.update(sub.id, {
-            chapterIndex: sub.chapterIndex + 1
-          });
+        for (const entry of plan.reindex) {
+          await db.chapters.update(entry.id, { chapterIndex: entry.chapterIndex });
         }
 
         const newChapter: Chapter = {
           id: newChapterId,
           novelId: selectedNovelId,
-          chapterIndex: currentChapterIndex + 1,
-          name: `${activeChapter.name} (下)`,
-          content: contentB,
-          wordCount: contentB.length,
+          chapterIndex: plan.newChapterIndex,
+          name: plan.newName,
+          content: plan.contentB,
+          wordCount: plan.contentB.length,
           contentSha256: shaB,
           status: 'unparsed',
           mapStatus: 'pending'
@@ -1876,101 +1635,38 @@ export default function NovelUploader() {
 
             {/* Body */}
             <div className="flex-1 space-y-4 overflow-y-auto p-5">
-              {/* Provider tabs */}
-              <div className="flex flex-wrap gap-1.5">
-                {listProviderMetas().map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => setActiveProvider(p.id)}
-                    className={`rounded-md border px-2.5 py-1 text-[11px] transition-all ${
-                      activeProvider === p.id
-                        ? 'border-[#06b6d4]/40 bg-[#06b6d4]/15 text-[#67e8f9]'
-                        : 'border-[#1b1e36] bg-transparent text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {p.name}
-                  </button>
-                ))}
-              </div>
-
-              {activeProviderMeta.requiresApiKey ? (
-                <div className="space-y-1.5">
-                  <label className="text-[11px] text-slate-400">云端水晶金钥 (API Key)</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type={showCrystalKey ? 'text' : 'password'}
-                      value={activeProfile.apiKey}
-                      onChange={(e) => updateActiveProviderProfile({ apiKey: e.target.value })}
-                      onBlur={(e) => updateActiveProviderProfile({ apiKey: e.target.value.trim() })}
-                      placeholder="sk-..."
-                      className="flex-1 rounded border border-[#1b1e36] bg-[#080916] px-2.5 py-1.5 font-mono text-xs text-slate-200 focus:border-[#06b6d4] focus:outline-none"
-                    />
-                    <button
-                      onClick={() => setShowCrystalKey((v) => !v)}
-                      className="shrink-0 text-[11px] text-slate-500 hover:text-slate-300"
-                    >
-                      {showCrystalKey ? '隐藏' : '显示'}
-                    </button>
+              <ProviderCredentialsEditor
+                variant="crystal"
+                providerSelector="tabs"
+                apiKeyLabel="云端水晶金钥 (API Key)"
+                keyHelpText="🔒 密钥仅以混淆形式存储于本地浏览器，绝不上传服务器。"
+                ollamaSlot={
+                  /* AC3/AC4: 本地 Ollama 心跳在线状态点 + 模型审计引导 */
+                  <div className="space-y-2 rounded-lg border border-[#1b1e36] bg-[#080916]/60 p-3">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`h-2 w-2 rounded-full transition-colors duration-100 ${
+                          ollamaStatus === 'online'
+                            ? 'bg-[#10b981]'
+                            : ollamaStatus === 'checking' || ollamaStatus === 'unknown'
+                            ? 'animate-pulse bg-slate-500'
+                            : 'bg-[#f59e0b]'
+                        }`}
+                      />
+                      <span className="text-xs font-medium text-slate-200">
+                        {ollamaStatus === 'online'
+                          ? '在线就绪 🟢'
+                          : ollamaStatus === 'checking'
+                          ? '星体心跳探测中…'
+                          : ollamaStatus === 'unknown'
+                          ? '待探测'
+                          : '星体静思 ⚠️'}
+                      </span>
+                    </div>
+                    {ollamaMessage && <p className="text-[11px] leading-relaxed text-slate-400">{ollamaMessage}</p>}
                   </div>
-                  <p className="text-[10px] text-slate-600">🔒 密钥仅以混淆形式存储于本地浏览器，绝不上传服务器。</p>
-                </div>
-              ) : (
-                /* AC3/AC4: 本地 Ollama 心跳在线状态点 + 模型审计引导 */
-                <div className="space-y-2 rounded-lg border border-[#1b1e36] bg-[#080916]/60 p-3">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`h-2 w-2 rounded-full transition-colors duration-100 ${
-                        ollamaStatus === 'online'
-                          ? 'bg-[#10b981]'
-                          : ollamaStatus === 'checking' || ollamaStatus === 'unknown'
-                          ? 'animate-pulse bg-slate-500'
-                          : 'bg-[#f59e0b]'
-                      }`}
-                    />
-                    <span className="text-xs font-medium text-slate-200">
-                      {ollamaStatus === 'online'
-                        ? '在线就绪 🟢'
-                        : ollamaStatus === 'checking'
-                        ? '星体心跳探测中…'
-                        : ollamaStatus === 'unknown'
-                        ? '待探测'
-                        : '星体静思 ⚠️'}
-                    </span>
-                  </div>
-                  {ollamaMessage && <p className="text-[11px] leading-relaxed text-slate-400">{ollamaMessage}</p>}
-                </div>
-              )}
-
-              <div className="space-y-1.5">
-                <label className="text-[11px] text-slate-400">Base URL</label>
-                <input
-                  type="text"
-                  value={activeProfile.baseUrl}
-                  onChange={(e) => updateActiveProviderProfile({ baseUrl: e.target.value })}
-                  onBlur={(e) => updateActiveProviderProfile({ baseUrl: e.target.value.trim() })}
-                  placeholder="https://api.example.com/v1"
-                  className="w-full rounded border border-[#1b1e36] bg-[#080916] px-2.5 py-1.5 font-mono text-xs text-slate-200 focus:border-[#06b6d4] focus:outline-none"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[11px] text-slate-400">模型</label>
-                <input
-                  list="crystal-model-presets"
-                  value={activeProfile.model}
-                  onChange={(e) => updateActiveProviderProfile({ model: e.target.value })}
-                  onBlur={(e) => updateActiveProviderProfile({ model: e.target.value.trim() })}
-                  placeholder="gpt-4o"
-                  className="w-full rounded border border-[#1b1e36] bg-[#080916] px-2.5 py-1.5 font-mono text-xs text-slate-200 focus:border-[#06b6d4] focus:outline-none"
-                />
-                <datalist id="crystal-model-presets">
-                  {activeProviderMeta.modelPresets.map((preset) => (
-                    <option key={preset.value} value={preset.value}>
-                      {preset.label}
-                    </option>
-                  ))}
-                </datalist>
-              </div>
+                }
+              />
             </div>
 
             {/* Footer action */}

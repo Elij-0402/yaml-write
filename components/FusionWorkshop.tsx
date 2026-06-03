@@ -2,23 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, isFourLayerDnaCard, type FusionSession, type SettingSnapshot, type StructureBeat } from '../app/db';
-import { RateLimitSignal, withRateLimitRetry } from '../app/dnaEngine';
-import { StreamSseError, ensureLlmConfigReady, postWithLlmConfig, readApiErrorMessage, streamSse } from '../app/llmClient';
+import { db, isFourLayerDnaCard, type FusionSession, type SettingSnapshot } from '../app/db';
+import { type BlockKey, type FusionDirection, type SettingBlocks, type StructureBeat, parseFusionDirections } from '../app/dnaSchema';
+import { withRateLimitRetry } from '../app/dnaEngine';
+import { StreamSseError, callStructured, ensureLlmConfigReady, streamSse } from '../app/llmClient';
 import { appendSnapshot, popSnapshot } from '../app/settingHistory';
 import { computeDiff, type DiffSegment } from '../app/diff';
 import { useAppStore } from '../app/store';
-
-interface FusionDirection {
-  title: string;
-  concept: string;
-  catalyst: string;
-  worldviewBlock: string;
-  protagonistBlock: string;
-  antagonistBlock: string;
-  narrativeTone: string;
-  transferNote?: string;
-}
 
 interface RepairGap { beat: string; issue: string; patch: string; }
 
@@ -28,7 +18,6 @@ interface FusionRecipe {
   mode: 'self' | 'cross';
 }
 
-type BlockKey = 'worldviewBlock' | 'protagonistBlock' | 'antagonistBlock' | 'narrativeTone';
 type SceneResumeStatus = 'idle' | 'failed-resumable' | 'resuming' | 'done';
 
 const BLOCKS: { key: BlockKey; label: string }[] = [
@@ -75,7 +64,7 @@ export default function FusionWorkshop() {
   const [error, setError] = useState<string | null>(null);
 
   const [directions, setDirections] = useState<FusionDirection[]>([]);
-  const [blocks, setBlocks] = useState<Record<BlockKey, string>>(EMPTY_BLOCKS);
+  const [blocks, setBlocks] = useState<SettingBlocks>(EMPTY_BLOCKS);
   const [directionTitle, setDirectionTitle] = useState('');
   const [tweakTarget, setTweakTarget] = useState<BlockKey>('worldviewBlock');
   const [command, setCommand] = useState('');
@@ -179,7 +168,6 @@ export default function FusionWorkshop() {
         blocks,
         directionTitle,
         sceneCount: 1,
-        storyboard: [],
         sceneTexts,
         sceneResumeStatus,
         settingHistory,
@@ -254,18 +242,16 @@ export default function FusionWorkshop() {
     setColliding(true);
     try {
       const ac = new AbortController();
-      const data = await withRateLimitRetry(async () => {
-        const response = await postWithLlmConfig('/api/py/generate-fusion-directions', {
+      const data = await withRateLimitRetry(
+        () => callStructured<{ directions: FusionDirection[] }>('/api/py/generate-fusion-directions', {
           engineCard: recipe.engineCard,
           skinSource: recipe.skinSource,
           mode: recipe.mode,
           userCustomPrompt: recipe.mode === 'cross' ? (customPrompt.trim() || undefined) : undefined,
           adversarialRules: adversarialRules.trim() || undefined,
-        }, { signal: ac.signal });
-        if (response.status === 429) throw new RateLimitSignal();
-        if (!response.ok) throw new Error(await readApiErrorMessage(response));
-        return (await response.json()) as { directions: FusionDirection[] };
-      }, { signal: ac.signal });
+        }, { signal: ac.signal, parse: parseFusionDirections }),
+        { signal: ac.signal }
+      );
       if (!mountedRef.current) return;
       setDirections(data.directions || []);
       setStep('directions');
@@ -298,17 +284,15 @@ export default function FusionWorkshop() {
     setRepairing(true);
     try {
       const ac = new AbortController();
-      const repaired = await withRateLimitRetry(async () => {
-        const response = await postWithLlmConfig('/api/py/repair-setting-gaps', {
+      const repaired = await withRateLimitRetry(
+        () => callStructured<{ worldviewBlock: string; protagonistBlock: string; antagonistBlock: string; narrativeTone: string; gaps?: RepairGap[] }>('/api/py/repair-setting-gaps', {
           ...baseBlocks,
           structureSkeleton: recipe.engineCard.structureSkeleton,
           themeSkin: recipe.skinSource.themeSkin || recipe.skinSource.userBrief || '',
           adversarialRules: adversarialRules.trim() || undefined,
-        }, { signal: ac.signal });
-        if (response.status === 429) throw new RateLimitSignal();
-        if (!response.ok) throw new Error(await readApiErrorMessage(response));
-        return (await response.json()) as { worldviewBlock: string; protagonistBlock: string; antagonistBlock: string; narrativeTone: string; gaps?: RepairGap[] };
-      }, { signal: ac.signal });
+        }, { signal: ac.signal }),
+        { signal: ac.signal }
+      );
       if (!mountedRef.current) return;
       setBlocks({
         worldviewBlock: repaired.worldviewBlock || baseBlocks.worldviewBlock,
@@ -343,17 +327,15 @@ export default function FusionWorkshop() {
     setTweaking(true);
     try {
       const ac = new AbortController();
-      const data = await withRateLimitRetry(async () => {
-        const response = await postWithLlmConfig('/api/py/tweak-fusion-blocks', {
+      const data = await withRateLimitRetry(
+        () => callStructured<Partial<Record<BlockKey, string>> & { modifiedBlocks: BlockKey[] }>('/api/py/tweak-fusion-blocks', {
           ...blocks,
           targetBlock: tweakTarget,
           userInstruction: instruction,
           adversarialRules: adversarialRules.trim() || undefined,
-        }, { signal: ac.signal });
-        if (response.status === 429) throw new RateLimitSignal();
-        if (!response.ok) throw new Error(await readApiErrorMessage(response));
-        return (await response.json()) as Partial<Record<BlockKey, string>> & { modifiedBlocks: BlockKey[] };
-      }, { signal: ac.signal });
+        }, { signal: ac.signal }),
+        { signal: ac.signal }
+      );
       if (!mountedRef.current) return;
       const reported = (data.modifiedBlocks || []).filter((k): k is BlockKey => isBlockKey(k));
       const newText = reported.includes(tweakTarget) && typeof data[tweakTarget] === 'string' ? (data[tweakTarget] as string) : null;
@@ -386,16 +368,14 @@ export default function FusionWorkshop() {
     setEnhancing(true);
     try {
       const ac = new AbortController();
-      const data = await withRateLimitRetry(async () => {
-        const response = await postWithLlmConfig('/api/py/enhance-instruction', {
+      const data = await withRateLimitRetry(
+        () => callStructured<{ interpretedBrief: string; confirmation: string }>('/api/py/enhance-instruction', {
           userInstruction: instruction,
           targetBlock: tweakTarget,
           blockContext: blocks[tweakTarget] || '',
-        }, { signal: ac.signal });
-        if (response.status === 429) throw new RateLimitSignal();
-        if (!response.ok) throw new Error(await readApiErrorMessage(response));
-        return (await response.json()) as { interpretedBrief: string; confirmation: string };
-      }, { signal: ac.signal });
+        }, { signal: ac.signal }),
+        { signal: ac.signal }
+      );
       if (!mountedRef.current) return;
       setIntent({ instruction, brief: data.interpretedBrief, confirmation: data.confirmation });
     } catch (err) {

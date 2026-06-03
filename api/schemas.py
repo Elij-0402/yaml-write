@@ -17,7 +17,7 @@ class ChapterMapSummaryResponse(BaseModel):
 
 
 class ChapterMapInput(BaseModel):
-    title: str = Field(..., min_length=1, max_length=300)
+    title: str = Field(..., min_length=1, max_length=600)
     content: str = Field(..., min_length=1, max_length=MAX_CHAPTER_CONTENT_CHARS)
     apiKey: str = Field(..., min_length=1, max_length=512)
     baseUrl: str = Field(..., min_length=1, max_length=512)
@@ -236,20 +236,6 @@ class StoryboardScene(BaseModel):
     plotOutline: str = Field(..., description="本场景核心情节走向及爽点/爆点")
     tensionLevel: str = Field(..., description="张力曲线（如：低开高走、情绪爆发、悬疑冷场）")
     visualCues: str = Field(..., description="画面感与环境意象指示")
-
-
-class StoryboardResponse(BaseModel):
-    scenes: List[StoryboardScene] = Field(...)
-
-
-class StoryboardInput(BaseModel):
-    selectedDirection: SelectedDirection
-    sceneCount: int = Field(3, ge=1, le=8)
-    adversarialRules: Optional[str] = Field(None, max_length=2000)
-    apiKey: str = Field(..., min_length=1, max_length=512)
-    baseUrl: str = Field(..., min_length=1, max_length=512)
-    model: str = Field(..., min_length=1, max_length=200)
-    temperature: float = Field(0.7, ge=0.0, le=1.5)
 
 
 class SceneTextInput(BaseModel):

@@ -41,10 +41,9 @@ from api.schemas import (
     RepairSettingGapsInput,
     RepairSettingGapsResponse,
     SceneTextInput,
+    SelectedDirection,
     SplitRecommendInput,
     SplitRecommendResponse,
-    StoryboardInput,
-    StoryboardResponse,
     TweakBlocksInput,
     TweakBlocksResponse,
 )
@@ -72,8 +71,6 @@ RATE_LIMIT_RULES = {
     "/api/py/repair-setting-gaps": (60, 8),
     "/api/py/enhance-instruction": (60, 20),
     "/api/py/tweak-fusion-blocks": (60, 20),
-    "/api/py/generate-storyboard": (60, 12),
-    "/api/py/stream-storyboard": (60, 12),
     "/api/py/stream-scene-text": (60, 12),
     "/api/py/split-recommend": (60, 20),
 }
@@ -317,38 +314,6 @@ def build_scene_user_prompt(data: SceneTextInput) -> str:
         f"{resume_instruction}"
         "严禁剧情断层或设定漂移。直接开始输出正文，不要重复前文。"
     )
-
-
-_STORYBOARD_SCENE_PATTERN = re.compile(
-    r"\[SCENE-(\d+)\]\s*"
-    r"title:\s*(.*?)\s*"
-    r"plot:\s*(.*?)\s*"
-    r"tension:\s*(.*?)\s*"
-    r"visual:\s*(.*?)\s*"
-    r"\[/SCENE-\1\]",
-    re.IGNORECASE | re.DOTALL,
-)
-
-
-def parse_storyboard_scene_blocks(raw_text: str, scene_count: int) -> list[dict]:
-    scenes: list[dict] = []
-    for match in _STORYBOARD_SCENE_PATTERN.finditer(raw_text):
-        scenes.append(
-            {
-                "sceneNumber": int(match.group(1)),
-                "sceneTitle": match.group(2).strip(),
-                "plotOutline": match.group(3).strip(),
-                "tensionLevel": match.group(4).strip(),
-                "visualCues": match.group(5).strip(),
-            }
-        )
-
-    scenes.sort(key=lambda x: x["sceneNumber"])
-    if len(scenes) != scene_count:
-        return []
-    if any(not s["sceneTitle"] or not s["plotOutline"] for s in scenes):
-        return []
-    return scenes
 
 
 def build_openai_client(api_key: str, base_url: str, timeout: float) -> AsyncOpenAI:
@@ -741,119 +706,6 @@ async def tweak_fusion_blocks(data: TweakBlocksInput, request: Request):
         temperature=data.temperature, request=request, label="tweak_fusion_blocks",
         instructor_retries=1,
     )
-
-
-async def run_generate_storyboard(
-    data: StoryboardInput,
-    request: Request,
-    *,
-    enforce_rate_limit: bool,
-):
-    if enforce_rate_limit:
-        await ensure_rate_limit(request, "/api/py/generate-storyboard")
-    model = sanitize_text(data.model)
-    api_key = sanitize_text(data.apiKey)
-    validate_llm_creds(api_key, model, data.temperature)
-    d = data.selectedDirection
-    logger.info("generate_storyboard ip=%s model=%s scenes=%s", get_client_ip(request), model, data.sceneCount)
-
-    adv = ""
-    if data.adversarialRules and data.adversarialRules.strip():
-        adv = f"\n【用户红队对抗规则（必须遵守）】：{data.adversarialRules.strip()}"
-    system_prompt = (
-        f"你是顶尖的小说分镜编剧。基于给定的融合设定，设计 {data.sceneCount} 个连贯递进的开篇故事板分镜。"
-        "每个分镜给出：序号(sceneNumber)、标题(sceneTitle)、核心情节走向与爽点/爆点(plotOutline)、"
-        "张力曲线(tensionLevel)、画面感与环境意象指示(visualCues)。"
-        "分镜之间要有清晰的张力递进与因果勾连，为后续正文铺好骨架。\n"
-        + ANTI_SLOP_CONSTRAINT
-    )
-    user_prompt = (
-        f"【融合设定】\n方向：{d.title}\n世界观：{d.worldviewBlock}\n主角：{d.protagonistBlock}\n"
-        f"对手：{d.antagonistBlock}\n叙事色调：{d.narrativeTone}{adv}\n\n请输出 {data.sceneCount} 个分镜。"
-    )
-    return await run_structured(
-        api_key=api_key, base_url=data.baseUrl, model=model,
-        response_model=StoryboardResponse,
-        system_prompt=system_prompt, user_prompt=user_prompt,
-        temperature=data.temperature, request=request, label="generate_storyboard",
-    )
-
-
-@app.post("/api/py/generate-storyboard")
-async def generate_storyboard(data: StoryboardInput, request: Request):
-    return await run_generate_storyboard(data, request, enforce_rate_limit=True)
-
-
-@app.post("/api/py/stream-storyboard")
-async def stream_storyboard(data: StoryboardInput, request: Request):
-    await ensure_rate_limit(request, "/api/py/stream-storyboard")
-    model = sanitize_text(data.model)
-    api_key = sanitize_text(data.apiKey)
-    validate_llm_creds(api_key, model, data.temperature)
-    client = build_openai_client(api_key, data.baseUrl, timeout=STREAM_TIMEOUT_SECONDS)
-    d = data.selectedDirection
-    logger.info("stream_storyboard ip=%s model=%s scenes=%s", get_client_ip(request), model, data.sceneCount)
-
-    adv = ""
-    if data.adversarialRules and data.adversarialRules.strip():
-        adv = f"\n【用户红队对抗规则（必须遵守）】：{data.adversarialRules.strip()}"
-
-    system_prompt = (
-        f"你是顶尖的小说分镜编剧。请基于融合设定生成 {data.sceneCount} 个连贯递进的开篇分镜。"
-        "必须严格按以下模板输出，并完整输出全部分镜：\n"
-        "[SCENE-1]\n"
-        "title: <分镜标题>\n"
-        "plot: <核心情节走向与爆点>\n"
-        "tension: <张力曲线>\n"
-        "visual: <画面意象>\n"
-        "[/SCENE-1]\n"
-        "...\n"
-        f"[SCENE-{data.sceneCount}] ... [/SCENE-{data.sceneCount}]\n"
-        "严禁输出 Markdown 代码块、解释、前言或额外字段。"
-        + ANTI_SLOP_CONSTRAINT
-    )
-    user_prompt = (
-        f"【融合设定】\n方向：{d.title}\n世界观：{d.worldviewBlock}\n主角：{d.protagonistBlock}\n"
-        f"对手：{d.antagonistBlock}\n叙事色调：{d.narrativeTone}{adv}\n\n"
-        "请开始输出分镜。"
-    )
-
-    async def event_generator():
-        stream_buffer = ""
-        try:
-            stream = await client.chat.completions.create(
-                model=model,
-                temperature=data.temperature,
-                max_tokens=2200,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                stream=True,
-            )
-            async for chunk in stream:
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                content = delta.content if delta else None
-                if content:
-                    stream_buffer += content
-                    yield sse_event("delta", {"text": content})
-
-            scenes = parse_storyboard_scene_blocks(stream_buffer, data.sceneCount)
-            if not scenes:
-                fallback = await run_generate_storyboard(data, request, enforce_rate_limit=False)
-                scenes = [scene.model_dump() for scene in fallback.scenes]
-            yield sse_event("done", {"ok": True, "scenes": scenes})
-        except ApiError as exc:
-            logger.warning("stream_storyboard api error ip=%s model=%s code=%s", get_client_ip(request), model, exc.code)
-            yield sse_event("error", {"code": exc.code, "message": exc.message})
-        except Exception as exc:
-            logger.warning("stream_storyboard failed ip=%s model=%s err=%s", get_client_ip(request), model, exc.__class__.__name__)
-            _, code, message = classify_openai_error(exc)
-            yield sse_event("error", {"code": code, "message": message})
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.post("/api/py/stream-scene-text")

@@ -1,5 +1,6 @@
-import { db, type Chapter, type ChapterMapSummary, type NovelDNACard } from './db';
-import { postWithLlmConfig, readApiErrorMessage } from './llmClient';
+import { db, type Chapter } from './db';
+import { type ChapterMapSummary, type NovelDNACard, parseChapterMapSummary, parseNovelDNACard } from './dnaSchema';
+import { RateLimitSignal, callStructured } from './llmClient';
 import { useAppStore } from './store';
 import {
   routeBySize,
@@ -26,13 +27,7 @@ const RL_JITTER = 0.5; // 抖动比例：delay = base · 2^n · (1 + random·0.5
 const RL_MAX_MS = 30_000; // 单次退避上限
 const RL_MAX_ATTEMPTS = 5; // 同一单元最多退避次数；耗尽作为真实失败兜底（防活锁 / 防额度耗尽空转）
 
-// 模块内哨兵错误：让调用方把 429 与普通错误 / abort 严格区分（严禁 any / 字符串判型）。
-export class RateLimitSignal extends Error {
-  constructor() {
-    super('rate_limited');
-    this.name = 'RateLimitSignal';
-  }
-}
+// 模块内哨兵错误已上移至 llmClient.callStructured（避免 llmClient → dnaEngine 循环依赖）；此处仅 import 供 withRateLimitRetry 判型。
 
 // 当前卡在 429 退避中的 worker 数。点亮规则：第一个进入退避时点亮，最后一个恢复才熄灯，
 // 避免多 worker 并发退避时护航灯频闪。
@@ -134,18 +129,12 @@ async function mapOneUnit(unit: ExtractionUnit, byId: Map<string, Chapter>, sign
   }
   let content = parts.join('\n\n');
   if (content.length > MAX_ARC_INPUT_CHARS) content = content.slice(0, MAX_ARC_INPUT_CHARS);
-  const response = await postWithLlmConfig(
+  // callStructured 吸收 429→RateLimitSignal + !ok→错误 + json 取值；parse 做运行时校验；外层 withRateLimitRetry 负责静默退避重排。
+  const summary = await callStructured<ChapterMapSummary>(
     '/api/py/extract-arc-map',
     { title: unit.label, content },
-    { signal }
+    { signal, parse: parseChapterMapSummary }
   );
-  if (response.status === 429) {
-    throw new RateLimitSignal(); // 交给 withRateLimitRetry 静默退避重排，绝不标失败
-  }
-  if (!response.ok) {
-    throw new Error(await readApiErrorMessage(response));
-  }
-  const summary = (await response.json()) as ChapterMapSummary;
   await db.chapters.update(unit.id, { mapStatus: 'done', mapSummary: summary, mapCompletedAt: Date.now(), errorMsg: undefined });
   for (const cid of unit.chapterIds) {
     if (cid !== unit.id) {
@@ -158,18 +147,11 @@ async function mapOneUnit(unit: ExtractionUnit, byId: Map<string, Chapter>, sign
 async function extractBookDirect(novelName: string, content: string, signal: AbortSignal): Promise<NovelDNACard> {
   let text = content;
   if (text.length > MAX_DIRECT_INPUT_CHARS) text = text.slice(0, MAX_DIRECT_INPUT_CHARS);
-  const response = await postWithLlmConfig(
+  return callStructured<NovelDNACard>(
     '/api/py/extract-book-direct',
     { novelName, content: text },
-    { signal }
+    { signal, parse: parseNovelDNACard }
   );
-  if (response.status === 429) {
-    throw new RateLimitSignal();
-  }
-  if (!response.ok) {
-    throw new Error(await readApiErrorMessage(response));
-  }
-  return (await response.json()) as NovelDNACard;
 }
 
 async function computeSha256(text: string): Promise<string> {
@@ -369,16 +351,14 @@ export async function runDnaExtraction(
     }
 
     try {
-      const dnaCard = await withRateLimitRetry(async () => {
-        const response = await postWithLlmConfig(
+      const dnaCard = await withRateLimitRetry(
+        () => callStructured<NovelDNACard>(
           '/api/py/extract-book-reduce',
           { novelName: novel.name, mapSummaries },
-          { signal }
-        );
-        if (response.status === 429) throw new RateLimitSignal();
-        if (!response.ok) throw new Error(await readApiErrorMessage(response));
-        return (await response.json()) as NovelDNACard;
-      }, { signal });
+          { signal, parse: parseNovelDNACard }
+        ),
+        { signal }
+      );
       await db.novels.update(novelId, { dnaCard, dnaCardVersion: 2, analysisStatus: 'done' });
     } catch (err) {
       if (signal.aborted) {
