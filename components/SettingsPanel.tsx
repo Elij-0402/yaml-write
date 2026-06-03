@@ -26,13 +26,13 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      <button type="button" className="absolute inset-0 bg-black/70" onClick={onClose} aria-label="关闭" />
+      <button type="button" className="absolute inset-0 bg-[rgba(7,5,4,0.76)] backdrop-blur-sm" onClick={onClose} aria-label="关闭" />
 
-      <aside className="relative flex h-full w-full max-w-md flex-col border-l border-default bg-[linear-gradient(180deg,rgba(16,13,11,0.98),rgba(26,21,18,0.98))]">
-        <header className="flex h-14 items-center justify-between border-b border-default px-6">
+      <aside className="relative flex h-full w-full max-w-md flex-col border-l border-default bg-[linear-gradient(180deg,rgba(20,16,13,0.985),rgba(28,22,18,0.98))] shadow-[-20px_0_60px_rgba(0,0,0,0.28)]">
+        <header className="flex h-16 items-center justify-between border-b border-default px-6">
           <div>
             <div className="eyebrow !mb-0">模型设置</div>
-            <span className="text-sm text-primary">设置</span>
+            <span className="text-base text-primary">设置中心</span>
           </div>
           <button onClick={onClose} className="text-secondary hover:text-primary">×</button>
         </header>
@@ -44,7 +44,11 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
             </AppNotice>
           )}
 
-          <div className="space-y-4 rounded-[20px] border border-default bg-black/10 p-4">
+          <div className="space-y-3 rounded-[24px] border border-default bg-black/10 p-4">
+            <div className="rounded-[18px] border border-default bg-[rgba(239,230,214,0.04)] px-4 py-3">
+              <div className="text-sm text-primary">连接模型之后，当前工作流会自动恢复</div>
+              <p className="mt-1 text-xs leading-6 text-secondary">这里不只是存配置，也是整个创作流程的“解锁点”。完成后直接回到刚才卡住的步骤即可。</p>
+            </div>
             <ProviderCredentialsEditor variant="minimal" providerSelector="select" />
           </div>
 

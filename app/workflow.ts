@@ -185,9 +185,9 @@ export function getStageStatusClasses(status: StageStatus): string {
     case 'running':
       return 'border-amber-500/20 bg-amber-500/[0.04] text-amber-400';
     case 'ready':
-      return 'border-blue-500/20 bg-blue-500/[0.04] text-blue-400';
+      return 'border-[color:var(--blueprint)]/20 bg-[color:var(--blueprint-soft)] text-[color:var(--blueprint)]';
     case 'blocked':
-      return 'border-rose-500/20 bg-rose-500/[0.04] text-rose-400';
+      return 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] text-[color:var(--vermilion)]';
     default:
       return 'border-hairline bg-white/[0.01] text-zinc-500';
   }

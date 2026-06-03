@@ -74,10 +74,109 @@
   .border-default { border-color: var(--border); }
   /* 朱墨语义色（rewritten 组件直接用） */
   .text-vermilion { color: var(--vermilion); }
-  .text-blueprint { color: var(--blueprint); }
+.text-blueprint { color: var(--blueprint); }
   .font-display { font-family: var(--font-display); }
   .font-serif-zh { font-family: var(--font-serif); }
   .font-mono-zh { font-family: var(--font-mono); }
+}
+
+@layer components {
+  .workspace-shell {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .workspace-shell::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.015), transparent 18%),
+      radial-gradient(circle at 50% 0%, rgba(239,230,214,0.03), transparent 36%);
+  }
+
+  .panel {
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(26,21,18,0.94), rgba(16,13,11,0.98));
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.24);
+    border-radius: 24px;
+  }
+
+  .panel-soft {
+    border: 1px solid var(--line);
+    background: rgba(26,21,18,0.72);
+    border-radius: 18px;
+  }
+
+  .workspace-input {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: rgba(0,0,0,0.14);
+    color: var(--ink-text);
+    padding: 10px 12px;
+    outline: none;
+    transition: border-color .18s ease, background-color .18s ease, transform .18s ease;
+  }
+
+  .workspace-input:focus {
+    border-color: var(--vermilion-line);
+    background: rgba(0,0,0,0.22);
+  }
+
+  .workspace-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border-radius: 12px;
+    border: 1px solid var(--vermilion);
+    background: var(--vermilion);
+    color: #fff;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease, background-color .16s ease;
+    box-shadow: 0 10px 28px rgba(207,74,46,.24);
+  }
+
+  .workspace-button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 14px 34px rgba(207,74,46,.28);
+  }
+
+  .workspace-button:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .workspace-button-secondary {
+    border-color: var(--line-strong);
+    background: rgba(0,0,0,0.08);
+    color: var(--ink-text);
+    box-shadow: none;
+  }
+
+  .workspace-button-secondary:hover {
+    border-color: var(--vermilion-line);
+    box-shadow: none;
+  }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: var(--ink-dim);
+    background: rgba(0,0,0,0.12);
+  }
 }
 
 /* ============================================================
