@@ -3,11 +3,12 @@ import { persist, createJSONStorage, type StateStorage } from 'zustand/middlewar
 import {
   createDefaultProviderProfiles,
   isProviderId,
+  normalizeLegacyProviderProfile,
   type ProviderId,
   type ProviderProfile,
 } from './llmProviders';
 
-const STORE_VERSION = 4;
+const STORE_VERSION = 5;
 const DEFAULT_TEMPERATURE = 0.7;
 
 function xorEncryptDecrypt(input: string): string {
@@ -115,7 +116,7 @@ function normalizeProviderProfiles(rawProfiles: unknown): Record<ProviderId, Pro
     if (!raw || typeof raw !== 'object') return;
     const current = raw as Partial<ProviderProfile>;
 
-    normalized[provider] = {
+    normalized[provider] = normalizeLegacyProviderProfile(provider, {
       apiKey: typeof current.apiKey === 'string' ? current.apiKey : defaults[provider].apiKey,
       baseUrl:
         typeof current.baseUrl === 'string' && current.baseUrl.trim().length > 0
@@ -125,7 +126,7 @@ function normalizeProviderProfiles(rawProfiles: unknown): Record<ProviderId, Pro
         typeof current.model === 'string' && current.model.trim().length > 0
           ? current.model
           : defaults[provider].model,
-    };
+    });
   });
 
   return normalized;
@@ -257,7 +258,7 @@ export const useAppStore = create<AppState>()(
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState;
         const state = persistedState as Record<string, unknown>;
-        // STORE_VERSION 4：丢弃已删旋钮字段（档位 / 阶段汇总耦合 / 融合偏向），它们不再属于状态形状。
+        // STORE_VERSION 5：继续清理已删状态字段，并让 providerProfiles 经过最新的默认值/兼容迁移。
         delete state.sequencingGear;
         delete state.shouldReduceEarly;
         delete state.fusionBias;

@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect } from 'react';
 import { useAppStore } from '../app/store';
-import { getLlmConfigError } from '../app/llmClient';
 import ProviderCredentialsEditor from './ProviderCredentialsEditor';
+import AppNotice from './AppNotice';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -10,10 +10,6 @@ interface SettingsPanelProps {
 }
 
 export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsPanelProps) {
-  const { llmConfig } = useAppStore();
-
-  const readiness = useMemo(() => getLlmConfigError(llmConfig), [llmConfig]);
-
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -32,34 +28,32 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
     <div className="fixed inset-0 z-50 flex justify-end">
       <button type="button" className="absolute inset-0 bg-black/70" onClick={onClose} aria-label="关闭" />
 
-      <aside className="relative flex h-full w-full max-w-md flex-col border-l bg-black">
-        <header className="flex h-12 items-center justify-between border-b px-6">
-          <span className="text-sm">设置</span>
+      <aside className="relative flex h-full w-full max-w-md flex-col border-l border-default bg-[linear-gradient(180deg,rgba(16,13,11,0.98),rgba(26,21,18,0.98))]">
+        <header className="flex h-14 items-center justify-between border-b border-default px-6">
+          <div>
+            <div className="eyebrow !mb-0">模型设置</div>
+            <span className="text-sm text-primary">设置</span>
+          </div>
           <button onClick={onClose} className="text-secondary hover:text-primary">×</button>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* Status */}
-          <div className="flex items-center gap-3 text-sm">
-            <span className={readiness ? 'text-amber-500' : 'text-emerald-500'}>
-              {readiness ? '○' : '●'}
-            </span>
-            <span>{readiness || '配置完成'}</span>
-          </div>
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {returnHint && (
+            <AppNotice tone="warning" title="你是从这里跳转过来的">
+              待执行：{returnHint}。配置完后关闭抽屉，就可以回到刚才那一步继续，不需要重走流程。
+            </AppNotice>
+          )}
 
-          {returnHint && <p className="text-xs text-muted">待执行: {returnHint}</p>}
-
-          {/* Form */}
-          <div className="space-y-4">
+          <div className="space-y-4 rounded-[20px] border border-default bg-black/10 p-4">
             <ProviderCredentialsEditor variant="minimal" providerSelector="select" />
           </div>
 
           <p className="text-xs text-muted">密钥仅存储在浏览器本地，不会上传服务器。</p>
         </div>
 
-        <footer className="border-t p-6">
-          <button onClick={onClose} className="w-full py-2 text-sm text-secondary hover:text-primary">
-            关闭
+        <footer className="border-t border-default p-6">
+          <button onClick={onClose} className="w-full rounded-xl border border-default bg-secondary py-2 text-sm text-primary hover:border-[color:var(--vermilion-line)]">
+            返回刚才的流程
           </button>
         </footer>
       </aside>

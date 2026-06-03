@@ -14,6 +14,7 @@ export interface ProviderModelPreset {
 export interface ProviderMeta {
   id: ProviderId;
   name: string;
+  shortName?: string;
   defaultBaseUrl: string;
   defaultModel: string;
   requiresApiKey: boolean;
@@ -26,6 +27,7 @@ export const PROVIDER_REGISTRY: Record<ProviderId, ProviderMeta> = {
   openai: {
     id: 'openai',
     name: 'OpenAI',
+    shortName: 'OpenAI',
     defaultBaseUrl: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4o',
     requiresApiKey: true,
@@ -37,17 +39,21 @@ export const PROVIDER_REGISTRY: Record<ProviderId, ProviderMeta> = {
   deepseek: {
     id: 'deepseek',
     name: 'DeepSeek',
-    defaultBaseUrl: 'https://api.deepseek.com/v1',
-    defaultModel: 'deepseek-chat',
+    shortName: 'DeepSeek',
+    defaultBaseUrl: 'https://api.deepseek.com',
+    defaultModel: 'deepseek-v4-flash',
     requiresApiKey: true,
     modelPresets: [
-      { label: 'DeepSeek Chat (V3)', value: 'deepseek-chat' },
-      { label: 'DeepSeek Reasoner (R1)', value: 'deepseek-reasoner' },
+      { label: 'DeepSeek V4 Flash', value: 'deepseek-v4-flash' },
+      { label: 'DeepSeek V4 Pro', value: 'deepseek-v4-pro' },
+      { label: 'DeepSeek Chat（兼容旧版）', value: 'deepseek-chat' },
+      { label: 'DeepSeek Reasoner（兼容旧版）', value: 'deepseek-reasoner' },
     ],
   },
   gemini: {
     id: 'gemini',
     name: 'Google Gemini',
+    shortName: 'Gemini',
     defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     defaultModel: 'gemini-2.5-flash',
     requiresApiKey: true,
@@ -60,6 +66,7 @@ export const PROVIDER_REGISTRY: Record<ProviderId, ProviderMeta> = {
   siliconflow: {
     id: 'siliconflow',
     name: '硅基流动',
+    shortName: '硅基',
     defaultBaseUrl: 'https://api.siliconflow.cn/v1',
     defaultModel: 'deepseek-ai/DeepSeek-V3',
     requiresApiKey: true,
@@ -72,6 +79,7 @@ export const PROVIDER_REGISTRY: Record<ProviderId, ProviderMeta> = {
   ollama: {
     id: 'ollama',
     name: 'Ollama 本地',
+    shortName: 'Ollama',
     defaultBaseUrl: 'http://localhost:11434/v1',
     defaultModel: 'llama3',
     requiresApiKey: false,
@@ -83,6 +91,7 @@ export const PROVIDER_REGISTRY: Record<ProviderId, ProviderMeta> = {
   custom: {
     id: 'custom',
     name: '自定义中转',
+    shortName: '自定义',
     defaultBaseUrl: '',
     defaultModel: '',
     requiresApiKey: true,
@@ -112,4 +121,17 @@ export function createDefaultProviderProfiles(): Record<ProviderId, ProviderProf
     };
     return acc;
   }, {} as Record<ProviderId, ProviderProfile>);
+}
+
+export function normalizeLegacyProviderProfile(
+  providerId: ProviderId,
+  profile: ProviderProfile
+): ProviderProfile {
+  if (providerId !== 'deepseek') return profile;
+
+  return {
+    ...profile,
+    baseUrl: profile.baseUrl === 'https://api.deepseek.com/v1' ? 'https://api.deepseek.com' : profile.baseUrl,
+    model: profile.model === 'deepseek-chat' ? 'deepseek-v4-flash' : profile.model,
+  };
 }

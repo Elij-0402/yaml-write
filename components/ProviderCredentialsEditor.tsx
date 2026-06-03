@@ -16,6 +16,11 @@ interface EditorTheme {
   fieldWrap: string;
   label: string;
   select: string;
+  hintCard: string;
+  chipRow: string;
+  chip: string;
+  chipActive: string;
+  chipMuted: string;
   keyRow: string;
   keyInput: string;
   toggleBtn: string;
@@ -30,22 +35,32 @@ interface EditorTheme {
 const THEME: Record<Variant, EditorTheme> = {
   minimal: {
     fieldWrap: 'space-y-2',
-    label: 'text-xs text-muted',
-    select: 'w-full border bg-transparent p-2 text-sm focus:outline-none',
+    label: 'text-xs text-secondary',
+    select: 'w-full rounded-xl border border-default bg-black/10 p-2.5 text-sm text-primary focus:border-[color:var(--vermilion-line)] focus:outline-none',
+    hintCard: 'rounded-xl border border-default bg-black/10 px-3 py-2 text-xs text-secondary',
+    chipRow: 'flex flex-wrap gap-2',
+    chip: 'rounded-full border px-2.5 py-1 text-xs transition-colors',
+    chipActive: 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] text-primary',
+    chipMuted: 'border-default bg-transparent text-secondary hover:text-primary',
     keyRow: 'flex items-center gap-2',
-    keyInput: 'flex-1 border bg-transparent p-2 text-sm font-mono focus:outline-none',
-    toggleBtn: 'text-xs text-muted hover:text-secondary',
-    input: 'w-full border bg-transparent p-2 text-sm font-mono focus:outline-none',
+    keyInput: 'flex-1 rounded-xl border border-default bg-black/10 p-2.5 text-sm font-mono text-primary focus:border-[color:var(--vermilion-line)] focus:outline-none',
+    toggleBtn: 'text-xs text-muted hover:text-primary',
+    input: 'w-full rounded-xl border border-default bg-black/10 p-2.5 text-sm font-mono text-primary focus:border-[color:var(--vermilion-line)] focus:outline-none',
     keyHelp: 'text-xs text-muted',
     tabsWrap: 'flex flex-wrap gap-1.5',
-    tabBase: 'border px-2.5 py-1 text-sm transition-colors',
-    tabActive: 'bg-transparent text-primary',
-    tabInactive: 'bg-transparent text-muted hover:text-secondary',
+    tabBase: 'rounded-full border px-2.5 py-1 text-sm transition-colors',
+    tabActive: 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] text-primary',
+    tabInactive: 'border-default bg-transparent text-muted hover:text-primary',
   },
   crystal: {
     fieldWrap: 'space-y-1.5',
     label: 'text-[11px] text-slate-400',
     select: 'w-full rounded border border-[#1b1e36] bg-[#080916] px-2.5 py-1.5 text-xs text-slate-200 focus:border-[#06b6d4] focus:outline-none',
+    hintCard: 'rounded border border-[#1b1e36] bg-[#080916] px-2.5 py-2 text-[11px] text-slate-300',
+    chipRow: 'flex flex-wrap gap-1.5',
+    chip: 'rounded border px-2 py-1 text-[11px] transition-colors',
+    chipActive: 'border-[#06b6d4]/40 bg-[#06b6d4]/15 text-[#67e8f9]',
+    chipMuted: 'border-[#1b1e36] bg-transparent text-slate-400 hover:text-slate-200',
     keyRow: 'flex items-center gap-2',
     keyInput: 'flex-1 rounded border border-[#1b1e36] bg-[#080916] px-2.5 py-1.5 font-mono text-xs text-slate-200 focus:border-[#06b6d4] focus:outline-none',
     toggleBtn: 'shrink-0 text-[11px] text-slate-500 hover:text-slate-300',
@@ -82,6 +97,8 @@ export default function ProviderCredentialsEditor({
   const t = THEME[variant];
   const datalistId = `${variant}-model-presets`;
   const keyLabel = apiKeyLabel ?? (requiresApiKey ? 'API Key' : 'API Key（可选）');
+  const currentModel = activeProfile.model.trim();
+  const providerSummary = `${activeProviderMeta.shortName || activeProviderMeta.name} / ${currentModel || '未选择模型'}`;
 
   return (
     <>
@@ -106,11 +123,19 @@ export default function ProviderCredentialsEditor({
             className={t.select}
           >
             {listProviderMetas().map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
+              <option key={p.id} value={p.id}>
+                {p.shortName || p.name}
+                {p.defaultModel ? ` · ${p.defaultModel}` : ''}
+              </option>
             ))}
           </select>
         </div>
       )}
+
+      <div className={t.fieldWrap}>
+        <label className={t.label}>当前模型</label>
+        <div className={t.hintCard}>{providerSummary}</div>
+      </div>
 
       {!requiresApiKey && ollamaSlot ? (
         ollamaSlot
@@ -135,19 +160,37 @@ export default function ProviderCredentialsEditor({
       )}
 
       <div className={t.fieldWrap}>
-        <label className={t.label}>Base URL</label>
+        <label className={t.label}>接口地址</label>
         <input
           type="text"
           value={activeProfile.baseUrl}
           onChange={(e) => updateActiveProviderProfile({ baseUrl: e.target.value })}
           onBlur={(e) => updateActiveProviderProfile({ baseUrl: e.target.value.trim() })}
-          placeholder="https://api.example.com/v1"
+          placeholder="https://api.example.com"
           className={t.input}
         />
       </div>
 
       <div className={t.fieldWrap}>
         <label className={t.label}>模型</label>
+        {activeProviderMeta.modelPresets.length > 0 && (
+          <div className={t.chipRow}>
+            {activeProviderMeta.modelPresets.map((preset) => {
+              const active = preset.value === currentModel;
+              return (
+                <button
+                  key={preset.value}
+                  type="button"
+                  onClick={() => updateActiveProviderProfile({ model: preset.value })}
+                  className={`${t.chip} ${active ? t.chipActive : t.chipMuted}`}
+                  title={preset.value}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
         <input
           list={datalistId}
           value={activeProfile.model}

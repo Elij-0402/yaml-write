@@ -9,6 +9,7 @@ import { StreamSseError, callStructured, ensureLlmConfigReady, streamSse } from 
 import { appendSnapshot, popSnapshot } from '../app/settingHistory';
 import { computeDiff, type DiffSegment } from '../app/diff';
 import { useAppStore } from '../app/store';
+import AppDialog from './AppDialog';
 
 interface RepairGap { beat: string; issue: string; patch: string; }
 
@@ -18,6 +19,7 @@ interface FusionRecipe {
   mode: 'self' | 'cross';
 }
 
+type WorkshopStep = 'material' | 'directions' | 'creator' | 'manuscript';
 type SceneResumeStatus = 'idle' | 'failed-resumable' | 'resuming' | 'done';
 
 const BLOCKS: { key: BlockKey; label: string }[] = [
@@ -44,6 +46,64 @@ interface PendingDiff { block: BlockKey; oldText: string; newText: string; why: 
 interface IntentState { instruction: string; brief: string; confirmation: string; }
 interface FragmentDraft { original: string; rewritten: string; }
 
+const WORKSHOP_STEPS: Array<{ id: WorkshopStep; label: string; kicker: string }> = [
+  { id: 'material', label: '配方设定', kicker: '选择骨架与题材' },
+  { id: 'directions', label: '方向筛选', kicker: '比较 3 条创作路线' },
+  { id: 'creator', label: '设定定稿', kicker: '确认世界观与人物关系' },
+  { id: 'manuscript', label: '开篇成稿', kicker: '流式生成并微调正文' },
+];
+
+function WorkshopProgress({
+  current,
+  nextLabel,
+}: {
+  current: WorkshopStep;
+  nextLabel: string;
+}) {
+  return (
+    <div className="mb-8 rounded-[24px] border border-default bg-[linear-gradient(180deg,rgba(26,21,18,0.9),rgba(16,13,11,0.9))] p-5 shadow-[0_18px_50px_rgba(0,0,0,0.18)]">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="eyebrow !mb-1">Creation Workflow · 创作后半程</div>
+          <p className="text-sm leading-6 text-secondary">这里承接前面已经完成的 DNA 结果，继续完成题材选择、设定定稿和开篇生成。每一步都会明确告诉你系统在做什么、你现在要做什么。</p>
+        </div>
+        <div className="rounded-full border border-default bg-black/10 px-3 py-1 text-[11px] text-secondary">
+          下一步 · <span className="text-primary">{nextLabel}</span>
+        </div>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {WORKSHOP_STEPS.map((step, idx) => {
+          const active = step.id === current;
+          const complete = WORKSHOP_STEPS.findIndex((item) => item.id === current) > idx;
+          return (
+            <div
+              key={step.id}
+              className={`min-w-[148px] rounded-2xl border px-3 py-3 text-left ${
+                active
+                  ? 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)]'
+                  : complete
+                  ? 'border-emerald-500/20 bg-emerald-500/[0.04]'
+                  : 'border-default bg-black/10'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-mono text-[10px] tracking-[0.18em] text-muted">0{idx + 1}</span>
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    active ? 'bg-[color:var(--vermilion)]' : complete ? 'bg-emerald-400' : 'bg-zinc-600'
+                  }`}
+                />
+              </div>
+              <div className="mt-2 text-sm text-primary">{step.label}</div>
+              <div className="mt-1 text-[11px] leading-5 text-secondary">{step.kicker}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function FusionWorkshop() {
   const { setSelectedNovelId, setWorkshopOpen, rateLimited, activeCreationId, setWorkshopBusy } = useAppStore((state) => ({
     setSelectedNovelId: state.setSelectedNovelId,
@@ -56,7 +116,7 @@ export default function FusionWorkshop() {
   const readyNovels = novels.filter((novel) => novel.analysisStatus === 'done' && novel.dnaCard);
   const firstIncompleteNovel = novels.find((novel) => novel.analysisStatus !== 'done' || !novel.dnaCard) || novels[0] || null;
 
-  const [step, setStep] = useState<'material' | 'directions' | 'creator' | 'manuscript'>('material');
+  const [step, setStep] = useState<WorkshopStep>('material');
   // selectedIds[0] = 骨架(引擎)，selectedIds[1] = 题材(皮)；皮可缺省（自我裂变，题材取口述）。
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [customPrompt, setCustomPrompt] = useState('');
@@ -91,16 +151,24 @@ export default function FusionWorkshop() {
   const [selectedFragment, setSelectedFragment] = useState<string>('');
   const [fragmentDraft, setFragmentDraft] = useState<FragmentDraft | null>(null);
   const [rewriting, setRewriting] = useState(false);
+  const [pendingDirectionChoice, setPendingDirectionChoice] = useState<FusionDirection | null>(null);
 
   const mountedRef = useRef(true);
   const streamAbortRef = useRef<AbortController | null>(null);
   const hydratedRef = useRef(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => () => {
-    mountedRef.current = false;
-    streamAbortRef.current?.abort();
-    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+  useEffect(() => {
+    // 必须在 effect 体内重置为 true：React 18 严格模式（App Router dev 默认开启）会
+    // setup→cleanup→setup 双调用，cleanup 先把 ref 置 false；若不在此处置回 true，
+    // 重挂后 ref 永远停在 false，导致下方所有异步结果被 `if (!mountedRef.current) return` 丢弃、
+    // colliding/tweaking 等忙碌标志永不复位（按钮卡在「生成中…」且无结果无报错）。
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      streamAbortRef.current?.abort();
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -204,6 +272,41 @@ export default function FusionWorkshop() {
 
   const engineNovel = readyNovels.find((n) => n.id === selectedIds[0]) || null;
   const skinNovel = readyNovels.find((n) => n.id === selectedIds[1]) || null;
+  const modelReady = ensureLlmConfigReady().ok;
+  const selectedDirectionReady = Boolean(directionTitle.trim());
+  const prose = sceneTexts[OPENING_SCENE_NUM] || '';
+  const resume = sceneResumeStatus[OPENING_SCENE_NUM];
+  const streaming = streamingScene === OPENING_SCENE_NUM;
+  const nextActionLabel =
+    step === 'material'
+      ? '确认骨架与题材，生成方向'
+      : step === 'directions'
+      ? '选择一条最像你的路线'
+      : step === 'creator'
+      ? pendingDiff
+        ? '先处理这次改动 diff'
+        : '确认设定并开始写开篇'
+      : streaming
+      ? '等待正文生成或随时停止'
+      : prose.trim()
+      ? '复制、导出或回到设定继续调整'
+      : '生成第一版开篇';
+  const backendStatus = colliding
+    ? '正在根据骨架与题材生成 3 条方向'
+    : repairing
+    ? '正在补齐换皮后的逻辑缺口'
+    : tweaking
+    ? `正在改写「${BLOCKS.find((b) => b.key === tweakTarget)?.label}」`
+    : enhancing
+    ? '正在理解你的修改意图'
+    : streaming
+    ? '正在流式生成开篇正文'
+    : rewriting
+    ? '正在改写你选中的片段'
+    : '当前没有后台任务';
+  const sourceSummary = engineNovel
+    ? `骨架《${engineNovel.name}》${skinNovel ? ` × 题材《${skinNovel.name}》` : ' × 口述题材'}`
+    : '先选择一本作品作为骨架';
 
   const pickEngine = (id: string) => setSelectedIds((prev) => (prev[1] && prev[1] !== id ? [id, prev[1]] : [id]));
   const pickSkin = (id: string) => setSelectedIds((prev) => {
@@ -263,8 +366,7 @@ export default function FusionWorkshop() {
     }
   };
 
-  const chooseDirection = async (direction: FusionDirection) => {
-    if (Object.keys(sceneTexts).length > 0 && !window.confirm('切换方向会清空当前开篇正文，确定切换？')) return;
+  const applyDirection = async (direction: FusionDirection) => {
     const baseBlocks = {
       worldviewBlock: direction.worldviewBlock,
       protagonistBlock: direction.protagonistBlock,
@@ -306,6 +408,14 @@ export default function FusionWorkshop() {
     } finally {
       if (mountedRef.current) setRepairing(false);
     }
+  };
+
+  const chooseDirection = async (direction: FusionDirection) => {
+    if (Object.keys(sceneTexts).length > 0) {
+      setPendingDirectionChoice(direction);
+      return;
+    }
+    await applyDirection(direction);
   };
 
   // ---- 创世台：手动直接编辑 ----
@@ -541,12 +651,15 @@ export default function FusionWorkshop() {
   // ============================ 渲染 ============================
   if (readyNovels.length < 1) {
     return (
-      <div className="atelier max-w-xl">
-        <div className="eyebrow">Workbench · 工作台</div>
-        <h2 className="atelier-h1">先让书<span className="it">就绪</span>。</h2>
-        <p className="lede">还没有 DNA 就绪的作品。导入一本 TXT，工坊会在后台自动提取它的创作 DNA，就绪后即可来这里换皮起书。</p>
+      <div className="atelier max-w-3xl">
+        <WorkshopProgress current="material" nextLabel="先完成至少一本作品的 DNA 提取" />
+        <div className="rounded-[28px] border border-default bg-[linear-gradient(180deg,rgba(26,21,18,0.92),rgba(16,13,11,0.96))] p-8">
+          <div className="eyebrow">工坊入口 · 启动条件</div>
+          <h2 className="atelier-h1">先让至少一本书<span className="it">准备好</span>。</h2>
+          <p className="lede !mb-0">这里吃的是已经提炼完成的 DNA。没有就绪作品时，我们不会把你扔进半残的创作页，而是明确把你送回上一段流程。</p>
+        </div>
         {firstIncompleteNovel && (
-          <button className="cta ghost" onClick={() => { setWorkshopOpen(false); setSelectedNovelId(firstIncompleteNovel.id); }}>
+          <button className="cta ghost mt-6" onClick={() => { setWorkshopOpen(false); setSelectedNovelId(firstIncompleteNovel.id); }}>
             ← 去看《{firstIncompleteNovel.name}》的提取进度
           </button>
         )}
@@ -562,9 +675,22 @@ export default function FusionWorkshop() {
     const skinDna = skinNovel && isFourLayerDnaCard(skinNovel.dnaCard) ? skinNovel.dnaCard : null;
     return (
       <div className="atelier">
-        <div className="eyebrow">Recipe · 配方台</div>
+        <WorkshopProgress current="material" nextLabel={nextActionLabel} />
+        <div className="mb-6 grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="rounded-[22px] border border-default bg-black/10 p-4">
+            <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>当前素材来源</div>
+            <div className="mt-2 text-sm text-primary">{sourceSummary}</div>
+            <p className="mt-1 text-xs leading-6 text-secondary">先决定哪本书提供叙事引擎，哪本书提供题材和表皮。后面所有方向、设定和正文都会围绕这组输入展开。</p>
+          </div>
+          <div className="rounded-[22px] border p-4" style={{ borderColor: modelReady ? 'rgba(16,185,129,.25)' : 'var(--vermilion-line)', background: modelReady ? 'rgba(16,185,129,.05)' : 'var(--vermilion-soft)' }}>
+            <div className="text-[11px] uppercase tracking-[0.24em]" style={{ fontFamily: 'var(--font-mono)', color: modelReady ? '#6ee7b7' : 'var(--vermilion)' }}>系统状态</div>
+            <div className="mt-2 text-sm" style={{ color: modelReady ? '#d1fae5' : 'var(--ink-text)' }}>{modelReady ? '模型已就绪，可直接生成方向。' : '模型还没配置，点击生成时会直接带你去设置。'}</div>
+            <p className="mt-1 text-xs leading-6 text-secondary">{backendStatus}</p>
+          </div>
+        </div>
+        <div className="eyebrow">创作配方 · 素材拼装</div>
         <h2 className="atelier-h1">谁当<span className="it">骨架</span>，谁换<span className="it">皮</span>?</h2>
-        <p className="lede">这是你唯一要拧的「旋钮」——没有滑块、没有参数。指认两本书的角色（或单本自我裂变），其余交给工坊。</p>
+        <p className="lede">这一步只需要决定两件事：哪本书提供结构骨架，哪本书提供题材与风格。没有复杂参数，其余交给系统完成。</p>
 
         <div className="recipe">
           <div className="slab engine">
@@ -601,7 +727,7 @@ export default function FusionWorkshop() {
               onChange={(e) => pickSkin(e.target.value)}
               disabled={!engineNovel}
             >
-              <option value="">（口述题材 · 自我裂变）</option>
+              <option value="">（不选题材书，直接口述新方向）</option>
               {readyNovels.filter((n) => n.id !== selectedIds[0]).map((n) => (
                 <option key={n.id} value={n.id}>{n.name}</option>
               ))}
@@ -612,7 +738,7 @@ export default function FusionWorkshop() {
                 <div className="layerline"><span className="k">文笔</span>{skinDna.proseStyle || '—'}</div>
               </>
             ) : (
-              <div className="layerline"><span className="k">自我裂变</span>无题材书——在下方「想往哪写」里口述你想要的新题材，工坊据此另起一炉。</div>
+              <div className="layerline"><span className="k">口述方向</span>如果不选题材书，就在下方直接说明你想写成什么题材，系统会基于这本书的骨架继续生成。</div>
             )}
           </div>
         </div>
@@ -621,7 +747,7 @@ export default function FusionWorkshop() {
           <input
             value={customPrompt}
             onChange={(e) => setCustomPrompt(e.target.value)}
-            placeholder={skinNovel ? '想往哪写?想避开什么套路?（可留空，留空=纯靠两本书的 DNA）' : '口述新题材 / 想往哪写（自我裂变必填一点方向）'}
+            placeholder={skinNovel ? '想往哪写？想避开什么套路？（可留空，留空时完全依赖两本书的 DNA）' : '描述你想要的新题材或方向（不选题材书时建议填写）'}
           />
           <span className="opt">{skinNovel ? '可选' : '建议填写'}</span>
         </div>
@@ -657,9 +783,20 @@ export default function FusionWorkshop() {
     const skinLabel = skinNovel?.name || '口述题材';
     return (
       <div className="atelier">
-        <div className="eyebrow">Directions · 三方向</div>
-        <h2 className="atelier-h1">三种<span className="it">嫁接</span>法。挑一个。</h2>
-        <p className="lede">同一套「{engName} 的引擎 × {skinLabel} 的皮」，三个不同的化学反应。这是你的第一个创作决定。</p>
+        <WorkshopProgress current="directions" nextLabel={nextActionLabel} />
+        <div className="mb-6 rounded-[22px] border border-default bg-black/10 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>方向上下文</div>
+              <div className="mt-2 text-sm text-primary">{engName} 的结构引擎 × {skinLabel} 的题材表皮</div>
+              <p className="mt-1 text-xs leading-6 text-secondary">这一步不是重新写 prompt，而是在同一组输入上挑选最合理的一条创作方向。你选中的那条会继续流入设定定稿与正文生成。</p>
+            </div>
+            <div className="rounded-full border border-default px-3 py-1 text-[11px] text-secondary">状态 · {backendStatus}</div>
+          </div>
+        </div>
+        <div className="eyebrow">创作方向 · 三案对比</div>
+        <h2 className="atelier-h1">三条可执行的<span className="it">创作方向</span>。挑一个。</h2>
+        <p className="lede">同一套「{engName} 的结构骨架 × {skinLabel} 的题材风格」，系统会给出三条不同的创作路线。你只需要挑出最像你要写的那一条。</p>
         <div className="dirs">
           {directions.map((dir, idx) => (
             <button key={idx} className="dir" onClick={() => void chooseDirection(dir)}>
@@ -697,9 +834,27 @@ export default function FusionWorkshop() {
 
     return (
       <div className="atelier">
-        <div className="eyebrow">Studio · 创世台 · 确认设定</div>
+        <WorkshopProgress current="creator" nextLabel={nextActionLabel} />
+        <div className="mb-6 grid gap-3 lg:grid-cols-3">
+          <div className="rounded-[22px] border border-default bg-black/10 p-4">
+            <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>当前方向</div>
+            <div className="mt-2 text-sm text-primary">{selectedDirectionReady ? directionTitle : '还未确认方向'}</div>
+            <p className="mt-1 text-xs leading-6 text-secondary">这里展示的是已经把骨架和题材嫁接后的新书地基，不是素材摘抄。</p>
+          </div>
+          <div className="rounded-[22px] border border-default bg-black/10 p-4">
+            <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>AI 状态</div>
+            <div className="mt-2 text-sm text-primary">{backendStatus}</div>
+            <p className="mt-1 text-xs leading-6 text-secondary">{pendingDiff ? '有一条 AI 建议正在等待你确认，未接受前不会静默覆盖。' : '所有 AI 修改都先经过 diff，再由你决定是否落盘。'} </p>
+          </div>
+          <div className="rounded-[22px] border border-default bg-black/10 p-4">
+            <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>下一决策</div>
+            <div className="mt-2 text-sm text-primary">{pendingDiff ? '接受或拒绝改动' : '确认设定并写开篇'}</div>
+            <p className="mt-1 text-xs leading-6 text-secondary">把世界观、人物关系和叙事语气捋顺后，就可以进入流式成稿，不需要再跳去别的页面找入口。</p>
+          </div>
+        </div>
+        <div className="eyebrow">设定定稿 · 创作中枢</div>
         <h2 className="atelier-h1">定<span className="it">地基</span>。想改就跟我说。</h2>
-        <p className="lede">换皮已自动完成并补好逻辑洞。这是你的第二个、也是最后一个创作决定——任何 AI 改动都先给你看 diff，你说了算。</p>
+        <p className="lede">系统已经把题材迁移和设定补全做完了。这里是你确认世界观、主角、对手和叙事语气的地方；任何 AI 改动都会先给你看 diff，再由你决定是否接受。</p>
 
         {repairing && (
           <div className="mb-4 flex items-center gap-2 rounded-[9px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--vermilion-line)', background: 'var(--vermilion-soft)', color: 'var(--vermilion)' }}>
@@ -709,7 +864,7 @@ export default function FusionWorkshop() {
         )}
         {!repairing && repairGaps.length > 0 && (
           <details className="mb-4 rounded-[9px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--add)', background: 'var(--add-soft)', color: '#a7d8b4' }}>
-            <summary className="cursor-pointer select-none">🩹 已自动补洞 {repairGaps.length} 处，使换皮设定逻辑自洽（点开查看）</summary>
+            <summary className="cursor-pointer select-none">🩹 已自动修补 {repairGaps.length} 处设定缺口，确保这条方向前后自洽（点开查看）</summary>
             <ul className="mt-2 space-y-1.5" style={{ color: 'var(--ink-dim)' }}>
               {repairGaps.map((g, i) => (<li key={i}><b style={{ color: '#a7d8b4' }}>{g.beat}</b>：{g.issue} → {g.patch}</li>))}
             </ul>
@@ -814,14 +969,29 @@ export default function FusionWorkshop() {
   }
 
   // ===== 成稿 =====
-  const prose = sceneTexts[OPENING_SCENE_NUM] || '';
-  const resume = sceneResumeStatus[OPENING_SCENE_NUM];
-  const streaming = streamingScene === OPENING_SCENE_NUM;
   return (
     <div className="atelier">
-      <div className="eyebrow">Manuscript · 成稿</div>
+      <WorkshopProgress current="manuscript" nextLabel={nextActionLabel} />
+      <div className="mb-6 grid gap-3 lg:grid-cols-3">
+        <div className="rounded-[22px] border border-default bg-black/10 p-4">
+          <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>Generation State</div>
+          <div className="mt-2 text-sm text-primary">{backendStatus}</div>
+          <p className="mt-1 text-xs leading-6 text-secondary">{streaming ? '正文正在一段一段落下，你可以随时停止，不会丢失当前已生成内容。' : '当前正文已保存在本地创作会话里，可以继续写、复制或导出。'} </p>
+        </div>
+        <div className="rounded-[22px] border border-default bg-black/10 p-4">
+          <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>Source Recipe</div>
+          <div className="mt-2 text-sm text-primary">骨架《{engSrc}》 × 题材《{skinSrc}》</div>
+          <p className="mt-1 text-xs leading-6 text-secondary">这让正文来源可追溯，也让用户知道现在看到的文稿为什么会呈现这种结构与气质。</p>
+        </div>
+        <div className="rounded-[22px] border border-default bg-black/10 p-4">
+          <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>Editing Contract</div>
+          <div className="mt-2 text-sm text-primary">{fragmentDraft ? '正在预览片段改写' : '可选句微调，先预览再替换'}</div>
+          <p className="mt-1 text-xs leading-6 text-secondary">不论是整篇重写还是片段改写，都遵守“先看结果，再决定落不落”的规则，减少失控感。</p>
+        </div>
+      </div>
+      <div className="eyebrow">Manuscript · 开篇正文</div>
       <h2 className="atelier-h1">墨，正落在<span className="it">纸</span>上。</h2>
-      <p className="lede">开篇正文流式生成中。选中任意一句，就能让 AI 就地改写——改动同样先给你看、你接受才算数。</p>
+      <p className="lede">这里会流式生成这部作品的开篇正文。选中任意一句，都可以让 AI 就地改写；改动同样先预览、再决定是否替换。</p>
 
       <div className="manuscript">
         <div className="sheet">
@@ -874,6 +1044,19 @@ export default function FusionWorkshop() {
 
       {error && <p className="mt-4 text-sm" style={{ color: 'var(--del)' }}>{error}</p>}
       {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--vermilion)' }}>云端有些拥挤，已自动退避重试，请稍候…</p>}
+
+      <AppDialog
+        open={Boolean(pendingDirectionChoice)}
+        title="切换这条创作方向？"
+        description="当前开篇正文会被清空，因为它和现有方向绑定。确认后，系统会把你带到新的设定定稿流程。"
+        confirmLabel="确认切换"
+        onClose={() => setPendingDirectionChoice(null)}
+        onConfirm={() => {
+          const direction = pendingDirectionChoice;
+          setPendingDirectionChoice(null);
+          if (direction) void applyDirection(direction);
+        }}
+      />
     </div>
   );
 }

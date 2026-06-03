@@ -67,7 +67,7 @@ export function getNovelWorkflowSummary(
           status: readyNovelCount >= 1 ? 'ready' : 'blocked',
           hint:
             readyNovelCount >= 1
-              ? '已有 DNA 就绪作品，可进入引力室碰撞出原创变体（单本=自我裂变，多本=交叉融合）。'
+              ? '已有 DNA 就绪作品，可以进入创作工坊继续生成新作品。'
               : '先完成任意一部作品的 DNA 提取，变体阶段即点亮。',
         },
       ],
@@ -147,7 +147,7 @@ export function getNovelWorkflowSummary(
           status: readyNovelCount >= 1 ? 'ready' : 'blocked',
           hint:
             readyNovelCount >= 1
-              ? 'DNA 已就绪，可进入引力室碰撞出原创变体（多本作品可交叉融合）。'
+              ? 'DNA 已就绪，可以进入创作工坊生成新的开篇与设定。'
               : '再完成一部作品的 DNA，变体阶段才会真正成立。',
         }
       : {

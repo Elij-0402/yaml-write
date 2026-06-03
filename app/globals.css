@@ -13,10 +13,10 @@
     --paper-text:#1c1714; --paper-dim:#6b5d4d;
     --blueprint:#8993a1; --blueprint-soft:rgba(137,147,161,.12);
     --add:#5b9c6b; --add-soft:rgba(91,156,107,.16); --del:#c0524a; --del-soft:rgba(192,82,74,.14);
-    --font-display:'Fraunces','Noto Serif SC',serif;
-    --font-serif:'Noto Serif SC','Fraunces',serif;
-    --font-sans:'Noto Sans SC',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
-    --font-mono:'JetBrains Mono','Noto Sans SC',monospace;
+    --font-display:'Iowan Old Style','Palatino Linotype','Book Antiqua','Noto Serif SC',serif;
+    --font-serif:'Noto Serif SC','Source Han Serif SC','Songti SC','STSong',serif;
+    --font-sans:'Segoe UI','PingFang SC','Microsoft YaHei','Noto Sans SC',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','SFMono-Regular','Cascadia Code','Consolas','Noto Sans SC',monospace;
 
     /* 语义别名：既有组件用 text-primary/secondary/muted、bg-secondary、border-default —— 一并改墨皮 */
     --bg: var(--ink);

@@ -11,6 +11,7 @@ import NovelDetail from '../components/NovelDetail';
 import FusionWorkshop from '../components/FusionWorkshop';
 import SettingsPanel from '../components/SettingsPanel';
 import WorkflowStepper from '../components/WorkflowStepper';
+import AppDialog from '../components/AppDialog';
 import { getLlmReadinessSummary, getNovelWorkflowSummary, type WorkflowStage } from './workflow';
 
 function getStatus(novel: Novel): string {
@@ -18,6 +19,13 @@ function getStatus(novel: Novel): string {
   if (novel.analysisStatus === 'mapping' || novel.analysisStatus === 'reducing') return 'extracting';
   if (novel.splitStatus === 'needs_review') return 'review';
   return 'pending';
+}
+
+function getStatusLabel(status: string): string {
+  if (status === 'ready') return 'DNA 就绪';
+  if (status === 'extracting') return '提取中';
+  if (status === 'review') return '待校验';
+  return '待处理';
 }
 
 // 后台自适应提取（NFR1）：导入/选中一部 idle 且无 DNA 的作品时，自动在后台起提取——
@@ -95,6 +103,12 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsIntent, setSettingsIntent] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [dialogState, setDialogState] = useState<
+    | { kind: 'deleteNovel'; novel: Novel }
+    | { kind: 'deleteCreation'; creation: FusionSession }
+    | { kind: 'renameCreation'; creation: FusionSession }
+    | null
+  >(null);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -192,7 +206,6 @@ export default function Home() {
   };
 
   const deleteNovel = async (id: string) => {
-    if (!window.confirm('删除此作品？')) return;
     await db.transaction('rw', db.novels, db.chapters, async () => {
       await db.chapters.where('novelId').equals(id).delete();
       await db.novels.delete(id);
@@ -203,7 +216,6 @@ export default function Home() {
   };
 
   const deleteCreation = async (id: string) => {
-    if (!window.confirm('删除此创作？')) return;
     await db.fusionSessions.delete(id);
     if (activeCreationId === id) {
       setWorkshopOpen(false);
@@ -211,15 +223,14 @@ export default function Home() {
     }
   };
 
-  const renameCreation = (creation: FusionSession) => {
-    const next = window.prompt('重命名创作', creation.name || creation.directionTitle || '');
-    if (next && next.trim()) {
-      void db.fusionSessions.update(creation.id, { name: next.trim(), updatedAt: Date.now() });
+  const renameCreation = (creation: FusionSession, nextName?: string) => {
+    if (nextName && nextName.trim()) {
+      void db.fusionSessions.update(creation.id, { name: nextName.trim(), updatedAt: Date.now() });
     }
   };
 
   return (
-    <main className="flex min-h-screen">
+    <main className="flex min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(207,74,46,0.08),transparent_28%),radial-gradient(circle_at_top_right,rgba(137,147,161,0.08),transparent_22%)]">
       {/* Mobile nav scrim */}
       {mobileNavOpen && (
         <button
@@ -243,7 +254,7 @@ export default function Home() {
           >墨</span>
           <div className="leading-tight">
             <div className="text-[14px] text-primary" style={{ fontFamily: 'var(--font-display)', fontWeight: 600 }}>创作DNA工坊</div>
-            <div className="text-[9px] tracking-[1.5px] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>VARIATION ATELIER</div>
+            <div className="text-[9px] tracking-[1.5px] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>叙事变体工坊</div>
           </div>
         </div>
 
@@ -261,7 +272,7 @@ export default function Home() {
                 return (
                   <div
                     key={novel.id}
-                    className={`group relative cursor-pointer px-4 py-2 ${active ? 'bg-secondary' : 'hover:bg-secondary/50'}`}
+                    className={`group relative cursor-pointer px-4 py-2 ${active ? 'bg-secondary' : 'hover:bg-[rgba(26,21,18,0.72)]'}`}
                   >
                     <div
                       onClick={() => {
@@ -271,9 +282,12 @@ export default function Home() {
                       }}
                       className="flex items-center justify-between"
                     >
-                      <span className={`truncate text-sm ${active ? 'text-primary' : 'text-secondary'}`}>
-                        {novel.name}
-                      </span>
+                      <div className="min-w-0">
+                        <span className={`block truncate text-sm ${active ? 'text-primary' : 'text-secondary'}`}>
+                          {novel.name}
+                        </span>
+                        <span className="text-[10px] text-muted">{getStatusLabel(status)}</span>
+                      </div>
                       <span className="ml-2 text-xs text-muted">
                         {status === 'ready' ? '●' : status === 'extracting' ? '◐' : status === 'review' ? '○' : '·'}
                       </span>
@@ -281,7 +295,7 @@ export default function Home() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        void deleteNovel(novel.id);
+                        setDialogState({ kind: 'deleteNovel', novel });
                       }}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-red-400 group-hover:opacity-100"
                     >
@@ -307,7 +321,7 @@ export default function Home() {
                         ? 'bg-secondary'
                         : workshopBusy
                         ? 'cursor-not-allowed opacity-50'
-                        : 'cursor-pointer hover:bg-secondary/50'
+                        : 'cursor-pointer hover:bg-[rgba(26,21,18,0.72)]'
                     }`}
                   >
                     <div
@@ -325,7 +339,7 @@ export default function Home() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        renameCreation(creation);
+                        setDialogState({ kind: 'renameCreation', creation });
                       }}
                       className="absolute right-7 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-primary group-hover:opacity-100"
                     >
@@ -334,7 +348,7 @@ export default function Home() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        void deleteCreation(creation.id);
+                        setDialogState({ kind: 'deleteCreation', creation });
                       }}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-red-400 group-hover:opacity-100"
                     >
@@ -381,8 +395,9 @@ export default function Home() {
 
       {/* Main */}
       <section className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 items-center justify-between gap-3 border-b px-4 sm:px-6">
-          <div className="flex min-w-0 items-center gap-2 text-sm">
+        <header className="flex min-h-12 flex-wrap items-center justify-between gap-3 border-b px-4 py-3 sm:px-6">
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2 text-sm">
             <button
               onClick={() => setMobileNavOpen(true)}
               className="text-secondary hover:text-primary lg:hidden"
@@ -394,23 +409,25 @@ export default function Home() {
             <span className="text-muted">/</span>
             <span className="truncate">{currentPath}</span>
           </div>
+            <p className="mt-1 text-xs text-secondary">当前建议 · {workflowSummary.recommendedNextStep}</p>
+          </div>
           <div className="flex shrink-0 items-center gap-3">
             {persistError && (
               <span
-                className="text-xs text-amber-500"
+                className="rounded-full border border-amber-500/20 bg-amber-500/[0.06] px-2.5 py-1 text-xs text-amber-500"
                 title="浏览器本地存储不可用（隐私模式或空间不足），设置与密钥可能无法保存。"
               >
                 ⚠ 存储不可用
               </span>
             )}
-            <span className={`text-xs ${llmReadiness.ok ? 'text-secondary' : 'text-amber-500'}`}>
-              {llmReadiness.ok ? 'LLM Ready' : 'LLM Offline'}
+            <span className={`rounded-full border px-2.5 py-1 text-xs ${llmReadiness.ok ? 'border-emerald-500/20 bg-emerald-500/[0.06] text-emerald-400' : 'border-amber-500/20 bg-amber-500/[0.06] text-amber-500'}`}>
+              {llmReadiness.ok ? '模型已连接' : '模型待配置'}
             </span>
           </div>
         </header>
 
         {/* 主线进度 Stepper */}
-        <div className="border-b px-4 py-2 sm:px-6">
+        <div className="border-b px-4 py-4 sm:px-6">
           <WorkflowStepper summary={workflowSummary} currentStageId={currentStageId} onStageClick={handleStageClick} />
         </div>
 
@@ -431,6 +448,47 @@ export default function Home() {
         onClose={() => {
           setSettingsOpen(false);
           setSettingsIntent(null);
+        }}
+      />
+
+      <AppDialog
+        open={dialogState?.kind === 'deleteNovel'}
+        title="删除这本作品？"
+        description={dialogState?.kind === 'deleteNovel' ? `《${dialogState.novel.name}》的章节、DNA 进度和相关上下文都会被移除。` : ''}
+        confirmLabel="确认删除"
+        confirmTone="danger"
+        onClose={() => setDialogState(null)}
+        onConfirm={() => {
+          if (dialogState?.kind === 'deleteNovel') void deleteNovel(dialogState.novel.id);
+          setDialogState(null);
+        }}
+      />
+
+      <AppDialog
+        open={dialogState?.kind === 'deleteCreation'}
+        title="删除这条创作记录？"
+        description={dialogState?.kind === 'deleteCreation' ? `《${dialogState.creation.name || dialogState.creation.directionTitle || '未命名创作'}》的设定、正文和历史会话都会被移除。` : ''}
+        confirmLabel="确认删除"
+        confirmTone="danger"
+        onClose={() => setDialogState(null)}
+        onConfirm={() => {
+          if (dialogState?.kind === 'deleteCreation') void deleteCreation(dialogState.creation.id);
+          setDialogState(null);
+        }}
+      />
+
+      <AppDialog
+        open={dialogState?.kind === 'renameCreation'}
+        title="重命名创作"
+        description="给这条创作记录一个更容易识别的名字，方便你在创作库里继续接着写。"
+        confirmLabel="保存名称"
+        inputLabel="创作名称"
+        initialValue={dialogState?.kind === 'renameCreation' ? dialogState.creation.name || dialogState.creation.directionTitle || '' : ''}
+        placeholder="例如：废土婚约开篇"
+        onClose={() => setDialogState(null)}
+        onConfirm={(value) => {
+          if (dialogState?.kind === 'renameCreation') renameCreation(dialogState.creation, value);
+          setDialogState(null);
         }}
       />
 

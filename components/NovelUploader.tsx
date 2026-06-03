@@ -9,6 +9,8 @@ import { parseNovelFile, resplit } from '../app/novelParser';
 import { planStitch, planBulkStitch, planSplit, buildStitchBackup } from '../app/chapterOps';
 import { DEFAULT_CUSTOM_REGEX, validateLineRegex } from '../app/splitRegex';
 import ProviderCredentialsEditor from './ProviderCredentialsEditor';
+import AppDialog from './AppDialog';
+import AppNotice from './AppNotice';
 
 const MAX_UPLOAD_SIZE_MB = 50;
 const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
@@ -18,9 +20,9 @@ const SMART_SPLIT_MIN_WORDS = 8000; // 分章置信度极低判定：分章数 <
 const SMART_SPLIT_MAX_CHARS = 20000; // 发往后端的正文上限（前两万字）
 const COMPATIBLE_MODEL_REGEX = /llama3|qwen2\.5|qwen2/i; // Ollama 兼容模型静默审计
 const OLLAMA_OFFLINE_HINT =
-  '检测到本地 AI 处于星体静思中，请确保您的 Ollama 已经开启，或者可在上方粘贴您的云端水晶 Key 🔑';
+  '未检测到可用的本地模型服务。请先启动 Ollama，或改用上方的云端模型配置。';
 const OLLAMA_MODEL_MISSING_HINT =
-  'Ollama 已在线，但未检测到兼容的 llama3 或 qwen2.5 模型。建议在控制台运行 `ollama run qwen2.5` 一键拉取，或可在上方使用云端大模型。';
+  'Ollama 已连接，但未检测到兼容的 llama3 或 qwen2.5 模型。建议先在控制台运行 `ollama run qwen2.5` 拉取模型，或改用上方云端模型。';
 
 type OllamaStatus = 'unknown' | 'checking' | 'online' | 'offline' | 'model_missing';
 
@@ -75,6 +77,7 @@ export default function NovelUploader() {
   } | null>(null);
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
+  const [pendingResplitStrategy, setPendingResplitStrategy] = useState<SplitStrategyId | null>(null);
 
   // Story 1.5 State
   const [isSplitMode, setIsSplitMode] = useState(false);
@@ -446,11 +449,11 @@ export default function NovelUploader() {
 
   const stageLabelMap: Record<UploadStage, string> = {
     idle: '',
-    detecting: '自适应编码识别中...',
-    reading: '流式数据分块清洗中...',
-    splitting: '4轨正则判定与分章中...',
-    hashing: '异步计算安全基因 SHA256 哈希中...',
-    saving: '本地存储持久化事务处理中...',
+    detecting: '识别文本编码与文件结构...',
+    reading: '清洗文本并提取正文...',
+    splitting: '按章节规则切分内容...',
+    hashing: '计算内容指纹与一致性校验...',
+    saving: '写入本地项目与章节索引...',
   };
 
   const handleDrag = (e: React.DragEvent) => {
@@ -664,8 +667,7 @@ export default function NovelUploader() {
       setErrorMsg('正在提取 DNA，重新切分会删除正在写入的章节。请先到「DNA 提取」页暂停后再重切。');
       return;
     }
-    if (!window.confirm('将覆盖所有章节数据并清空 DNA 进度')) return;
-    await doResplit(strategy);
+    setPendingResplitStrategy(strategy);
   };
 
   const filteredChapters = chapters.filter((chapter) => chapter.name.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -845,7 +847,7 @@ export default function NovelUploader() {
   if (!selectedNovelId) {
     return (
       <div
-        className="mx-auto max-w-xl w-full p-8 rounded-2xl bg-[#0c0e20] border border-[#1b1e36] shadow-[0_12px_40px_rgba(0,0,0,0.6)]"
+        className="atelier mx-auto w-full max-w-5xl rounded-[28px] border border-default bg-[linear-gradient(180deg,rgba(26,21,18,0.96),rgba(16,13,11,0.98))] p-8 shadow-[0_30px_80px_rgba(0,0,0,0.32)]"
         onDragEnter={handleDrag}
         onDragOver={handleDrag}
         onDragLeave={handleDrag}
@@ -853,69 +855,95 @@ export default function NovelUploader() {
       >
         <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".txt" className="hidden" />
 
-        <div className="py-2">
-          <div className="eyebrow">Workbench · 工作台</div>
-          <h1 className="atelier-h1" style={{ fontSize: 28 }}>把读过的书，<span className="it">炼成</span>新书。</h1>
-          <p className="lede">拖入一本 TXT —— 工坊在后台自动切分、提取创作 DNA；就绪后去配方台指认骨架 / 题材，一键起一本形似神不似的新书。</p>
-        </div>
+        <div className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="py-2">
+            <div className="eyebrow">导入起点 · 工作流开场</div>
+            <h1 className="atelier-h1" style={{ fontSize: 30 }}>把读过的书，整理成一条可继续创作的工作流。</h1>
+            <p className="lede">导入 TXT 之后，系统会先做清洗与切分，再把可用章节送进 DNA 提取。整个过程都围绕同一条主线，不会让你在页面之间重新理解一遍产品。</p>
 
-        <div
-          onClick={() => fileInputRef.current?.click()}
-          className={`relative group cursor-pointer overflow-hidden rounded-xl border border-dashed py-14 px-8 text-center transition-all duration-[150ms] ${
-            dragActive
-              ? 'border-[color:var(--vermilion)] bg-[color:var(--vermilion-soft)]'
-              : 'border-default bg-secondary hover:border-[color:var(--vermilion-line)]'
-          }`}
-        >
-          {/* Subtle hover wash */}
-          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" style={{ background: 'linear-gradient(to bottom, transparent, var(--vermilion-soft), transparent)' }} />
-
-          <div className="space-y-4">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-default bg-secondary text-2xl transition-transform duration-300 group-hover:scale-110">
-              📥
+            <div className="mt-8 grid gap-3 sm:grid-cols-3">
+              {[
+                ['01', '导入文本', '识别编码、净化噪音，把原稿变成可处理的项目。'],
+                ['02', '校验切分', '把异常章节和风险位置提前暴露，避免错误一路带到后面。'],
+                ['03', '生成 DNA', '当结构可靠后，再交给模型提取骨架、题材与风格。'],
+              ].map(([idx, title, desc]) => (
+                <div key={idx} className="rounded-2xl border border-default bg-[rgba(26,21,18,0.72)] p-4">
+                  <div className="font-mono text-[10px] tracking-[0.24em] text-muted">{idx}</div>
+                  <div className="mt-2 text-sm text-primary">{title}</div>
+                  <p className="mt-1 text-xs leading-6 text-secondary">{desc}</p>
+                </div>
+              ))}
             </div>
-            <div>
-              <p className="text-sm font-medium text-secondary transition-colors duration-150" style={{ color: dragActive ? 'var(--vermilion)' : undefined }}>
-                {dragActive ? '释放以启动导入' : '点击选择或拖拽文件到这里'}
-              </p>
-              <p className="mt-1.5 text-xs text-muted">
-                支持 UTF-8 / GB18030 / BIG5 自适应检测，文件限制在 50MB 以内
-              </p>
+          </div>
+
+          <div className="rounded-[24px] border border-[color:var(--vermilion-line)] bg-[linear-gradient(180deg,rgba(207,74,46,0.08),rgba(207,74,46,0.02))] p-5">
+            <div className="text-[11px] uppercase tracking-[0.28em] text-vermilion" style={{ fontFamily: 'var(--font-mono)' }}>文件投入口</div>
+            <p className="mt-2 text-sm leading-6 text-secondary">支持拖拽导入，也可以点按选择文件。导入完成后会直接进入切分校验台，不需要你再猜下一步该去哪。</p>
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              className={`relative mt-5 cursor-pointer overflow-hidden rounded-[22px] border border-dashed px-8 py-14 text-center transition-all duration-150 ${
+                dragActive
+                  ? 'border-[color:var(--vermilion)] bg-[color:var(--vermilion-soft)]'
+                  : 'border-[color:var(--vermilion-line)] bg-black/10 hover:border-[color:var(--vermilion)]'
+              }`}
+            >
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(207,74,46,0.14),transparent_55%)] opacity-80" />
+              <div className="relative space-y-4">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-[color:var(--vermilion-line)] bg-black/20 text-2xl text-primary">
+                  文
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-primary" style={{ color: dragActive ? 'var(--vermilion)' : undefined }}>
+                    {dragActive ? '松开鼠标，开始导入这本书' : '点击选择或拖拽 TXT 到这里'}
+                  </p>
+                  <p className="mt-2 text-xs leading-6 text-secondary">
+                    支持 UTF-8 / GB18030 / BIG5 自适应识别，单文件 50MB 以内
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2 text-[11px] text-secondary">
+              <span className="rounded-full border border-default px-2.5 py-1">本地处理</span>
+              <span className="rounded-full border border-default px-2.5 py-1">自动进入切分校验</span>
+              <span className="rounded-full border border-default px-2.5 py-1">DNA 状态持续可见</span>
             </div>
           </div>
         </div>
 
         {uploading && (
-          <div className="mt-6 flex flex-col items-center justify-center p-8 space-y-5 rounded-xl border border-[#1b1e36] bg-[#080916]/90 backdrop-blur-sm shadow-inner">
-            {/* AC3: DNA dual-helix hardware GPU will-change animation ring */}
-            <div className="relative w-16 h-16 will-change-transform">
-              <svg className="w-full h-full animate-[spin_3s_linear_infinite]" viewBox="0 0 100 100">
-                <circle cx="50" cy="50" r="40" stroke="url(#cyan-grad)" strokeWidth="3" strokeDasharray="180 60" fill="none" className="opacity-90" />
-                <circle cx="50" cy="50" r="30" stroke="url(#purple-grad)" strokeWidth="2.5" strokeDasharray="120 40" fill="none" className="opacity-80 origin-center animate-[spin_2s_linear_infinite_reverse]" />
-                <circle cx="50" cy="50" r="6" fill="#06b6d4" className="animate-pulse" />
-                <defs>
-                  <linearGradient id="cyan-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#06b6d4" />
-                    <stop offset="100%" stopColor="#5e6ad2" />
-                  </linearGradient>
-                  <linearGradient id="purple-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#5e6ad2" />
-                    <stop offset="100%" stopColor="#ec4899" />
-                  </linearGradient>
-                </defs>
-              </svg>
-            </div>
-            <div className="text-center space-y-1">
-              <p className="text-sm font-medium text-slate-300">{stageLabelMap[uploadStage]}</p>
-              {uploadStageText && <p className="text-xs text-[#06b6d4] font-mono tracking-wider">{uploadStageText}</p>}
+          <div className="mt-6 rounded-[24px] border border-default bg-black/15 p-6">
+            <div className="flex items-center gap-5">
+              <div className="relative h-16 w-16 will-change-transform">
+                <svg className="h-full w-full animate-[spin_6s_linear_infinite]" viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="40" stroke="url(#vermilion-grad)" strokeWidth="3" strokeDasharray="180 60" fill="none" className="opacity-90" />
+                  <circle cx="50" cy="50" r="29" stroke="url(#ink-grad)" strokeWidth="2.5" strokeDasharray="120 42" fill="none" className="opacity-80 origin-center animate-[spin_4s_linear_infinite_reverse]" />
+                  <circle cx="50" cy="50" r="6" fill="#cf4a2e" className="animate-pulse motion-reduce:animate-none" />
+                  <defs>
+                    <linearGradient id="vermilion-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#cf4a2e" />
+                      <stop offset="100%" stopColor="#f2c078" />
+                    </linearGradient>
+                    <linearGradient id="ink-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#8993a1" />
+                      <stop offset="100%" stopColor="#efe6d6" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-primary">{stageLabelMap[uploadStage]}</p>
+                <p className="text-xs leading-6 text-secondary">导入完成后会自动带你进入切分校验台，避免“已经进来了但不知道接下来去哪”的断层感。</p>
+                {uploadStageText && <p className="text-xs font-mono tracking-wider text-vermilion">{uploadStageText}</p>}
+              </div>
             </div>
           </div>
         )}
 
         {errorMsg && (
-          <div className="mt-6 p-4 rounded-lg bg-red-950/20 border border-red-500/20 text-center">
-            <p className="text-xs text-red-400 font-medium leading-relaxed">⚠️ {errorMsg}</p>
-          </div>
+          <AppNotice tone="error" title="导入失败" className="mt-6 text-center">
+            {errorMsg}
+          </AppNotice>
         )}
       </div>
     );
@@ -923,32 +951,35 @@ export default function NovelUploader() {
 
   // Chapter Review View
   return (
-    <div className="flex h-[calc(100vh-8rem)] w-full overflow-hidden bg-[#0c0e20] border border-[#1b1e36] rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.6)]">
+    <div className="flex h-[calc(100vh-8rem)] w-full overflow-hidden rounded-[28px] border border-default bg-[linear-gradient(180deg,rgba(26,21,18,0.97),rgba(16,13,11,0.99))] shadow-[0_30px_80px_rgba(0,0,0,0.32)]">
       {/* Left panel: outline tree */}
-      <div className="w-[350px] shrink-0 border-r border-[#1b1e36] flex flex-col h-full bg-[#080916]">
+      <div className="flex h-full w-[360px] shrink-0 flex-col border-r border-default bg-[rgba(11,9,8,0.42)]">
         {/* Left header: info and settings */}
-        <div className="p-4 border-b border-[#1b1e36] space-y-3 shrink-0">
+        <div className="shrink-0 space-y-4 border-b border-default p-5">
           <div className="flex items-start justify-between gap-2">
-            <h2 className="text-sm font-semibold text-slate-100 truncate flex-1" title={activeNovel?.name || ''}>
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] uppercase tracking-[0.22em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>切分校验 · 章节工作台</div>
+              <h2 className="truncate text-sm font-semibold text-primary" title={activeNovel?.name || ''}>
               {activeNovel?.name}
-            </h2>
+              </h2>
+            </div>
             <button
               onClick={() => setSelectedNovelId(null)}
-              className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-300 font-mono transition-colors border border-[#1b1e36] px-1.5 py-0.5 rounded"
+              className="rounded-full border border-default px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted transition-colors hover:text-primary"
             >
               关闭
             </button>
           </div>
-          <div className="text-[11px] text-[#8a8f98] font-mono leading-relaxed">
+          <div className="rounded-2xl border border-default bg-black/10 p-3 text-[11px] font-mono leading-relaxed text-secondary">
             <div>{formatWordCount(activeNovel?.wordCount || 0)}字 · {chapters.length}章</div>
             <div>均字：{Math.round(derivedStats?.avgChapterChars ?? 0)}字/章</div>
             {!!activeNovel?.purifiedCount && activeNovel.purifiedCount > 0 && (
-              <div className="text-[#10b981]/80">已净化 {activeNovel.purifiedCount.toLocaleString()} 字噪点</div>
+              <div className="text-emerald-400">已净化 {activeNovel.purifiedCount.toLocaleString()} 字噪点</div>
             )}
             {splitMeta && (
               <div className="mt-1.5">
                 <span
-                  className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                  className={`inline-block rounded-full px-2 py-1 text-[10px] font-medium ${
                     splitMeta.confidenceLevel === 'high'
                       ? 'bg-emerald-500/10 text-emerald-400'
                       : splitMeta.confidenceLevel === 'medium'
@@ -967,46 +998,37 @@ export default function NovelUploader() {
             <button
               onClick={handleSmartSplitClick}
               disabled={smartSplitLoading || processing}
-              className="w-full text-center py-2 px-2 rounded-lg text-xs font-semibold bg-gradient-to-r from-[#06b6d4]/15 to-[#5e6ad2]/15 hover:from-[#06b6d4]/25 hover:to-[#5e6ad2]/25 text-[#67e8f9] border border-[#06b6d4]/30 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5 animate-[fadeIn_200ms_ease-out] shadow-[0_0_15px_rgba(6,182,212,0.08)]"
-              title="分章置信度极低，借助大模型智能推荐切开点"
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] px-2 py-2.5 text-xs font-semibold text-vermilion transition-all disabled:opacity-50"
+              title="当切分质量过低时，借助模型推荐更合理的切开点"
             >
-              {smartSplitLoading ? '✨ 正在智能分析…' : '✨ 智能语义拆分'}
+              {smartSplitLoading ? '✨ 正在智能分析…' : '✨ AI 辅助拆分'}
             </button>
           )}
 
           {/* Actions */}
           <div className="flex gap-2">
             {needsSmartRepair ? (
-              <>
-                <button
-                  onClick={() => void runResplit('auto_v2')}
-                  disabled={repairing}
-                  className="flex-1 text-center py-1.5 px-2 rounded text-xs font-medium bg-[#06b6d4]/10 hover:bg-[#06b6d4]/20 text-[#06b6d4] border border-[#06b6d4]/20 transition-all disabled:opacity-50"
-                >
-                  {repairing ? '修复中...' : '⚠️ 智能修复'}
-                </button>
-                <button
-                  onClick={() => setManageMode(false)}
-                  className="shrink-0 px-2 py-1.5 rounded text-xs font-medium text-slate-400 hover:text-slate-200 border border-[#1b1e36] hover:border-[#34343a] transition-all"
-                  title="切分质量偏低，但仍直接进入 DNA 提取"
-                >
-                  仍要继续 →
-                </button>
-              </>
+              <button
+                onClick={() => void runResplit('auto_v2')}
+                disabled={repairing}
+                className="flex-1 rounded-xl border border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] px-2 py-2 text-xs font-medium text-vermilion transition-all disabled:opacity-50"
+              >
+                {repairing ? '修复中...' : '先修风险章节'}
+              </button>
             ) : (
               <button
                 onClick={() => setManageMode(false)}
-                className="flex-1 text-center py-1.5 px-2 rounded text-xs font-medium bg-[#5e6ad2]/10 hover:bg-[#5e6ad2]/20 text-[#828fff] border border-[#5e6ad2]/20 transition-all"
+                className="flex-1 rounded-xl border border-default bg-secondary px-2 py-2 text-xs font-medium text-primary transition-all hover:border-[color:var(--vermilion-line)]"
               >
-                前往 DNA 提炼 →
+                返回 DNA 页面 →
               </button>
             )}
             <button
               onClick={() => setShowAdvanced(!showAdvanced)}
               className={`px-2 py-1.5 rounded text-xs font-medium border transition-all ${
                 showAdvanced
-                  ? 'bg-[#1b1e36] border-[#34343a] text-slate-200'
-                  : 'bg-transparent border-[#1b1e36] text-slate-400 hover:text-slate-200'
+                  ? 'bg-secondary border-default text-primary'
+                  : 'bg-transparent border-default text-secondary hover:text-primary'
               }`}
             >
               分章规则
@@ -1054,20 +1076,20 @@ export default function NovelUploader() {
 
         {/* Diagnostic info or progress bar */}
         {(uploading || repairing || errorMsg || needsSmartRepair) && (
-          <div className="p-3 bg-[#0c0e20]/60 border-b border-[#1b1e36]/60 text-xs space-y-1 shrink-0">
+          <div className="shrink-0 space-y-1 border-b border-default bg-black/10 p-3 text-xs">
             {needsSmartRepair && (
-              <div className="flex items-center gap-1.5 text-amber-500 font-mono">
-                <span>● 需要校验</span>
-                {splitMeta && <span className="text-[#8a8f98]">({Math.round(splitMeta.confidence * 100)}% 置信度)</span>}
+              <div className="flex items-center gap-1.5 font-mono text-amber-500">
+                <span>● 先修风险章节再继续</span>
+                {splitMeta && <span className="text-muted">({Math.round(splitMeta.confidence * 100)}% 置信度)</span>}
               </div>
             )}
             {reviewReasons.length > 0 && (
-              <div className="text-[10px] text-slate-500 font-mono truncate">
+              <div className="truncate font-mono text-[10px] text-muted">
                 原因: {reviewReasons.join(' · ')}
               </div>
             )}
             {(uploading || repairing) && (
-              <div className="flex items-center gap-2 text-[#06b6d4]">
+              <div className="flex items-center gap-2 text-vermilion">
                 <div className="relative w-3.5 h-3.5">
                   <svg className="w-full h-full animate-spin" viewBox="0 0 100 100">
                     <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="12" strokeDasharray="160 80" fill="none" />
@@ -1089,8 +1111,8 @@ export default function NovelUploader() {
           <input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="过滤章节标题..."
-            className="w-full border border-[#1b1e36] bg-[#0c0e20] text-slate-300 px-3 py-2 rounded-lg text-xs focus:outline-none focus:border-[#06b6d4] transition-colors"
+            placeholder="搜索章节标题..."
+            className="w-full rounded-xl border border-default bg-black/10 px-3 py-2 text-xs text-primary transition-colors focus:border-[color:var(--vermilion-line)] focus:outline-none"
           />
         </div>
 
@@ -1185,10 +1207,10 @@ export default function NovelUploader() {
                         <svg className="w-3 h-3 animate-spin text-cyan-400" viewBox="0 0 100 100">
                           <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="12" strokeDasharray="160 80" fill="none" />
                         </svg>
-                        <span>[🧬 测序中...]</span>
+                        <span>[分析中...]</span>
                       </div>
                     ) : chapter.mapStatus === 'done' ? (
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" title="已完成 DNA 提炼">
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" title="已完成 DNA 提取">
                         🧬
                       </span>
                     ) : chapter.mapStatus === 'error' ? (
@@ -1249,27 +1271,17 @@ export default function NovelUploader() {
       </div>
 
       {/* Right panel: golden reader / empty state */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#05060f] relative">
+      <div className="relative flex h-full flex-1 flex-col overflow-hidden bg-[rgba(6,5,4,0.36)]">
         {!activeChapter ? (
-          /* Empty state with rotating orbit */
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-6 select-none">
-            <div className="relative w-32 h-32 will-change-transform animate-[spin_60s_linear_infinite]">
-              <svg className="w-full h-full opacity-30" viewBox="0 0 100 100">
-                <circle cx="50" cy="50" r="40" stroke="#06b6d4" strokeWidth="0.5" strokeDasharray="4 6" fill="none" />
-                <circle cx="50" cy="50" r="28" stroke="#5e6ad2" strokeWidth="0.5" strokeDasharray="3 4" fill="none" />
-                <circle cx="50" cy="50" r="16" stroke="#8a8f98" strokeWidth="0.5" fill="none" />
-                
-                <circle cx="50" cy="10" r="2" fill="#06b6d4" className="animate-pulse" />
-                <circle cx="22" cy="50" r="1.5" fill="#5e6ad2" />
-                <circle cx="50" cy="66" r="1" fill="#8a8f98" />
-              </svg>
-              <div className="absolute inset-0 m-auto w-3 h-3 bg-[#06b6d4] rounded-full blur-[4px] opacity-80" />
+          <div className="flex flex-1 flex-col items-center justify-center space-y-6 p-8 text-center select-none">
+            <div className="grid h-28 w-28 place-items-center rounded-full border border-[color:var(--vermilion-line)] bg-[radial-gradient(circle,rgba(207,74,46,0.18),transparent_60%)] text-3xl text-vermilion">
+              章
             </div>
-            
-            <div className="max-w-xs space-y-2">
-              <p className="text-sm font-medium text-slate-300 font-sans">智能章节校验预检舱</p>
-              <p className="text-xs text-slate-500 leading-relaxed font-sans">
-                请在左侧目录树中选择章节，系统将自动对章节进行智能字数诊断与结构分析。
+
+            <div className="max-w-sm space-y-2">
+              <p className="text-sm font-medium text-primary">选择一章，开始校验它是否适合进入 DNA 提取</p>
+              <p className="text-xs leading-relaxed text-secondary">
+                左侧列表会持续显示字数异常、切分风险和 DNA 状态。你不需要来回切页确认系统在做什么。
               </p>
             </div>
           </div>
@@ -1579,7 +1591,7 @@ export default function NovelUploader() {
                   <div className="flex-1 flex justify-between items-center gap-4">
                     <div>
                       <span className="font-semibold">本章字数过长（含有 {activeChapter.wordCount} 字）。</span>
-                      建议使用物理剪刀剪开以提高 AI 测序精度 ✂️。
+                      建议先手动裁切本章，再继续做 DNA 提取与后续创作。
                     </div>
                     <button
                       onClick={() => setIsSplitMode(true)}
@@ -1600,7 +1612,7 @@ export default function NovelUploader() {
           </div>
         )}
 
-        {/* AC1: JIT 水晶能量配置卡 — 右侧滑入式（cubic-bezier 高奢曲线，400px，backdrop-blur） */}
+        {/* AC1: 模型配置卡 — 右侧滑入式 */}
         <div
           className={`absolute right-0 top-0 z-30 h-full w-[400px] transition-transform duration-[400ms] ${
             isCrystalOpen ? 'translate-x-0' : 'translate-x-full pointer-events-none'
@@ -1620,9 +1632,9 @@ export default function NovelUploader() {
               </svg>
               <div className="relative flex items-start justify-between gap-2">
                 <div>
-                  <div className="font-mono text-[10px] uppercase tracking-widest text-[#06b6d4]">Crystal Config</div>
-                  <h3 className="mt-0.5 text-sm font-semibold text-white">水晶能量配置</h3>
-                  <p className="mt-1 text-[11px] leading-relaxed text-slate-400">粘贴云端水晶金钥，或切换本地 Ollama 离线 AI。</p>
+                  <div className="font-mono text-[10px] uppercase tracking-widest text-vermilion">Model Config</div>
+                  <h3 className="mt-0.5 text-sm font-semibold text-white">模型配置</h3>
+                  <p className="mt-1 text-[11px] leading-relaxed text-slate-400">配置云端 API Key，或确认本地 Ollama 已就绪，然后再执行 AI 辅助拆分。</p>
                 </div>
                 <button
                   onClick={() => setIsCrystalOpen(false)}
@@ -1638,7 +1650,7 @@ export default function NovelUploader() {
               <ProviderCredentialsEditor
                 variant="crystal"
                 providerSelector="tabs"
-                apiKeyLabel="云端水晶金钥 (API Key)"
+                apiKeyLabel="云端模型 API Key"
                 keyHelpText="🔒 密钥仅以混淆形式存储于本地浏览器，绝不上传服务器。"
                 ollamaSlot={
                   /* AC3/AC4: 本地 Ollama 心跳在线状态点 + 模型审计引导 */
@@ -1655,12 +1667,12 @@ export default function NovelUploader() {
                       />
                       <span className="text-xs font-medium text-slate-200">
                         {ollamaStatus === 'online'
-                          ? '在线就绪 🟢'
+                          ? 'Ollama 已连接'
                           : ollamaStatus === 'checking'
-                          ? '星体心跳探测中…'
+                          ? '正在检查 Ollama…'
                           : ollamaStatus === 'unknown'
-                          ? '待探测'
-                          : '星体静思 ⚠️'}
+                          ? '待检查'
+                          : 'Ollama 未就绪'}
                       </span>
                     </div>
                     {ollamaMessage && <p className="text-[11px] leading-relaxed text-slate-400">{ollamaMessage}</p>}
@@ -1676,7 +1688,7 @@ export default function NovelUploader() {
                 disabled={smartSplitLoading || !crystalReady}
                 className="w-full rounded-lg border border-[#06b6d4]/30 bg-[#06b6d4]/15 py-2 text-xs font-semibold text-[#67e8f9] transition-all hover:bg-[#06b6d4]/25 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {smartSplitLoading ? '✨ 正在智能分析…' : '✨ 开始智能语义拆分'}
+                {smartSplitLoading ? '✨ 正在智能分析…' : '✨ 开始 AI 辅助拆分'}
               </button>
             </div>
           </div>
@@ -1774,6 +1786,19 @@ export default function NovelUploader() {
           </div>
         </div>
       )}
+
+      <AppDialog
+        open={Boolean(pendingResplitStrategy)}
+        title="重新切分这本书？"
+        description="系统会覆盖当前章节数据，并清空现有 DNA 进度，然后基于新的规则重新生成章节结构。"
+        confirmLabel="确认重切"
+        onClose={() => setPendingResplitStrategy(null)}
+        onConfirm={() => {
+          const strategy = pendingResplitStrategy;
+          setPendingResplitStrategy(null);
+          if (strategy) void doResplit(strategy);
+        }}
+      />
     </div>
   );
 }
