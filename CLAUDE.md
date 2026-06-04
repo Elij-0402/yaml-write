@@ -22,7 +22,7 @@ npx tsc --noEmit     # type-check only (fast)
 npm test             # vitest run — pure-logic unit tests
 ```
 
-Tests are **pure-logic only** (Vitest, node env, no React/RTL/jsdom) — the 7 `app/**/*.test.ts` suites cover the extracted pure modules: `splitQuality`, `splitRegex`, `chapterOps`, `dnaSchema`, `dnaRouting`, `dnaState`, `blobPresplit`. Validate changes with `npm test` + `npx tsc --noEmit` + `npm run build`, then a manual walk-through (UI/LLM behavior is not unit-tested). `fastapi-dev` invokes `python` from PATH; use a venv/interpreter that has the `requirements.txt` deps.
+Tests are **mostly pure-logic** (Vitest, node env, no React/RTL/jsdom) — the 7 `app/**/*.test.ts` suites cover the extracted pure modules: `splitQuality`, `splitRegex`, `chapterOps`, `dnaSchema`, `dnaRouting`, `dnaState`, `blobPresplit`. The backend adds one Python unittest — `api/test_scene_resume.py` (run `python -m unittest api.test_scene_resume` from `yaml-write/`), pinning `build_scene_user_prompt`'s `currentDraft`/`resumeFromText` resume contract; `fastapi-dev`'s `--reload-exclude "*test*"` keeps it out of the reload watch. Validate changes with `npm test` + `npx tsc --noEmit` + `npm run build`, then a manual walk-through (UI/streaming LLM behavior is not unit-tested). `fastapi-dev` invokes `python` from PATH; use a venv/interpreter that has the `requirements.txt` deps.
 
 Interactive API docs (dev): `http://localhost:3000/api/py/docs` or `http://localhost:3000/docs` — both rewrite to FastAPI's Swagger UI.
 
@@ -39,7 +39,7 @@ Interactive API docs (dev): `http://localhost:3000/api/py/docs` or `http://local
 - `llmConfig` shape: `activeProvider` (a `ProviderId`) + `providerProfiles` — a `Record<ProviderId, {apiKey, baseUrl, model}>` for `openai`/`deepseek`/`gemini`/`siliconflow`/`ollama`/`custom` (registry in `app/llmProviders.ts`: each provider carries `requiresApiKey` + `modelPresets`; `ollama` is `requiresApiKey:false`) — plus a flat `temperature` (default 0.7, clamped 0–1.5). Two setters: `setActiveProvider(id)` and `updateActiveProviderProfile(patch)` (patches the **active** provider). API keys for *all* providers persist.
 - **Keys are obfuscated at rest**: the persist `replacer`/`reviver` XOR+base64-encodes every `apiKey` on write (sentinel prefix `x1:`) and restores it on read; in-memory state always holds plaintext, so callers need no changes. Corrupt ciphertext decrypts to `''` (treated as unconfigured, never sent as garbage).
 - Writes go through `safeLocalStorage`; a failed write (private mode / quota) flips `persistError` (surfaced as a top-bar "⚠ 存储不可用" hint) instead of being swallowed.
-- `STORE_VERSION = 4`; its `migrate` **deletes the removed knobs** `sequencingGear` / `shouldReduceEarly` / `fusionBias` (the old gear/early-reduce/fusion-bias UI is gone) and resets view state.
+- `STORE_VERSION = 5`; its `migrate` **deletes the removed knobs** `sequencingGear` / `shouldReduceEarly` / `fusionBias` (the old gear/early-reduce/fusion-bias UI is gone), re-runs `llmConfig` through `normalizeLLMConfig` (provider-profile defaults/compat), and resets view state.
 
 `app/llmClient.ts` is the **single network helper** — route all LLM calls through it:
 - `getActiveLlmRuntimeConfig` / `getLlmConfigError` / `ensureLlmConfigReady` — read & validate the active profile.
@@ -145,6 +145,7 @@ The old `generate-storyboard` / `stream-storyboard` endpoints and `StoryboardRes
   4. **成稿 (manuscript)** — one continuous opening chapter streamed via `stream-scene-text` (停止 / 重写 / 继续接写 / 复制 / 导出 .md). Selecting a sentence triggers an in-place AI rewrite (preview → accept/reject). A client-side `applyAntiSlopFallback` is a backstop to the backend prompt constraint.
 - **ProviderCredentialsEditor** (`components/ProviderCredentialsEditor.tsx`) — the **shared** credential-form core + store wiring (`activeProvider`/profile/setters). Hosts supply only a shell + a `variant` theme (`minimal` | `crystal`), a `providerSelector` (`select` | `tabs`), and an optional `ollamaSlot`. Consumed by `SettingsPanel` (`minimal`/`select`) and `NovelUploader`'s crystal card (`crystal`/`tabs`).
 - **SettingsPanel** — minimal slide-over: readiness line + `<ProviderCredentialsEditor variant="minimal" providerSelector="select"/>` + a "keys stay local" note. (The global temperature slider was removed; temperature defaults to 0.7.)
+- **AppDialog / AppNotice** — shared 朱墨-styled primitives replacing native `confirm`/`prompt`/inline banners. `AppDialog` is a confirm/input modal (`confirmTone:'danger'`, optional `inputLabel`) used by `page`/`NovelUploader`/`NovelDetail`/`FusionWorkshop`; `AppNotice` is a tone-styled banner (`info|success|warning|error`) used by `NovelUploader`/`NovelDetail`/`SettingsPanel`.
 
 (`ContrastBoard` / `FusionEditor` and the whole storyboard/分镜 flow were removed in the skin-swap redesign. `store.engineNovelId`/`skinNovelId` exist but are currently unused — the recipe uses `FusionWorkshop`'s local `selectedIds`.)
 
