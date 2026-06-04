@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, isFourLayerDnaCard, type FusionSession, type SettingSnapshot } from '../app/db';
+import { isDnaReady } from '../app/dnaState';
 import { type BlockKey, type FusionDirection, type SettingBlocks, type StructureBeat, parseFusionDirections } from '../app/dnaSchema';
 import { withRateLimitRetry } from '../app/dnaEngine';
 import { StreamSseError, callStructured, ensureLlmConfigReady, streamSse } from '../app/llmClient';
@@ -113,8 +114,8 @@ export default function FusionWorkshop() {
     setWorkshopBusy: state.setWorkshopBusy,
   }));
   const novels = useLiveQuery(() => db.novels.reverse().toArray(), []) || [];
-  const readyNovels = novels.filter((novel) => novel.analysisStatus === 'done' && novel.dnaCard);
-  const firstIncompleteNovel = novels.find((novel) => novel.analysisStatus !== 'done' || !novel.dnaCard) || novels[0] || null;
+  const readyNovels = novels.filter((novel) => isDnaReady(novel));
+  const firstIncompleteNovel = novels.find((novel) => !isDnaReady(novel)) || novels[0] || null;
 
   const [step, setStep] = useState<WorkshopStep>('material');
   // selectedIds[0] = 骨架(引擎)，selectedIds[1] = 题材(皮)；皮可缺省（自我裂变，题材取口述）。

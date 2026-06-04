@@ -1,5 +1,6 @@
 import { db, type Chapter } from './db';
 import { type ChapterMapSummary, type NovelDNACard, parseChapterMapSummary, parseNovelDNACard } from './dnaSchema';
+import { selectResumeTargets, planReconcile } from './dnaState';
 import { RateLimitSignal, callStructured } from './llmClient';
 import { useAppStore } from './store';
 import {
@@ -161,6 +162,24 @@ async function computeSha256(text: string): Promise<string> {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// reconcile 落库（统一不变量的「后向一半」落地）：读 novel + chapters → planReconcile（纯决策）→
+// 在单个 db.transaction 内应用复位计划（analysisStatus → idle，mapping 章节 → pending）。
+// NovelDetail 挂载对账调用本函数，不再内联 db 写——前向（runDnaExtraction 的 resume）与后向（本函数）同住此 seam 后面。
+// 非滞留态（idle/done/error，plan 为 null）直接返回，幂等安全。
+export async function reconcileExtraction(novelId: string): Promise<void> {
+  const novel = await db.novels.get(novelId);
+  if (!novel) return;
+  const chapters = await db.chapters.where('novelId').equals(novelId).toArray();
+  const plan = planReconcile(novel, chapters);
+  if (!plan) return;
+  await db.transaction('rw', db.novels, db.chapters, async () => {
+    await db.novels.update(novelId, { analysisStatus: plan.nextAnalysisStatus });
+    if (plan.resetChapterIds.length > 0) {
+      await db.chapters.where('id').anyOf(plan.resetChapterIds).modify({ mapStatus: 'pending' });
+    }
+  });
+}
+
 export async function ensureIncrementalHashes(
   novelId: string,
   opts: { onlyChapterId?: string; signal?: AbortSignal } = {}
@@ -254,8 +273,8 @@ export async function runDnaExtraction(
       console.info(`[dnaEngine] 饱和采样：在 ${chaptersForPlan.length} 章中实测 ${units.length} 个弧窗（覆盖约 ${covered} 章），以避免上千章卡死。`);
     }
 
-    // 续跑：仅测 lead 章未 done 的窗口。
-    const targets = units.filter((u) => byId.get(u.id)?.mapStatus !== 'done');
+    // 续跑：仅测 lead 章未 done 的窗口（前向不变量，纯判定提至 dnaState.selectResumeTargets）。
+    const targets = selectResumeTargets(units, byId);
     const doneUnits = units.length - targets.length;
     const progressTotal = units.length;
 

@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Novel, type FusionSession } from './db';
+import { isDnaReady, isExtracting, canAutoStart } from './dnaState';
 import { useAppStore, type LLMConfig } from './store';
 import { runDnaExtraction } from './dnaEngine';
 import { ensureLlmConfigReady } from './llmClient';
@@ -15,8 +16,8 @@ import AppDialog from '../components/AppDialog';
 import { getLlmReadinessSummary, getNovelWorkflowSummary, type WorkflowStage } from './workflow';
 
 function getStatus(novel: Novel): string {
-  if (novel.analysisStatus === 'done' && novel.dnaCard) return 'ready';
-  if (novel.analysisStatus === 'mapping' || novel.analysisStatus === 'reducing') return 'extracting';
+  if (isDnaReady(novel)) return 'ready';
+  if (isExtracting(novel)) return 'extracting';
   if (novel.splitStatus === 'needs_review') return 'review';
   return 'pending';
 }
@@ -49,7 +50,7 @@ function useBackgroundExtraction(selectedNovelId: string | null, llmConfig: LLMC
     if (runningRef.current) return; // 单飞：一次只跑一部
     if (!selectedNovelId || !novel) return;
     if (!ensureLlmConfigReady(llmConfig).ok) return; // 未配密钥不自动跑（配好后本 effect 因 llmConfig 变化重评）
-    if (novel.analysisStatus !== 'idle' || novel.dnaCard) return; // 已就绪/进行中/出错都不自动起
+    if (!canAutoStart(novel)) return; // 状态层门：仅全新 idle（无卡、非进行中、非 error）自启；已有结果走手动重提，error 不自动重启
     if (chapterCount === 0 || novel.splitStatus !== 'ok') return; // 未切分/切分异常先不自动跑（出问题才提示）
 
     const id = selectedNovelId;
@@ -61,7 +62,7 @@ function useBackgroundExtraction(selectedNovelId: string | null, llmConfig: LLMC
       try {
         await runDnaExtraction(id, { signal: controller.signal });
         const after = await db.novels.get(id);
-        if (after?.analysisStatus === 'done') setDoneToast(`《${name}》DNA 已就绪`);
+        if (isDnaReady(after)) setDoneToast(`《${name}》DNA 已就绪`);
       } catch {
         /* 失败落到 analysisStatus='error'，书详情展示原因与重试入口 */
       } finally {
@@ -144,7 +145,7 @@ export default function Home() {
     (c) => c.step === 'creator' || c.step === 'manuscript' || Object.keys(c.sceneTexts || {}).length > 0
   );
 
-  const readyCount = novels.filter((novel) => novel.analysisStatus === 'done' && novel.dnaCard).length;
+  const readyCount = novels.filter((novel) => isDnaReady(novel)).length;
   const llmReadiness = useMemo(() => getLlmReadinessSummary(llmConfig), [llmConfig]);
   const { doneToast, dismissToast } = useBackgroundExtraction(selectedNovelId, llmConfig);
   const workflowSummary = useMemo(

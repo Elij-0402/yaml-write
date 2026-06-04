@@ -22,7 +22,7 @@ npx tsc --noEmit     # type-check only (fast)
 npm test             # vitest run — pure-logic unit tests
 ```
 
-Tests are **pure-logic only** (Vitest, node env, no React/RTL/jsdom) — the 7 `app/**/*.test.ts` suites cover the extracted pure modules: `splitQuality`, `splitRegex`, `chapterOps`, `dnaSchema`, `dnaRouting`, `diff`, `settingHistory`. Validate changes with `npm test` + `npx tsc --noEmit` + `npm run build`, then a manual walk-through (UI/LLM behavior is not unit-tested). `fastapi-dev` invokes `python` from PATH; use a venv/interpreter that has the `requirements.txt` deps.
+Tests are **pure-logic only** (Vitest, node env, no React/RTL/jsdom) — the 8 `app/**/*.test.ts` suites cover the extracted pure modules: `splitQuality`, `splitRegex`, `chapterOps`, `dnaSchema`, `dnaRouting`, `dnaState`, `diff`, `settingHistory`. Validate changes with `npm test` + `npx tsc --noEmit` + `npm run build`, then a manual walk-through (UI/LLM behavior is not unit-tested). `fastapi-dev` invokes `python` from PATH; use a venv/interpreter that has the `requirements.txt` deps.
 
 Interactive API docs (dev): `http://localhost:3000/api/py/docs` or `http://localhost:3000/docs` — both rewrite to FastAPI's Swagger UI.
 
@@ -154,3 +154,17 @@ The old `generate-storyboard` / `stream-storyboard` endpoints and `StoryboardRes
 - **Iron rules** (the codebase enforces these by comment & test): keep `app/dnaSchema.ts` ↔ `api/schemas.py` field-for-field camelCase; bump a new Dexie `version(n)` block for any stored-shape change; route LLM calls through `app/llmClient.ts` (`callStructured`/`streamSse`/`postWithLlmConfig`); keep `splitRegex.ts`/`splitQuality.ts` byte-equivalent with the worker copy (golden-vector test); preserve backend hardening (rate limit, SSRF, key masking, friendly errors); never persist keys server-side.
 - `tsconfig.json` defines `@/*` → `./*`, but components import via relative paths (`../app/db`). Follow whichever the neighboring file uses.
 - Single lockfile: `package-lock.json` (npm).
+
+## Agent skills
+
+### Issue tracker
+
+Issues & PRDs live as local markdown under `.scratch/<feature>/` in this repo (no remote tracker). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical triage roles, default strings — recorded as a `Status:` line per issue file. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root (created lazily). See `docs/agents/domain.md`.

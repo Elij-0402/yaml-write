@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Chapter, isFourLayerDnaCard, isLegacyDnaCard } from '../app/db';
+import { isDnaReady, isExtracting } from '../app/dnaState';
 import { useAppStore } from '../app/store';
 import { ensureLlmConfigReady } from '../app/llmClient';
-import { runDnaExtraction } from '../app/dnaEngine';
+import { runDnaExtraction, reconcileExtraction } from '../app/dnaEngine';
 import { getLlmReadinessSummary } from '../app/workflow';
 import AppDialog from './AppDialog';
 import AppNotice from './AppNotice';
@@ -82,7 +83,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
 
   const novel = useLiveQuery(() => db.novels.get(novelId), [novelId]);
   const chapters = useLiveQuery(() => db.chapters.where('novelId').equals(novelId).sortBy('chapterIndex'), [novelId]) || EMPTY_CHAPTERS;
-  const readyNovelCount = useLiveQuery(() => db.novels.filter((item) => item.analysisStatus === 'done' && Boolean(item.dnaCard)).count(), []) || 0;
+  const readyNovelCount = useLiveQuery(() => db.novels.filter((item) => isDnaReady(item)).count(), []) || 0;
 
   const [extracting, setExtracting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,16 +95,16 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
 
   useEffect(() => { reconciledRef.current = false; }, [novelId]);
 
-  // 挂载对账（Critical）：刷新/崩溃后 analysisStatus 仍为 mapping/reducing 的孤儿态复位为 idle、
-  // 把卡在 mapping 的章回滚 pending；复位后由 page.tsx 的后台 manager 自动续跑（提取可续跑）。
+  // 挂载对账（Critical）：刷新/崩溃后滞留 mapping/reducing 的孤儿态，交由运行器导出的 reconcileExtraction
+  // 在单个事务内复位（analysisStatus → idle、卡在 mapping 的章 → pending）；复位后由 page.tsx 后台 manager 自动续跑。
+  // 前向（resume 跳 done）与后向（本对账）现同住 dnaEngine/dnaState 接口后面，不再内联 db 写、无法独立漂移。
   useEffect(() => {
     if (!novel || extracting || abortRef.current) return;
-    if (novel.analysisStatus !== 'mapping' && novel.analysisStatus !== 'reducing') return;
+    if (!isExtracting(novel)) return;
     if (reconciledRef.current) return;
     reconciledRef.current = true;
     void (async () => {
-      await db.novels.update(novelId, { analysisStatus: 'idle' });
-      await db.chapters.where('novelId').equals(novelId).and((c) => c.mapStatus === 'mapping').modify({ mapStatus: 'pending' });
+      await reconcileExtraction(novelId);
       setSavedToast('检测到上次提取被中断，已自动复位，将自动续跑。');
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
       toastTimerRef.current = setTimeout(() => setSavedToast(null), 3500);
@@ -117,8 +118,8 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
   const llmReadiness = getLlmReadinessSummary(llmConfig);
   const progress = novel.mapProgress || { total: 0, current: 0 };
   const status = novel.analysisStatus;
-  const busy = extracting || status === 'mapping' || status === 'reducing';
-  const dnaReady = status === 'done' && novel.dnaCard;
+  const busy = extracting || isExtracting(novel);
+  const dnaReady = isDnaReady(novel);
   const dnaCard = novel.dnaCard ?? null;
   const needsReview = novel.splitStatus === 'needs_review';
   const oversizedChapter = chapters.find((c) => c.wordCount > 30000) || null;
@@ -126,7 +127,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
   const pct = progress.total ? Math.round((progress.current / progress.total) * 100) : status === 'reducing' ? 100 : 0;
   const dnaStepCopy = getDnaStepCopy({
     busy,
-    dnaReady: Boolean(dnaReady),
+    dnaReady,
     needsReview: needsReview || Boolean(oversizedChapter),
     llmReady: llmReadiness.ok,
     hasFailures: failedChapters.length > 0,

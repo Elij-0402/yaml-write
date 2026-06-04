@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Chapter, type Novel, type SplitMeta, type SplitStrategyId } from '../app/db';
+import { isExtracting } from '../app/dnaState';
 import { useAppStore } from '../app/store';
 import { getProviderMeta } from '../app/llmProviders';
 import { getLlmConfigError, postWithLlmConfig, readApiErrorMessage } from '../app/llmClient';
@@ -663,7 +664,7 @@ export default function NovelUploader() {
 
   const runResplit = async (strategy: SplitStrategyId) => {
     if (!activeNovel || repairing || uploading) return;
-    if (activeNovel.analysisStatus === 'mapping' || activeNovel.analysisStatus === 'reducing') {
+    if (isExtracting(activeNovel)) {
       setErrorMsg('正在提取 DNA，重新切分会删除正在写入的章节。请先到「DNA 提取」页暂停后再重切。');
       return;
     }

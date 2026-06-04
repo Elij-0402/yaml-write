@@ -1,4 +1,5 @@
 import { type Novel } from './db';
+import { isDnaReady, isExtracting } from './dnaState';
 import { getLlmConfigError } from './llmClient';
 import type { LLMConfig } from './store';
 
@@ -104,7 +105,7 @@ export function getNovelWorkflowSummary(
       status: 'blocked',
       hint: llm.reason || '请先配置模型。',
     };
-  } else if (novel.analysisStatus === 'mapping' || novel.analysisStatus === 'reducing') {
+  } else if (isExtracting(novel)) {
     dnaStage = {
       id: 'dna',
       label: '提取 DNA',
@@ -112,7 +113,7 @@ export function getNovelWorkflowSummary(
       status: 'running',
       hint: '正在抽取题材、角色、结构与风格摘要。',
     };
-  } else if (novel.analysisStatus === 'done' && novel.dnaCard) {
+  } else if (isDnaReady(novel)) {
     dnaStage = {
       id: 'dna',
       label: '提取 DNA',
@@ -139,7 +140,7 @@ export function getNovelWorkflowSummary(
   }
 
   const fusionStage: WorkflowStage =
-    novel.analysisStatus === 'done' && novel.dnaCard
+    isDnaReady(novel)
       ? {
           id: 'fusion',
           label: '融合变体',
