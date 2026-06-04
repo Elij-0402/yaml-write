@@ -2,13 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, isFourLayerDnaCard, type FusionSession, type SettingSnapshot } from '../app/db';
+import { db, isFourLayerDnaCard, type FusionSession } from '../app/db';
 import { isDnaReady } from '../app/dnaState';
 import { type BlockKey, type FusionDirection, type SettingBlocks, type StructureBeat, parseFusionDirections } from '../app/dnaSchema';
 import { withRateLimitRetry } from '../app/dnaEngine';
 import { StreamSseError, callStructured, ensureLlmConfigReady, streamSse } from '../app/llmClient';
-import { appendSnapshot, popSnapshot } from '../app/settingHistory';
-import { computeDiff, type DiffSegment } from '../app/diff';
 import { useAppStore } from '../app/store';
 import AppDialog from './AppDialog';
 
@@ -43,8 +41,6 @@ const applyAntiSlopFallback = (text: string): string =>
 const EMPTY_BLOCKS = { worldviewBlock: '', protagonistBlock: '', antagonistBlock: '', narrativeTone: '' };
 const OPENING_SCENE_NUM = 1; // 成稿为单一连续开篇，复用 sceneTexts[1] 持久化（不引入 db 形状变更）
 
-interface PendingDiff { block: BlockKey; oldText: string; newText: string; why: string; }
-interface IntentState { instruction: string; brief: string; confirmation: string; }
 interface FragmentDraft { original: string; rewritten: string; }
 
 const WORKSHOP_STEPS: Array<{ id: WorkshopStep; label: string; kicker: string }> = [
@@ -62,7 +58,7 @@ function WorkshopProgress({
   nextLabel: string;
 }) {
   return (
-    <div className="mb-8 rounded-[24px] border border-default bg-[linear-gradient(180deg,rgba(26,21,18,0.9),rgba(16,13,11,0.9))] p-5 shadow-[0_18px_50px_rgba(0,0,0,0.18)]">
+    <div className="mb-8 rounded-[12px] border border-default bg-[var(--ink-raise)] p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="eyebrow !mb-1">Creation Workflow · 创作后半程</div>
@@ -83,7 +79,7 @@ function WorkshopProgress({
                 active
                   ? 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)]'
                   : complete
-                  ? 'border-emerald-500/20 bg-emerald-500/[0.04]'
+                  ? 'border-[color:var(--add)]/25 bg-[color:var(--add-soft)]'
                   : 'border-default bg-black/10'
               }`}
             >
@@ -91,7 +87,7 @@ function WorkshopProgress({
                 <span className="font-mono text-[10px] tracking-[0.18em] text-muted">0{idx + 1}</span>
                 <span
                   className={`h-1.5 w-1.5 rounded-full ${
-                    active ? 'bg-[color:var(--vermilion)]' : complete ? 'bg-emerald-400' : 'bg-zinc-600'
+                    active ? 'bg-[color:var(--vermilion)]' : complete ? 'bg-[color:var(--add)]' : 'bg-[color:var(--ink-faint)]'
                   }`}
                 />
               </div>
@@ -140,14 +136,10 @@ export default function FusionWorkshop() {
 
   const [repairing, setRepairing] = useState(false);
   const [repairGaps, setRepairGaps] = useState<RepairGap[]>([]);
-  const [settingHistory, setSettingHistory] = useState<SettingSnapshot[]>([]);
 
   // 创世台共创态
   const [editingBlock, setEditingBlock] = useState<BlockKey | null>(null);
   const [editDraft, setEditDraft] = useState('');
-  const [pendingDiff, setPendingDiff] = useState<PendingDiff | null>(null);
-  const [intent, setIntent] = useState<IntentState | null>(null);
-  const [enhancing, setEnhancing] = useState(false);
   // 成稿选中句轻量改写
   const [selectedFragment, setSelectedFragment] = useState<string>('');
   const [fragmentDraft, setFragmentDraft] = useState<FragmentDraft | null>(null);
@@ -203,13 +195,12 @@ export default function FusionWorkshop() {
         setDirectionTitle(saved.directionTitle || '');
         setSceneTexts(saved.sceneTexts || {});
         setSceneResumeStatus((saved.sceneResumeStatus as Record<number, SceneResumeStatus>) || {});
-        setSettingHistory(saved.settingHistory || []);
       } else {
         setSelectedIds([]); setCustomPrompt(''); setAdversarialRules(''); setStep('material');
         setDirections([]); setBlocks(EMPTY_BLOCKS); setDirectionTitle('');
-        setSceneTexts({}); setSceneResumeStatus({}); setSettingHistory([]);
+        setSceneTexts({}); setSceneResumeStatus({});
       }
-      setPendingDiff(null); setIntent(null); setEditingBlock(null); setRepairGaps([]);
+      setEditingBlock(null); setRepairGaps([]);
       setSelectedFragment(''); setFragmentDraft(null); setTweakTarget('worldviewBlock');
       if (!cancelled) hydratedRef.current = true;
     })();
@@ -239,14 +230,13 @@ export default function FusionWorkshop() {
         sceneCount: 1,
         sceneTexts,
         sceneResumeStatus,
-        settingHistory,
         updatedAt: Date.now(),
       };
       await db.fusionSessions.put(session);
     });
   }, [
     activeCreationId, step, selectedIds, customPrompt, adversarialRules, directions, blocks,
-    directionTitle, sceneTexts, sceneResumeStatus, settingHistory,
+    directionTitle, sceneTexts, sceneResumeStatus,
     streamingScene, colliding, tweaking, repairing, rewriting,
   ]);
 
@@ -259,8 +249,8 @@ export default function FusionWorkshop() {
   }, [streamingScene, colliding, repairing, rewriting]);
 
   useEffect(() => {
-    setWorkshopBusy(streamingScene !== null || colliding || tweaking || repairing || rewriting || enhancing);
-  }, [streamingScene, colliding, tweaking, repairing, rewriting, enhancing, setWorkshopBusy]);
+    setWorkshopBusy(streamingScene !== null || colliding || tweaking || repairing || rewriting);
+  }, [streamingScene, colliding, tweaking, repairing, rewriting, setWorkshopBusy]);
   useEffect(() => () => setWorkshopBusy(false), [setWorkshopBusy]);
 
   const guardLlm = (): boolean => {
@@ -284,9 +274,7 @@ export default function FusionWorkshop() {
       : step === 'directions'
       ? '选择一条最像你的路线'
       : step === 'creator'
-      ? pendingDiff
-        ? '先处理这次改动 diff'
-        : '确认设定并开始写开篇'
+      ? '确认设定并开始写开篇'
       : streaming
       ? '等待正文生成或随时停止'
       : prose.trim()
@@ -298,8 +286,6 @@ export default function FusionWorkshop() {
     ? '正在补齐换皮后的逻辑缺口'
     : tweaking
     ? `正在改写「${BLOCKS.find((b) => b.key === tweakTarget)?.label}」`
-    : enhancing
-    ? '正在理解你的修改意图'
     : streaming
     ? '正在流式生成开篇正文'
     : rewriting
@@ -376,8 +362,8 @@ export default function FusionWorkshop() {
     };
     setDirectionTitle(direction.title);
     setBlocks(baseBlocks);
-    setSceneTexts({}); setSceneResumeStatus({}); setRepairGaps([]); setSettingHistory([]);
-    setPendingDiff(null); setIntent(null); setEditingBlock(null);
+    setSceneTexts({}); setSceneResumeStatus({}); setRepairGaps([]);
+    setEditingBlock(null);
     setTweakTarget('worldviewBlock');
     setStep('creator');
 
@@ -420,16 +406,15 @@ export default function FusionWorkshop() {
   };
 
   // ---- 创世台：手动直接编辑 ----
-  const startEdit = (key: BlockKey) => { setPendingDiff(null); setEditingBlock(key); setEditDraft(blocks[key]); };
+  const startEdit = (key: BlockKey) => { setEditingBlock(key); setEditDraft(blocks[key]); };
   const cancelEdit = () => { setEditingBlock(null); setEditDraft(''); };
   const saveEdit = (key: BlockKey) => {
     if (editDraft === blocks[key]) { cancelEdit(); return; }
-    setSettingHistory((h) => appendSnapshot(h, blocks, `手改：${BLOCKS.find((b) => b.key === key)?.label ?? ''}`, Date.now()));
     setBlocks((prev) => ({ ...prev, [key]: editDraft }));
     cancelEdit();
   };
 
-  // ---- 创世台：AI 指令 → diff（不静默覆盖）----
+  // ---- 创世台：AI 指令 → 直接套用到目标卡（无 diff、无确认门）----
   const runTweak = async (rawInstruction?: string) => {
     const instruction = (rawInstruction ?? command).trim();
     if (!guardLlm() || !instruction || tweaking) return;
@@ -454,61 +439,13 @@ export default function FusionWorkshop() {
         setError('该指令未改动当前目标卡，换个说法或先切换目标卡。');
         return;
       }
-      // 不直接套用：先出 diff，待用户接受/拒绝。
-      setPendingDiff({ block: tweakTarget, oldText: blocks[tweakTarget], newText, why: instruction });
+      setBlocks((prev) => ({ ...prev, [tweakTarget]: newText }));
       setCommand('');
     } catch (err) {
       setError(err instanceof Error ? err.message : '调整失败');
     } finally {
       if (mountedRef.current) setTweaking(false);
     }
-  };
-  const acceptDiff = () => {
-    if (!pendingDiff) return;
-    setSettingHistory((h) => appendSnapshot(h, blocks, `AI 改：${pendingDiff.why}`, Date.now()));
-    setBlocks((prev) => ({ ...prev, [pendingDiff.block]: pendingDiff.newText }));
-    setPendingDiff(null);
-  };
-  const rejectDiff = () => setPendingDiff(null);
-
-  // ---- ✨ 意图增强（带确认门）----
-  const enhance = async () => {
-    const instruction = command.trim();
-    if (!guardLlm() || !instruction || enhancing) return;
-    setError(null);
-    setEnhancing(true);
-    try {
-      const ac = new AbortController();
-      const data = await withRateLimitRetry(
-        () => callStructured<{ interpretedBrief: string; confirmation: string }>('/api/py/enhance-instruction', {
-          userInstruction: instruction,
-          targetBlock: tweakTarget,
-          blockContext: blocks[tweakTarget] || '',
-        }, { signal: ac.signal }),
-        { signal: ac.signal }
-      );
-      if (!mountedRef.current) return;
-      setIntent({ instruction, brief: data.interpretedBrief, confirmation: data.confirmation });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '增强意图失败');
-    } finally {
-      if (mountedRef.current) setEnhancing(false);
-    }
-  };
-  const confirmIntent = () => {
-    if (!intent) return;
-    const brief = intent.brief;
-    setIntent(null);
-    void runTweak(brief);
-  };
-  const cancelIntent = () => setIntent(null);
-
-  const revertSetting = () => {
-    const { restored, history } = popSnapshot(settingHistory);
-    if (!restored) return;
-    setBlocks(restored.blocks);
-    setSettingHistory(history);
-    setPendingDiff(null);
   };
 
   // ---- 成稿：单一连续开篇正文（复用 stream-scene-text，合成开篇 scene）----
@@ -654,7 +591,7 @@ export default function FusionWorkshop() {
     return (
       <div className="atelier max-w-3xl">
         <WorkshopProgress current="material" nextLabel="先完成至少一本作品的 DNA 提取" />
-        <div className="rounded-[28px] border border-default bg-[linear-gradient(180deg,rgba(26,21,18,0.92),rgba(16,13,11,0.96))] p-8">
+        <div className="rounded-[12px] border border-default bg-[var(--ink-raise)] p-8">
           <div className="eyebrow">工坊入口 · 启动条件</div>
           <h2 className="atelier-h1">先让至少一本书<span className="it">准备好</span>。</h2>
           <p className="lede !mb-0">这里吃的是已经提炼完成的 DNA。没有就绪作品时，我们不会把你扔进半残的创作页，而是明确把你送回上一段流程。</p>
@@ -678,14 +615,14 @@ export default function FusionWorkshop() {
       <div className="atelier">
         <WorkshopProgress current="material" nextLabel={nextActionLabel} />
         <div className="mb-6 grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="rounded-[22px] border border-default bg-black/10 p-4">
+          <div className="rounded-[12px] border border-default bg-black/10 p-4">
             <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>当前素材来源</div>
             <div className="mt-2 text-sm text-primary">{sourceSummary}</div>
             <p className="mt-1 text-xs leading-6 text-secondary">先决定哪本书提供叙事引擎，哪本书提供题材和表皮。后面所有方向、设定和正文都会围绕这组输入展开。</p>
           </div>
-          <div className="rounded-[22px] border p-4" style={{ borderColor: modelReady ? 'rgba(16,185,129,.25)' : 'var(--vermilion-line)', background: modelReady ? 'rgba(16,185,129,.05)' : 'var(--vermilion-soft)' }}>
-            <div className="text-[11px] uppercase tracking-[0.24em]" style={{ fontFamily: 'var(--font-mono)', color: modelReady ? '#6ee7b7' : 'var(--vermilion)' }}>系统状态</div>
-            <div className="mt-2 text-sm" style={{ color: modelReady ? '#d1fae5' : 'var(--ink-text)' }}>{modelReady ? '模型已就绪，可直接生成方向。' : '模型还没配置，点击生成时会直接带你去设置。'}</div>
+          <div className="rounded-[12px] border p-4" style={{ borderColor: modelReady ? 'var(--add)' : 'var(--vermilion-line)', background: modelReady ? 'var(--add-soft)' : 'var(--vermilion-soft)' }}>
+            <div className="text-[11px] uppercase tracking-[0.24em]" style={{ fontFamily: 'var(--font-mono)', color: modelReady ? 'var(--add)' : 'var(--vermilion)' }}>系统状态</div>
+            <div className="mt-2 text-sm" style={{ color: 'var(--ink-text)' }}>{modelReady ? '模型已就绪，可直接生成方向。' : '模型还没配置，点击生成时会直接带你去设置。'}</div>
             <p className="mt-1 text-xs leading-6 text-secondary">{backendStatus}</p>
           </div>
         </div>
@@ -785,7 +722,7 @@ export default function FusionWorkshop() {
     return (
       <div className="atelier">
         <WorkshopProgress current="directions" nextLabel={nextActionLabel} />
-        <div className="mb-6 rounded-[22px] border border-default bg-black/10 p-4">
+        <div className="mb-6 rounded-[12px] border border-default bg-black/10 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>方向上下文</div>
@@ -828,34 +765,29 @@ export default function FusionWorkshop() {
 
   // ===== 创世台 =====
   if (step === 'creator') {
-    const diffSegments = (seg: DiffSegment[]) =>
-      seg.map((s, i) => s.op === 'equal'
-        ? <span key={i}>{s.text}</span>
-        : <span key={i} className={s.op === 'add' ? 'add' : 'del'}>{s.text}</span>);
-
     return (
       <div className="atelier">
         <WorkshopProgress current="creator" nextLabel={nextActionLabel} />
         <div className="mb-6 grid gap-3 lg:grid-cols-3">
-          <div className="rounded-[22px] border border-default bg-black/10 p-4">
+          <div className="rounded-[12px] border border-default bg-black/10 p-4">
             <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>当前方向</div>
             <div className="mt-2 text-sm text-primary">{selectedDirectionReady ? directionTitle : '还未确认方向'}</div>
             <p className="mt-1 text-xs leading-6 text-secondary">这里展示的是已经把骨架和题材嫁接后的新书地基，不是素材摘抄。</p>
           </div>
-          <div className="rounded-[22px] border border-default bg-black/10 p-4">
+          <div className="rounded-[12px] border border-default bg-black/10 p-4">
             <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>AI 状态</div>
             <div className="mt-2 text-sm text-primary">{backendStatus}</div>
-            <p className="mt-1 text-xs leading-6 text-secondary">{pendingDiff ? '有一条 AI 建议正在等待你确认，未接受前不会静默覆盖。' : '所有 AI 修改都先经过 diff，再由你决定是否落盘。'} </p>
+            <p className="mt-1 text-xs leading-6 text-secondary">AI 修改会直接套用到选中的设定卡；你也可以随时 ✎ 手改或继续追加指令。</p>
           </div>
-          <div className="rounded-[22px] border border-default bg-black/10 p-4">
+          <div className="rounded-[12px] border border-default bg-black/10 p-4">
             <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>下一决策</div>
-            <div className="mt-2 text-sm text-primary">{pendingDiff ? '接受或拒绝改动' : '确认设定并写开篇'}</div>
+            <div className="mt-2 text-sm text-primary">确认设定并写开篇</div>
             <p className="mt-1 text-xs leading-6 text-secondary">把世界观、人物关系和叙事语气捋顺后，就可以进入流式成稿，不需要再跳去别的页面找入口。</p>
           </div>
         </div>
         <div className="eyebrow">设定定稿 · 创作中枢</div>
         <h2 className="atelier-h1">定<span className="it">地基</span>。想改就跟我说。</h2>
-        <p className="lede">系统已经把题材迁移和设定补全做完了。这里是你确认世界观、主角、对手和叙事语气的地方；任何 AI 改动都会先给你看 diff，再由你决定是否接受。</p>
+        <p className="lede">系统已经把题材迁移和设定补全做完了。这里是你确认世界观、主角、对手和叙事语气的地方；AI 改动会直接套用到选中的设定卡，你也可以随时手改。</p>
 
         {repairing && (
           <div className="mb-4 flex items-center gap-2 rounded-[9px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--vermilion-line)', background: 'var(--vermilion-soft)', color: 'var(--vermilion)' }}>
@@ -891,19 +823,18 @@ export default function FusionWorkshop() {
             {/* 换皮后的具体新书设定（可编辑、走 diff）；溯源标呈现引擎/皮二元 */}
             {BLOCKS.map(({ key, label }) => {
               const active = tweakTarget === key;
-              const showDiff = pendingDiff?.block === key;
               const editing = editingBlock === key;
               return (
                 <div
                   key={key}
-                  className={`setcard skn ${showDiff ? 'diff' : ''}`}
+                  className="setcard skn"
                   style={active ? { borderColor: 'var(--vermilion-line)' } : undefined}
                   onClick={() => { if (!editing) setTweakTarget(key); }}
                 >
                   <div className="lab">
                     <span className="l">{label}</span>
                     <span className="src">引擎《{engSrc}》· 题材《{skinSrc}》</span>
-                    {!editing && !showDiff && <button className="editbtn" onClick={(e) => { e.stopPropagation(); startEdit(key); }}>✎ 改</button>}
+                    {!editing && <button className="editbtn" onClick={(e) => { e.stopPropagation(); startEdit(key); }}>✎ 改</button>}
                   </div>
                   {editing ? (
                     <div onClick={(e) => e.stopPropagation()}>
@@ -913,15 +844,6 @@ export default function FusionWorkshop() {
                         <button className="mini accept" onClick={() => saveEdit(key)}>保存</button>
                       </div>
                     </div>
-                  ) : showDiff && pendingDiff ? (
-                    <>
-                      <div className="body">{diffSegments(computeDiff(pendingDiff.oldText, pendingDiff.newText))}</div>
-                      <div className="diffbar" onClick={(e) => e.stopPropagation()}>
-                        <span className="why">✨ {pendingDiff.why}</span>
-                        <button className="mini" onClick={rejectDiff}>拒绝</button>
-                        <button className="mini accept" onClick={acceptDiff}>接受改动</button>
-                      </div>
-                    </>
                   ) : (
                     <div className="body">{blocks[key] || '—'}</div>
                   )}
@@ -932,15 +854,7 @@ export default function FusionWorkshop() {
 
           <aside className="copilot">
             <h5>与 AI 共创</h5>
-            <div className="sub">点一张卡选中目标（当前：{BLOCKS.find((b) => b.key === tweakTarget)?.label}）。说一句大白话，或点 ✨ 让我先理清你的意图。</div>
-            {intent && (
-              <div className="intent">我理解你要：<b>{intent.brief}</b>{intent.confirmation ? <><br />{intent.confirmation}</> : null}
-                <div className="ic">
-                  <button className="mini" onClick={cancelIntent}>不对，我再说</button>
-                  <button className="mini accept" onClick={confirmIntent}>对，改</button>
-                </div>
-              </div>
-            )}
+            <div className="sub">点一张卡选中目标（当前：{BLOCKS.find((b) => b.key === tweakTarget)?.label}）。说一句大白话，AI 会直接改这张卡。</div>
             <div className="aibox">
               <textarea
                 value={command}
@@ -948,13 +862,9 @@ export default function FusionWorkshop() {
                 placeholder={`对「${BLOCKS.find((b) => b.key === tweakTarget)?.label}」说：把主角换成女性 / 开篇更孤独 / 金手指更克制…`}
               />
               <div className="ar">
-                <button className="enhance" onClick={() => void enhance()} disabled={enhancing || tweaking || !command.trim()}>✨ {enhancing ? '理清中…' : '增强我的意图'}</button>
-                <button className="send" onClick={() => void runTweak()} disabled={tweaking || enhancing || !command.trim()} title="发送指令">{tweaking ? '…' : '↑'}</button>
+                <button className="send" onClick={() => void runTweak()} disabled={tweaking || !command.trim()} title="发送指令">{tweaking ? '…' : '↑'}</button>
               </div>
             </div>
-            {settingHistory.length > 0 && (
-              <button className="ver" onClick={revertSetting} disabled={tweaking || repairing}>⟲ 版本历史 · 一键回退上一步（已存 {settingHistory.length} 版）</button>
-            )}
           </aside>
         </div>
 
@@ -962,7 +872,7 @@ export default function FusionWorkshop() {
         {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--vermilion)' }}>云端有些拥挤，已自动退避重试，请稍候…</p>}
 
         <div className="mt-7 flex gap-3">
-          <button className="cta" onClick={goManuscript} disabled={repairing || !!pendingDiff}>确认设定 · 开始写开篇 →</button>
+          <button className="cta" onClick={goManuscript} disabled={repairing}>确认设定 · 开始写开篇 →</button>
           <button className="cta ghost" onClick={() => setStep('directions')}>← 换个方向</button>
         </div>
       </div>
@@ -974,17 +884,17 @@ export default function FusionWorkshop() {
     <div className="atelier">
       <WorkshopProgress current="manuscript" nextLabel={nextActionLabel} />
       <div className="mb-6 grid gap-3 lg:grid-cols-3">
-        <div className="rounded-[22px] border border-default bg-black/10 p-4">
+        <div className="rounded-[12px] border border-default bg-black/10 p-4">
           <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>Generation State</div>
           <div className="mt-2 text-sm text-primary">{backendStatus}</div>
           <p className="mt-1 text-xs leading-6 text-secondary">{streaming ? '正文正在一段一段落下，你可以随时停止，不会丢失当前已生成内容。' : '当前正文已保存在本地创作会话里，可以继续写、复制或导出。'} </p>
         </div>
-        <div className="rounded-[22px] border border-default bg-black/10 p-4">
+        <div className="rounded-[12px] border border-default bg-black/10 p-4">
           <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>Source Recipe</div>
           <div className="mt-2 text-sm text-primary">骨架《{engSrc}》 × 题材《{skinSrc}》</div>
           <p className="mt-1 text-xs leading-6 text-secondary">这让正文来源可追溯，也让用户知道现在看到的文稿为什么会呈现这种结构与气质。</p>
         </div>
-        <div className="rounded-[22px] border border-default bg-black/10 p-4">
+        <div className="rounded-[12px] border border-default bg-black/10 p-4">
           <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>Editing Contract</div>
           <div className="mt-2 text-sm text-primary">{fragmentDraft ? '正在预览片段改写' : '可选句微调，先预览再替换'}</div>
           <p className="mt-1 text-xs leading-6 text-secondary">不论是整篇重写还是片段改写，都遵守“先看结果，再决定落不落”的规则，减少失控感。</p>

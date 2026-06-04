@@ -121,13 +121,6 @@ export interface Chapter {
 // === Fusion workshop session (v7) — persists the融合工坊 funnel so a refresh/sidebar-click never蒸发已生成的方向/积木/正文 ===
 // FusionDirection（融合方向）形状由 app/dnaSchema.ts 单一源定义并 import（与后端 FusionDirection 逐字段同步）。
 
-// v9 版本历史：每次接受 AI 改动「前」对 4 块设定拍快照，支持一键回退（试错零成本）。
-export interface SettingSnapshot {
-  blocks: { worldviewBlock: string; protagonistBlock: string; antagonistBlock: string; narrativeTone: string };
-  at: number;   // epoch ms
-  note: string; // 改动说明（如指令摘要 / 「回退至此」）
-}
-
 export interface FusionSession {
   id: string; // v8 起为按 id 的多记录「创作库」（不再单例 'current'）；每开一轮新融合即一条新记录
   name: string; // 创作名（DB 为单一真相源，侧栏可重命名；回写前 get 既有记录以保留）
@@ -142,7 +135,6 @@ export interface FusionSession {
   sceneCount: number;
   sceneTexts: Record<number, string>;
   sceneResumeStatus: Record<number, string>;
-  settingHistory?: SettingSnapshot[]; // v9：4 块设定的编辑快照栈（接受 AI 改动前入栈），缺省视为空栈
   updatedAt: number;
 }
 
@@ -342,6 +334,19 @@ class NovelFusionDB extends Dexie {
       })
       .upgrade(async () => {
         /* storyboard 移除为纯类型层变更，存量数据无需迁移 */
+      });
+    // v11: 创世台收拢——移除 FusionSession.settingHistory（diff 预览 / 版本历史已删，AI 改动改为直接套用）。
+    // 索引串与 v10 一致；settingHistory 非索引、纯类型层移除。存量残留的快照栈主动删除，避免无主数据长存。
+    this.version(11)
+      .stores({
+        novels: 'id, name, createdAt, splitStatus, analysisStatus',
+        chapters: 'id, novelId, chapterIndex, status, mapStatus',
+        fusionSessions: 'id, updatedAt, createdAt',
+      })
+      .upgrade(async (tx) => {
+        await tx.table('fusionSessions').toCollection().modify((s: Record<string, unknown>) => {
+          delete s.settingHistory;
+        });
       });
   }
 }

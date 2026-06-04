@@ -31,8 +31,6 @@ from api.schemas import (
     BookReduceInput,
     ChapterMapInput,
     ChapterMapSummaryResponse,
-    EnhanceInstructionInput,
-    EnhanceInstructionResponse,
     FusionDirectionsInput,
     FusionDirectionsResponse,
     MAX_ARC_CONTENT_CHARS,
@@ -69,7 +67,6 @@ RATE_LIMIT_RULES = {
     "/api/py/extract-book-reduce": (60, 10),
     "/api/py/generate-fusion-directions": (60, 8),
     "/api/py/repair-setting-gaps": (60, 8),
-    "/api/py/enhance-instruction": (60, 20),
     "/api/py/tweak-fusion-blocks": (60, 20),
     "/api/py/stream-scene-text": (60, 12),
     "/api/py/split-recommend": (60, 20),
@@ -625,41 +622,6 @@ async def repair_setting_gaps(data: RepairSettingGapsInput, request: Request):
         system_prompt=system_prompt, user_prompt=user_prompt,
         temperature=data.temperature, request=request, label="repair_setting_gaps",
         instructor_retries=1, timeout=LONG_REQUEST_TIMEOUT_SECONDS,
-    )
-
-
-@app.post("/api/py/enhance-instruction")
-async def enhance_instruction(data: EnhanceInstructionInput, request: Request):
-    """✨意图增强：糙指令 → 精确创作简报 +「我理解你要…对吗」确认话术（带确认门，前端确认后再执行 tweak）。"""
-    await ensure_rate_limit(request, "/api/py/enhance-instruction")
-    model = sanitize_text(data.model)
-    api_key = sanitize_text(data.apiKey)
-    instruction = sanitize_text(data.userInstruction)
-    if not instruction:
-        raise ApiError(status_code=400, code="invalid_request", message="指令不能为空。")
-    validate_llm_creds(api_key, model, data.temperature)
-    logger.info("enhance_instruction ip=%s model=%s", get_client_ip(request), model)
-
-    system_prompt = (
-        "你是创作指令的『意图增强器』。用户给出的常是模糊糙指令；请把它增强为【精确、可执行的创作简报】，并给出一句确认话术。\n"
-        "要求：\n"
-        "1. interpretedBrief：明确指出『要改什么 / 改成什么效果 / 必须保留什么约束』，具体可执行，不空泛、不堆砌辞藻。\n"
-        "2. confirmation：用『我理解你要……，对吗？』句式一句话复述你的理解，供用户确认或否决。\n"
-        "3. 忠实放大用户意图，严禁臆造与原指令无关的新设定，也不要替用户做额外决定。\n"
-        + ANTI_SLOP_CONSTRAINT
-    )
-    ctx = ""
-    if data.targetBlock:
-        ctx += f"\n【当前目标卡】{data.targetBlock}"
-    if data.blockContext and data.blockContext.strip():
-        ctx += f"\n【目标卡当前内容】\n{data.blockContext.strip()}"
-    user_prompt = f"【用户糙指令】：{instruction}{ctx}\n\n请输出增强后的创作简报与确认话术。"
-    return await run_structured(
-        api_key=api_key, base_url=data.baseUrl, model=model,
-        response_model=EnhanceInstructionResponse,
-        system_prompt=system_prompt, user_prompt=user_prompt,
-        temperature=data.temperature, request=request, label="enhance_instruction",
-        instructor_retries=1,
     )
 
 

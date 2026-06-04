@@ -3,11 +3,11 @@
 import { getStageStatusClasses, type WorkflowStage, type WorkflowSummary } from '../app/workflow';
 
 const STATUS_DOT: Record<WorkflowStage['status'], string> = {
-  done: 'bg-emerald-400',
-  running: 'bg-amber-400',
-  ready: 'bg-blue-400',
-  blocked: 'bg-rose-400',
-  idle: 'bg-zinc-600',
+  done: 'bg-[color:var(--add)]',
+  running: 'bg-[color:var(--vermilion)]',
+  ready: 'bg-[color:var(--blueprint)]',
+  blocked: 'bg-[color:var(--del)]',
+  idle: 'bg-[color:var(--ink-faint)]',
 };
 
 // 主线进度 Stepper：把 workflow.ts 里写好却从未被调用的 getNovelWorkflowSummary 变成顶部常驻导航，
@@ -44,7 +44,7 @@ export default function WorkflowStepper({
               disabled={!interactive}
               title={stage.hint}
               aria-current={active ? 'step' : undefined}
-              className={`h-full w-full rounded-[18px] border px-4 py-4 text-left text-xs transition-all ${getStageStatusClasses(
+              className={`h-full w-full rounded-[12px] border px-4 py-4 text-left text-xs transition-all ${getStageStatusClasses(
                 stage.status
               )} ${active ? 'ring-1 ring-white/20 shadow-[0_18px_40px_rgba(0,0,0,0.18)]' : ''} ${
                 interactive ? 'cursor-pointer hover:-translate-y-0.5 hover:brightness-110' : 'cursor-default opacity-70'

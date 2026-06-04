@@ -49,7 +49,7 @@ export default function AppDialog({
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(7,5,4,0.78)] px-4 backdrop-blur-sm">
       <button type="button" className="absolute inset-0" onClick={onClose} aria-label="关闭对话框" />
-      <div className="relative w-full max-w-md rounded-[28px] border border-default bg-[linear-gradient(180deg,rgba(30,24,20,0.985),rgba(14,11,9,0.99))] p-6 shadow-[0_40px_100px_rgba(0,0,0,0.42)]">
+      <div className="relative w-full max-w-md rounded-[12px] border border-default bg-[var(--ink-raise)] p-6 shadow-[0_40px_100px_rgba(0,0,0,0.42)]">
         <div className="eyebrow !mb-2">Confirm · 应用内确认</div>
         <h3 className="text-[22px] text-primary" style={{ fontFamily: 'var(--font-display)', lineHeight: 1.2 }}>{title}</h3>
         <p className="mt-2 text-sm leading-6 text-secondary">{description}</p>

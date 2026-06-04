@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Chapter, type Novel, type SplitMeta, type SplitStrategyId } from '../app/db';
+import { db, type Chapter, type Novel, type SplitMeta, type SplitStatus, type SplitStrategyId } from '../app/db';
 import { isExtracting } from '../app/dnaState';
 import { useAppStore } from '../app/store';
 import { getProviderMeta } from '../app/llmProviders';
 import { getLlmConfigError, postWithLlmConfig, readApiErrorMessage } from '../app/llmClient';
 import { rescoreSplit } from '../app/splitQuality';
 import { parseNovelFile, resplit } from '../app/novelParser';
+import { planBlobPresplit } from '../app/blobPresplit';
 import { planStitch, planBulkStitch, planSplit, buildStitchBackup } from '../app/chapterOps';
 import { DEFAULT_CUSTOM_REGEX, validateLineRegex } from '../app/splitRegex';
 import ProviderCredentialsEditor from './ProviderCredentialsEditor';
@@ -527,24 +528,35 @@ export default function NovelUploader() {
       setUploadStage('saving');
       setUploadStageText('');
 
+      // 超长 blob 自动预切：盗版 txt 常把整本/多章塞进一个几万字单章，切成 ≤12k 片，
+      // 杜绝后端 extract-arc-map 砍尾，并清掉「超大章节」对 DNA 闸门的误锁。预切后 worker 的 splitMeta 失真 → 就地 rescore。
+      const presplit = planBlobPresplit(parsedChapters);
+      const effectiveChapters = presplit.chapters;
+      const { splitStatus: effSplitStatus, splitMeta: effSplitMeta } = presplit.didSplit
+        ? rescoreSplit(
+            effectiveChapters.map((c) => ({ name: c.title, wordCount: c.wordCount, chapterIndex: c.chapterIndex })),
+            computedSplitMeta,
+          )
+        : { splitStatus: (computedSplitMeta.confidenceLevel === 'low' ? 'needs_review' : 'ok') as SplitStatus, splitMeta: computedSplitMeta };
+
       await db.transaction('rw', [db.novels, db.chapters], async () => {
         // Write to novels with camelCase fields
         await db.novels.add({
           id: novelId,
           name: novelName,
-          wordCount: parsedChapters.reduce((sum, c) => sum + c.wordCount, 0),
+          wordCount: effectiveChapters.reduce((sum, c) => sum + c.wordCount, 0),
           createdAt: Date.now(),
           purifiedCount,
           sourceTextCleaned: cleanedText,
-          splitStatus: computedSplitMeta.confidenceLevel === 'low' ? 'needs_review' : 'ok',
-          splitMeta: computedSplitMeta,
+          splitStatus: effSplitStatus,
+          splitMeta: effSplitMeta,
           analysisStatus: 'idle',
           mapProgress: { total: 0, current: 0 },
           dnaCard: null,
         });
 
         // Format chapters with camelCase fields and contentSha256
-        const chaptersToSave = parsedChapters.map((chapter) => ({
+        const chaptersToSave = effectiveChapters.map((chapter) => ({
           id: crypto.randomUUID(),
           novelId,
           chapterIndex: chapter.chapterIndex,
@@ -607,12 +619,22 @@ export default function NovelUploader() {
       setUploadStage('saving');
       setUploadStageText('');
 
+      // 超长 blob 自动预切（同上传路径）：切成 ≤12k 片，杜绝砍尾 + 清掉「超大章节」误锁；预切后就地 rescore。
+      const presplit = planBlobPresplit(parsedChapters);
+      const effectiveChapters = presplit.chapters;
+      const { splitStatus: effSplitStatus, splitMeta: effSplitMeta } = presplit.didSplit
+        ? rescoreSplit(
+            effectiveChapters.map((c) => ({ name: c.title, wordCount: c.wordCount, chapterIndex: c.chapterIndex })),
+            computedSplitMeta,
+          )
+        : { splitStatus: (computedSplitMeta.confidenceLevel === 'low' ? 'needs_review' : 'ok') as SplitStatus, splitMeta: computedSplitMeta };
+
       await db.transaction('rw', [db.novels, db.chapters], async () => {
         // Empty existing chapters first to prevent residue as per AC5
         await db.chapters.where('novelId').equals(activeNovel.id).delete();
 
         // Bulk add newly computed chapters with contentSha256
-        const chaptersToSave = parsedChapters.map((chapter) => ({
+        const chaptersToSave = effectiveChapters.map((chapter) => ({
           id: crypto.randomUUID(),
           novelId: activeNovel.id,
           chapterIndex: chapter.chapterIndex,
@@ -628,9 +650,9 @@ export default function NovelUploader() {
 
         // Update novel metadata
         await db.novels.update(activeNovel.id, {
-          wordCount: parsedChapters.reduce((sum, c) => sum + c.wordCount, 0),
-          splitStatus: computedSplitMeta.confidenceLevel === 'low' ? 'needs_review' : 'ok',
-          splitMeta: computedSplitMeta,
+          wordCount: effectiveChapters.reduce((sum, c) => sum + c.wordCount, 0),
+          splitStatus: effSplitStatus,
+          splitMeta: effSplitMeta,
           analysisStatus: 'idle',
           mapProgress: { total: 0, current: 0 },
           dnaCard: null,
@@ -639,7 +661,7 @@ export default function NovelUploader() {
 
       resetChapterListView();
       setSelectedChapterIds(new Set());
-      if (computedSplitMeta.confidenceLevel === 'low') {
+      if (effSplitMeta.confidenceLevel === 'low') {
         setToast({
           show: true,
           message: '重切后置信度仍偏低，可改用「分章规则」自定义正则，或用 ✨ 智能语义拆分。',
@@ -648,7 +670,7 @@ export default function NovelUploader() {
       } else {
         setToast({
           show: true,
-          message: `重切完成：${computedSplitMeta.chapterCount} 章，置信度 ${Math.round(computedSplitMeta.confidence * 100)}%。`,
+          message: `重切完成：${effSplitMeta.chapterCount} 章，置信度 ${Math.round(effSplitMeta.confidence * 100)}%。`,
           countdown: 4000,
           type: 'success',
         });
@@ -848,7 +870,7 @@ export default function NovelUploader() {
   if (!selectedNovelId) {
     return (
       <div
-        className="atelier mx-auto w-full max-w-5xl rounded-[28px] border border-default bg-[linear-gradient(180deg,rgba(26,21,18,0.96),rgba(16,13,11,0.98))] p-8 shadow-[0_30px_80px_rgba(0,0,0,0.32)]"
+        className="atelier mx-auto w-full max-w-5xl rounded-[12px] border border-default bg-[var(--ink-raise)] p-8"
         onDragEnter={handleDrag}
         onDragOver={handleDrag}
         onDragLeave={handleDrag}
@@ -877,12 +899,12 @@ export default function NovelUploader() {
             </div>
           </div>
 
-          <div className="rounded-[24px] border border-[color:var(--vermilion-line)] bg-[linear-gradient(180deg,rgba(207,74,46,0.08),rgba(207,74,46,0.02))] p-5">
+          <div className="rounded-[12px] border border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] p-5">
             <div className="text-[11px] uppercase tracking-[0.28em] text-vermilion" style={{ fontFamily: 'var(--font-mono)' }}>文件投入口</div>
             <p className="mt-2 text-sm leading-6 text-secondary">支持拖拽导入，也可以点按选择文件。导入完成后会直接进入切分校验台，不需要你再猜下一步该去哪。</p>
             <div
               onClick={() => fileInputRef.current?.click()}
-              className={`relative mt-5 cursor-pointer overflow-hidden rounded-[22px] border border-dashed px-8 py-14 text-center transition-all duration-150 ${
+              className={`relative mt-5 cursor-pointer overflow-hidden rounded-[12px] border border-dashed px-8 py-14 text-center transition-all duration-150 ${
                 dragActive
                   ? 'border-[color:var(--vermilion)] bg-[color:var(--vermilion-soft)]'
                   : 'border-[color:var(--vermilion-line)] bg-black/10 hover:border-[color:var(--vermilion)]'
@@ -913,7 +935,7 @@ export default function NovelUploader() {
         </div>
 
         {uploading && (
-          <div className="mt-6 rounded-[24px] border border-default bg-black/15 p-6">
+          <div className="mt-6 rounded-[12px] border border-default bg-black/15 p-6">
             <div className="flex items-center gap-5">
               <div className="relative h-16 w-16 will-change-transform">
                 <svg className="h-full w-full animate-[spin_6s_linear_infinite]" viewBox="0 0 100 100">
@@ -952,7 +974,7 @@ export default function NovelUploader() {
 
   // Chapter Review View
   return (
-    <div className="flex h-[calc(100vh-8rem)] w-full overflow-hidden rounded-[28px] border border-default bg-[linear-gradient(180deg,rgba(26,21,18,0.97),rgba(16,13,11,0.99))] shadow-[0_30px_80px_rgba(0,0,0,0.32)]">
+    <div className="flex h-[calc(100vh-8rem)] w-full overflow-hidden rounded-[12px] border border-default bg-[var(--ink-raise)]">
       {/* Left panel: outline tree */}
       <div className="flex h-full w-[360px] shrink-0 flex-col border-r border-default bg-[rgba(11,9,8,0.42)]">
         {/* Left header: info and settings */}
@@ -975,17 +997,17 @@ export default function NovelUploader() {
             <div>{formatWordCount(activeNovel?.wordCount || 0)}字 · {chapters.length}章</div>
             <div>均字：{Math.round(derivedStats?.avgChapterChars ?? 0)}字/章</div>
             {!!activeNovel?.purifiedCount && activeNovel.purifiedCount > 0 && (
-              <div className="text-emerald-400">已净化 {activeNovel.purifiedCount.toLocaleString()} 字噪点</div>
+              <div className="text-[color:var(--add)]">已净化 {activeNovel.purifiedCount.toLocaleString()} 字噪点</div>
             )}
             {splitMeta && (
               <div className="mt-1.5">
                 <span
                   className={`inline-block rounded-full px-2 py-1 text-[10px] font-medium ${
                     splitMeta.confidenceLevel === 'high'
-                      ? 'bg-emerald-500/10 text-emerald-400'
+                      ? 'bg-[color:var(--add-soft)] text-[color:var(--add)]'
                       : splitMeta.confidenceLevel === 'medium'
-                      ? 'bg-amber-500/10 text-amber-400'
-                      : 'bg-rose-500/10 text-rose-400'
+                      ? 'bg-[color:var(--vermilion-soft)] text-[color:var(--vermilion)]'
+                      : 'bg-[color:var(--del-soft)] text-[color:var(--del)]'
                   }`}
                 >
                   切分置信度 {splitMeta.confidenceLevel === 'high' ? '高' : splitMeta.confidenceLevel === 'medium' ? '中' : '低'} · {Math.round(splitMeta.confidence * 100)}%
@@ -1079,7 +1101,7 @@ export default function NovelUploader() {
         {(uploading || repairing || errorMsg || needsSmartRepair) && (
           <div className="shrink-0 space-y-1 border-b border-default bg-black/10 p-3 text-xs">
             {needsSmartRepair && (
-              <div className="flex items-center gap-1.5 font-mono text-amber-500">
+              <div className="flex items-center gap-1.5 font-mono text-[color:var(--vermilion)]">
                 <span>● 先修风险章节再继续</span>
                 {splitMeta && <span className="text-muted">({Math.round(splitMeta.confidence * 100)}% 置信度)</span>}
               </div>
@@ -1100,7 +1122,7 @@ export default function NovelUploader() {
               </div>
             )}
             {errorMsg && (
-              <div className="text-red-400 font-mono leading-relaxed truncate" title={errorMsg}>
+              <div className="text-[color:var(--del)] font-mono leading-relaxed truncate" title={errorMsg}>
                 ⚠️ {errorMsg}
               </div>
             )}
@@ -1142,7 +1164,7 @@ export default function NovelUploader() {
                 bgClass = 'bg-[color:var(--vermilion-soft)]';
                 borderClass = 'border-l-2 border-[color:var(--vermilion)]';
                 if (warningType === 'short') {
-                  textClass = 'text-[#f59e0b] font-medium';
+                  textClass = 'text-[color:var(--vermilion)] font-medium';
                 } else if (warningType === 'long') {
                   textClass = 'text-blueprint font-medium';
                 } else {
@@ -1150,7 +1172,7 @@ export default function NovelUploader() {
                 }
               } else {
                 if (warningType === 'short') {
-                  textClass = 'text-[#f59e0b]/80 hover:text-[#f59e0b]';
+                  textClass = 'text-[color:var(--vermilion)]/80 hover:text-[color:var(--vermilion)]';
                 } else if (warningType === 'long') {
                   textClass = 'text-[color:rgba(137,147,161,0.82)] hover:text-blueprint';
                 }
@@ -1211,14 +1233,14 @@ export default function NovelUploader() {
                         <span>[分析中...]</span>
                       </div>
                     ) : chapter.mapStatus === 'done' ? (
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" title="已完成 DNA 提取">
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-[color:var(--add-soft)] text-[color:var(--add)] border border-[color:var(--add)]/25" title="已完成 DNA 提取">
                         🧬
                       </span>
                     ) : chapter.mapStatus === 'error' ? (
                       <div className="relative group/error shrink-0">
-                        <span className="text-red-500 cursor-help" title={chapter.errorMsg || '解析失败'}>⚠️</span>
+                        <span className="text-[color:var(--del)] cursor-help" title={chapter.errorMsg || '解析失败'}>⚠️</span>
                         {chapter.errorMsg && (
-                      <div className="absolute bottom-full right-0 z-50 mb-1 hidden w-48 break-all rounded-lg border border-red-500/30 bg-[rgba(16,13,11,0.94)] p-2 text-[10px] text-red-200 shadow-xl backdrop-blur-md group-hover/error:block whitespace-normal">
+                      <div className="absolute bottom-full right-0 z-50 mb-1 hidden w-48 break-all rounded-lg border border-[color:var(--del)]/30 bg-[rgba(16,13,11,0.94)] p-2 text-[10px] text-[color:var(--del)] shadow-xl backdrop-blur-md group-hover/error:block whitespace-normal">
                             {chapter.errorMsg}
                           </div>
                         )}
@@ -1232,7 +1254,7 @@ export default function NovelUploader() {
                           e.stopPropagation();
                           handleStitch(chapter.id);
                         }}
-                        className="rounded border border-[#f59e0b]/20 bg-[#f59e0b]/10 px-1.5 py-0.5 text-[10px] text-[#f59e0b] opacity-0 transition-opacity hover:bg-[#f59e0b]/30 hover:text-white group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="rounded border border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] px-1.5 py-0.5 text-[10px] text-[color:var(--vermilion)] opacity-0 transition-opacity hover:bg-[color:var(--vermilion-line)] hover:text-[color:var(--near-white)] group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
                         title={chapter.id === chapters[0]?.id ? '第一章无法向前缝合' : '将本章物理缝合至上一章'}
                         aria-label="一键缝合"
                       >
@@ -1243,7 +1265,7 @@ export default function NovelUploader() {
                       {wordCount}
                     </span>
                     {warningType === 'short' && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#f59e0b] shrink-0" title="字数极少警告" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-[color:var(--vermilion)] shrink-0" title="字数极少警告" />
                     )}
                     {warningType === 'long' && (
                       <button
@@ -1394,9 +1416,9 @@ export default function NovelUploader() {
                         </div>
                         <div className="mt-2 border-t border-default pt-2 text-[10px]">
                           {(predictedWordsA < 2000 || predictedWordsB < 2000) ? (
-                            <span className="text-amber-500">⚠️ 分割后章节偏短</span>
+                            <span className="text-[color:var(--vermilion)]">⚠️ 分割后章节偏短</span>
                           ) : (
-                            <span className="text-[#10b981]">✅ 比例非常协调</span>
+                            <span className="text-[color:var(--add)]">✅ 比例非常协调</span>
                           )}
                         </div>
                       </div>
@@ -1521,7 +1543,7 @@ export default function NovelUploader() {
                                       handleSplitAtParagraph(pIdx);
                                     }}
                                     disabled={processing}
-                                    className="absolute z-20 flex items-center gap-1 rounded-full border border-[color:var(--vermilion-line)] bg-[rgba(16,13,11,0.92)] px-3 py-1 text-[10px] font-semibold text-primary shadow-[0_0_15px_rgba(207,74,46,0.22)] backdrop-blur-md transition-all duration-200 cursor-pointer pointer-events-auto"
+                                    className="absolute z-20 flex items-center gap-1 rounded-full border border-[color:var(--vermilion-line)] bg-[rgba(16,13,11,0.92)] px-3 py-1 text-[10px] font-semibold text-primary backdrop-blur-md transition-all duration-200 cursor-pointer pointer-events-auto"
                                   >
                                     ✂️ 在此剪开
                                   </button>
@@ -1577,7 +1599,7 @@ export default function NovelUploader() {
             <div className="flex-1 overflow-y-auto px-8 py-6 space-y-6 relative select-text">
               {/* Warnings panel */}
               {activeChapter.wordCount < 120 && (
-                <div className="p-3.5 rounded-xl border border-[#f59e0b]/20 bg-[#f59e0b]/10 text-amber-200 backdrop-blur-md text-xs leading-relaxed flex items-start gap-2.5 shadow-lg shadow-black/40 animate-[fadeIn_150ms_ease-out]">
+                <div className="p-3.5 rounded-xl border border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] text-[color:var(--vermilion)] backdrop-blur-md text-xs leading-relaxed flex items-start gap-2.5 shadow-lg shadow-black/40 animate-[fadeIn_150ms_ease-out]">
                   <span className="text-base shrink-0">⚠️</span>
                   <div>
                     <span className="font-semibold">本章字数极低（只有 {activeChapter.wordCount} 字）。</span>
@@ -1651,6 +1673,7 @@ export default function NovelUploader() {
               <ProviderCredentialsEditor
                 variant="crystal"
                 providerSelector="tabs"
+                collapsibleAdvanced
                 apiKeyLabel="云端模型 API Key"
                 keyHelpText="🔒 密钥仅以混淆形式存储于本地浏览器，绝不上传服务器。"
                 ollamaSlot={
@@ -1660,10 +1683,10 @@ export default function NovelUploader() {
                       <span
                         className={`h-2 w-2 rounded-full transition-colors duration-100 ${
                           ollamaStatus === 'online'
-                            ? 'bg-[#10b981]'
+                            ? 'bg-[color:var(--add)]'
                             : ollamaStatus === 'checking' || ollamaStatus === 'unknown'
                             ? 'animate-pulse bg-slate-500'
-                            : 'bg-[#f59e0b]'
+                            : 'bg-[color:var(--vermilion)]'
                         }`}
                       />
                       <span className="text-xs font-medium text-primary">
@@ -1700,11 +1723,11 @@ export default function NovelUploader() {
       {toast && toast.show && (
         <div className={`fixed bottom-8 left-1/2 z-50 flex min-w-[320px] max-w-md -translate-x-1/2 flex-col rounded-xl p-4 text-xs shadow-2xl backdrop-blur-md animate-[fadeIn_150ms_ease-out] ${
           toast.type === 'success'
-            ? 'border border-[#10b981]/30 bg-[rgba(16,13,11,0.96)] text-emerald-100 shadow-[0_0_20px_rgba(16,185,129,0.15)]'
-            : 'border border-[color:var(--vermilion-line)] bg-[rgba(16,13,11,0.96)] text-secondary shadow-[0_0_20px_rgba(207,74,46,0.16)]'
+            ? 'border border-[color:var(--add)]/30 bg-[rgba(16,13,11,0.96)] text-[color:var(--add)]'
+            : 'border border-[color:var(--vermilion-line)] bg-[rgba(16,13,11,0.96)] text-secondary'
         }`}>
           <div className="flex items-center justify-between gap-4">
-            <span className={`font-medium ${toast.type === 'success' ? 'text-emerald-300' : 'text-slate-300'}`}>
+            <span className={`font-medium ${toast.type === 'success' ? 'text-[color:var(--add)]' : 'text-[color:var(--ink-dim)]'}`}>
               {toast.message}
             </span>
             {toast.type === 'stitch' && canUndo && (
@@ -1720,7 +1743,7 @@ export default function NovelUploader() {
           <div className="mt-2.5 h-1 w-full overflow-hidden rounded-full bg-black/20">
             <div
               className={`h-full transition-all duration-100 ease-linear ${
-                toast.type === 'success' ? 'bg-[#10b981]' : 'bg-[color:var(--vermilion)]'
+                toast.type === 'success' ? 'bg-[color:var(--add)]' : 'bg-[color:var(--vermilion)]'
               }`}
               style={{ width: `${(toast.countdown / 6000) * 100}%` }}
             />

@@ -51,7 +51,7 @@ function useBackgroundExtraction(selectedNovelId: string | null, llmConfig: LLMC
     if (!selectedNovelId || !novel) return;
     if (!ensureLlmConfigReady(llmConfig).ok) return; // 未配密钥不自动跑（配好后本 effect 因 llmConfig 变化重评）
     if (!canAutoStart(novel)) return; // 状态层门：仅全新 idle（无卡、非进行中、非 error）自启；已有结果走手动重提，error 不自动重启
-    if (chapterCount === 0 || novel.splitStatus !== 'ok') return; // 未切分/切分异常先不自动跑（出问题才提示）
+    if (chapterCount === 0) return; // 仅「尚无章节（还在解析）」时不跑；切分质量不再设门——超长 blob 已在导入时预切，整本/弧窗提取不依赖精确分章
 
     const id = selectedNovelId;
     const name = novel.name;
@@ -246,10 +246,10 @@ export default function Home() {
     : extractingCount > 0
     ? `有 ${extractingCount} 本作品正在后台提取 DNA。`
     : workflowSummary.recommendedNextStep;
-  const readinessTone = llmReadiness.ok ? 'text-emerald-400 border-emerald-500/20 bg-emerald-500/[0.06]' : 'text-amber-400 border-amber-500/20 bg-amber-500/[0.06]';
+  const readinessTone = llmReadiness.ok ? 'text-[color:var(--add)] border-[color:var(--add)]/25 bg-[color:var(--add-soft)]' : 'text-[color:var(--vermilion)] border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)]';
 
   return (
-    <main className="workspace-shell flex min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(207,74,46,0.08),transparent_28%),radial-gradient(circle_at_top_right,rgba(137,147,161,0.08),transparent_22%)]">
+    <main className="workspace-shell flex min-h-screen">
       {/* Mobile nav scrim */}
       {mobileNavOpen && (
         <button
@@ -264,20 +264,20 @@ export default function Home() {
       <aside
         className={`${
           mobileNavOpen ? 'fixed inset-y-0 left-0 z-40 flex' : 'hidden'
-        } w-[296px] flex-col border-r border-default bg-[linear-gradient(180deg,rgba(14,11,10,0.98),rgba(22,18,15,0.98))] lg:static lg:z-auto lg:flex`}
+        } w-[296px] flex-col border-r border-default bg-[rgba(14,11,10,0.99)] lg:static lg:z-auto lg:flex`}
       >
         <div className="border-b border-default px-5 py-5">
           <div className="flex items-center gap-3">
             <span
               className="grid h-10 w-10 place-items-center rounded-2xl text-[18px] font-bold text-white"
-              style={{ background: 'linear-gradient(180deg,var(--vermilion),#9f351d)', fontFamily: 'var(--font-serif)', boxShadow: '0 12px 28px rgba(207,74,46,.32)' }}
+              style={{ background: 'var(--vermilion)', fontFamily: 'var(--font-serif)' }}
             >墨</span>
             <div className="leading-tight">
               <div className="text-[16px] text-primary" style={{ fontFamily: 'var(--font-display)', fontWeight: 600 }}>创作 DNA 工坊</div>
               <div className="text-[10px] tracking-[0.22em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>PRO WRITING WORKBENCH</div>
             </div>
           </div>
-          <div className="mt-4 rounded-[20px] border border-default bg-[rgba(239,230,214,0.03)] p-4">
+          <div className="mt-4 rounded-[12px] border border-default bg-[rgba(239,230,214,0.03)] p-4">
             <div className="text-[11px] uppercase tracking-[0.22em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>Workspace Pulse</div>
             <div className="mt-2 text-sm leading-6 text-primary">所有作品、DNA 和创作会话都挂在同一条连续工作流上。</div>
             <div className="mt-3 text-xs leading-6 text-secondary">{activeTaskLabel}</div>
@@ -310,9 +310,9 @@ export default function Home() {
                 return (
                   <div
                     key={novel.id}
-                    className={`group relative mb-2 rounded-[18px] border px-4 py-3 transition-all ${
+                    className={`group relative mb-2 rounded-[12px] border px-4 py-3 transition-all ${
                       active
-                        ? 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] shadow-[0_10px_28px_rgba(0,0,0,0.14)]'
+                        ? 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)]'
                         : 'border-default bg-black/10 hover:border-[color:var(--line-strong)] hover:bg-[rgba(26,21,18,0.72)]'
                     }`}
                   >
@@ -339,7 +339,7 @@ export default function Home() {
                         e.stopPropagation();
                         setDialogState({ kind: 'deleteNovel', novel });
                       }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-red-400 group-hover:opacity-100"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-[color:var(--del)] group-hover:opacity-100"
                     >
                       ×
                     </button>
@@ -358,7 +358,7 @@ export default function Home() {
                   <div
                     key={creation.id}
                     title={workshopBusy && !active ? '生成中，暂不可切换创作' : undefined}
-                    className={`group relative mb-2 rounded-[18px] border px-4 py-3 ${
+                    className={`group relative mb-2 rounded-[12px] border px-4 py-3 ${
                       active
                         ? 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)]'
                         : workshopBusy
@@ -392,7 +392,7 @@ export default function Home() {
                         e.stopPropagation();
                         setDialogState({ kind: 'deleteCreation', creation });
                       }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-red-400 group-hover:opacity-100"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-[color:var(--del)] group-hover:opacity-100"
                     >
                       ×
                     </button>
@@ -421,7 +421,7 @@ export default function Home() {
               setSettingsOpen(true);
               setMobileNavOpen(false);
             }}
-            className="mt-3 flex w-full items-center justify-between rounded-[18px] border border-default bg-black/10 px-4 py-3 text-left text-sm text-secondary hover:text-primary"
+            className="mt-3 flex w-full items-center justify-between rounded-[12px] border border-default bg-black/10 px-4 py-3 text-left text-sm text-secondary hover:text-primary"
           >
             <div>
               <span className="block text-primary">模型与偏好设置</span>
@@ -554,9 +554,9 @@ export default function Home() {
         <div
           role="status"
           aria-live="polite"
-          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-emerald-500/30 bg-black/90 px-4 py-2.5 text-sm text-emerald-400 shadow-2xl"
+          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-[color:var(--add)]/30 bg-black/90 px-4 py-2.5 text-sm text-[color:var(--add)] shadow-2xl"
         >
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+          <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--add)]" />
           {doneToast}
           <button onClick={dismissToast} className="text-muted hover:text-primary" aria-label="关闭通知">×</button>
         </div>

@@ -68,7 +68,7 @@ export interface LLMConfig {
 }
 
 const DEFAULT_LLM_CONFIG: LLMConfig = {
-  activeProvider: 'openai',
+  activeProvider: 'deepseek',
   providerProfiles: createDefaultProviderProfiles(),
   temperature: DEFAULT_TEMPERATURE,
 };
@@ -142,14 +142,14 @@ function normalizeLLMConfig(raw: unknown): LLMConfig {
   const hasNewShape = 'activeProvider' in llmRaw && 'providerProfiles' in llmRaw;
   if (hasNewShape) {
     return {
-      activeProvider: isProviderId(llmRaw.activeProvider) ? llmRaw.activeProvider : 'openai',
+      activeProvider: isProviderId(llmRaw.activeProvider) ? llmRaw.activeProvider : 'deepseek',
       providerProfiles: normalizeProviderProfiles(llmRaw.providerProfiles),
       temperature: clampTemperature(llmRaw.temperature),
     };
   }
 
   // Legacy shape migration: provider + apiKey/baseUrl/model + providers cache.
-  const activeProvider = isProviderId(llmRaw.provider) ? llmRaw.provider : 'openai';
+  const activeProvider = isProviderId(llmRaw.provider) ? llmRaw.provider : 'deepseek';
   const providerProfiles = normalizeProviderProfiles(llmRaw.providers);
   providerProfiles[activeProvider] = {
     apiKey: typeof llmRaw.apiKey === 'string' ? llmRaw.apiKey : providerProfiles[activeProvider].apiKey,

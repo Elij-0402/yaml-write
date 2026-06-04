@@ -48,8 +48,8 @@ export default function AppNotice({
 
   return (
     <div
-      className={`rounded-[18px] border px-4 py-3.5 text-sm shadow-[0_18px_40px_rgba(0,0,0,0.12)] ${className}`}
-      style={{ borderColor: style.border, background: `linear-gradient(180deg, ${style.background}, rgba(16,13,11,0.18))` }}
+      className={`rounded-[12px] border px-4 py-3.5 text-sm ${className}`}
+      style={{ borderColor: style.border, background: style.background }}
     >
       {title ? (
         <div className="flex items-center gap-2 font-semibold" style={{ color: style.title }}>

@@ -158,7 +158,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
 
   return (
     <div className="atelier max-w-3xl">
-      <div className="mb-6 rounded-[24px] border border-default bg-[linear-gradient(180deg,rgba(26,21,18,0.92),rgba(16,13,11,0.96))] p-5 shadow-[0_18px_50px_rgba(0,0,0,0.18)]">
+      <div className="mb-6 rounded-[12px] border border-default bg-[var(--ink-raise)] p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="eyebrow !mb-1">DNA 提取 · 工作流中段</div>
@@ -168,7 +168,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
             下一步 · <span className="text-primary">{dnaStepCopy.next}</span>
           </div>
         </div>
-        <div className="mt-4 rounded-[20px] border border-default bg-black/10 p-4">
+        <div className="mt-4 rounded-[12px] border border-default bg-black/10 p-4">
           <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>当前阶段</div>
           <div className="mt-2 text-sm text-primary">{dnaStepCopy.title}</div>
           <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-secondary">
@@ -284,7 +284,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
           )}
 
           {busy ? (
-            <div className="rounded-[14px] border border-default bg-secondary p-6 space-y-4">
+            <div className="rounded-[12px] border border-default bg-secondary p-6 space-y-4">
               <div className="flex items-center gap-2 text-sm text-primary">
                 <span className="h-1.5 w-1.5 rounded-full animate-pulse motion-reduce:animate-none" style={{ background: 'var(--vermilion)' }} />
                 {status === 'reducing' ? '正在归纳全书创作 DNA…' : `正在提取 DNA ${progress.current}/${progress.total || '…'}`}
@@ -296,7 +296,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
                 <p className="text-xs" style={{ color: 'var(--vermilion)' }}>云端有些拥挤，已自动放缓退避重试，测序绝不中断。</p>
               )}
               <p className="text-[11px] text-muted">正在后台自动提取（按体量自适应），可切到别处，跑完会通知你。</p>
-              <div className="rounded-[14px] border border-default bg-black/10 p-3 text-xs leading-6 text-secondary">
+              <div className="rounded-[12px] border border-default bg-black/10 p-3 text-xs leading-6 text-secondary">
                 当前状态会在这里持续更新，所以用户不用猜“系统是不是卡住了”，也不用切去别的面板确认后端有没有继续工作。
               </div>
             </div>
@@ -318,7 +318,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
               )}
 
               {llmReadiness.ok && (
-              <div className="rounded-[14px] border border-default bg-black/10 p-4 text-xs leading-6 text-secondary">
+              <div className="rounded-[12px] border border-default bg-black/10 p-4 text-xs leading-6 text-secondary">
                   DNA 会在后台自动按体量提取。若长时间没有推进，优先检查切分质量与模型配置。
                 </div>
               )}

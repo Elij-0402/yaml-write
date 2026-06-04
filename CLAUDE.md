@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-A Chinese-language novel **creative-DNA & skin-swap** tool ("创作 DNA 工坊 / VARIATION ATELIER"). Core theory is **换皮变题** (skin-swap): every story is a migratable **engine** (structure + pacing) wearing a replaceable **skin** (theme + prose). Pipeline: users upload `.txt` novels → the **client** splits them into chapters → a **size-routed** extractor distills the book into one **4-layer engine/skin DNA card** → users pick one DNA-ready book as the **骨架(engine)** and optionally another as the **题材(skin)** (or describe a skin by hand) → the workshop migrates the engine's structure beats onto the new skin into **3 fusion directions** → pick one, the setting auto-repairs logic gaps, tweak the 4 setting blocks (every AI edit shown as an accept/reject diff) → **stream one continuous opening chapter**. Everything persists in the browser (IndexedDB + LocalStorage); there is no server-side database and keys never touch server storage.
+A Chinese-language novel **creative-DNA & skin-swap** tool ("创作 DNA 工坊 / VARIATION ATELIER"). Core theory is **换皮变题** (skin-swap): every story is a migratable **engine** (structure + pacing) wearing a replaceable **skin** (theme + prose). Pipeline: users upload `.txt` novels → the **client** splits them into chapters → a **size-routed** extractor distills the book into one **4-layer engine/skin DNA card** → users pick one DNA-ready book as the **骨架(engine)** and optionally another as the **题材(skin)** (or describe a skin by hand) → the workshop migrates the engine's structure beats onto the new skin into **3 fusion directions** → pick one, the setting auto-repairs logic gaps, tweak the 4 setting blocks (AI tweaks apply directly to the targeted block; manual ✎ inline edits too) → **stream one continuous opening chapter**. Everything persists in the browser (IndexedDB + LocalStorage); there is no server-side database and keys never touch server storage.
 
 The whole UI is in Chinese. The app lives in `yaml-write/` (the Next.js root holding `package.json`, `app/`, `api/`, `components/`).
 
@@ -22,7 +22,7 @@ npx tsc --noEmit     # type-check only (fast)
 npm test             # vitest run — pure-logic unit tests
 ```
 
-Tests are **pure-logic only** (Vitest, node env, no React/RTL/jsdom) — the 8 `app/**/*.test.ts` suites cover the extracted pure modules: `splitQuality`, `splitRegex`, `chapterOps`, `dnaSchema`, `dnaRouting`, `dnaState`, `diff`, `settingHistory`. Validate changes with `npm test` + `npx tsc --noEmit` + `npm run build`, then a manual walk-through (UI/LLM behavior is not unit-tested). `fastapi-dev` invokes `python` from PATH; use a venv/interpreter that has the `requirements.txt` deps.
+Tests are **pure-logic only** (Vitest, node env, no React/RTL/jsdom) — the 7 `app/**/*.test.ts` suites cover the extracted pure modules: `splitQuality`, `splitRegex`, `chapterOps`, `dnaSchema`, `dnaRouting`, `dnaState`, `blobPresplit`. Validate changes with `npm test` + `npx tsc --noEmit` + `npm run build`, then a manual walk-through (UI/LLM behavior is not unit-tested). `fastapi-dev` invokes `python` from PATH; use a venv/interpreter that has the `requirements.txt` deps.
 
 Interactive API docs (dev): `http://localhost:3000/api/py/docs` or `http://localhost:3000/docs` — both rewrite to FastAPI's Swagger UI.
 
@@ -96,7 +96,7 @@ Extraction is **zero-parameter and auto-routed by cleaned word count** (no more 
 
 ### LLM endpoints (`api/index.py`)
 
-**10** `/api/py/` routes. Nine are structured (shared `run_structured` → `instructor.from_openai` + transient retry: up to `MAX_PARSE_RETRIES` (2) extra attempts with exponential backoff on 429/502/503/504, then a friendly `ApiError`; heavy ones also pass `instructor_retries` 1–2 and a 120s timeout). One streams via SSE. The 4-layer producers share `FOUR_LAYER_DNA_GUIDE`; every creation prompt shares `ANTI_SLOP_CONSTRAINT` and may append free-text `adversarialRules`.
+**9** `/api/py/` routes. Eight are structured (shared `run_structured` → `instructor.from_openai` + transient retry: up to `MAX_PARSE_RETRIES` (2) extra attempts with exponential backoff on 429/502/503/504, then a friendly `ApiError`; heavy ones also pass `instructor_retries` 1–2 and a 120s timeout). One streams via SSE. The 4-layer producers share `FOUR_LAYER_DNA_GUIDE`; every creation prompt shares `ANTI_SLOP_CONSTRAINT` and may append free-text `adversarialRules`.
 
 | Endpoint | Mode · `response_model` | Rate/60s | Live caller |
 |---|---|---|---|
@@ -106,8 +106,7 @@ Extraction is **zero-parameter and auto-routed by cleaned word count** (no more 
 | `extract-book-reduce` | structured · `NovelDNACardResponse` | 10 | `dnaEngine` (reduce) |
 | `generate-fusion-directions` | structured · `FusionDirectionsResponse` — migrates `engineCard` beats onto `skinSource` per `mode` (`self`/`cross`) → 3 directions | 8 | `FusionWorkshop` (collide) |
 | `repair-setting-gaps` | structured · `RepairSettingGapsResponse` — gap-repair: checks each engine beat survives the new skin, patches breaks | 8 | `FusionWorkshop` (on direction pick) |
-| `enhance-instruction` | structured · `EnhanceInstructionResponse` — intent meta-prompt: vague command → precise brief + "我理解你要…对吗" confirm gate | 20 | `FusionWorkshop` (✨ enhance) |
-| `tweak-fusion-blocks` | structured · `TweakBlocksResponse` — rewrites only the `targetBlock`, others return `null` | 20 | `FusionWorkshop` (command bar) |
+| `tweak-fusion-blocks` | structured · `TweakBlocksResponse` — rewrites only the `targetBlock`, others return `null`; applied directly (no diff / confirm gate) | 20 | `FusionWorkshop` (command bar) |
 | `stream-scene-text` | **SSE** — per-scene prose; `currentDraft` resumes an interrupted draft | 12 | `FusionWorkshop` (opening + fragment rewrite) |
 | `split-recommend` | structured · `SplitRecommendResponse` — JIT semantic split: numbered paragraphs → recommended cut points | 20 | `NovelUploader` |
 
@@ -119,7 +118,7 @@ The old `generate-storyboard` / `stream-storyboard` endpoints and `StoryboardRes
 
 ### Local persistence — Dexie / IndexedDB (versioned)
 
-`app/db.ts` defines `NovelFusionDB` (`novels`, `chapters`, `fusionSessions`) with versioned schemas + sequential `.upgrade()` migrations, currently at **`version(10)`**. Milestones:
+`app/db.ts` defines `NovelFusionDB` (`novels`, `chapters`, `fusionSessions`) with versioned schemas + sequential `.upgrade()` migrations, currently at **`version(11)`**. Milestones:
 - **v1–v4**: novels/chapters base schema; `splitStatus` index; `splitMeta` normalization.
 - **v5**: book-level DNA fields — `novels.analysisStatus` (indexed, `'idle'`), `mapProgress`, `dnaCard`; `chapters.mapStatus` (indexed, `'pending'`), `mapSummary`.
 - **v6**: optional non-indexed `Chapter.contentSha256` (no-op upgrade; backfilled lazily).
@@ -127,8 +126,9 @@ The old `generate-storyboard` / `stream-storyboard` endpoints and `StoryboardRes
 - **v8**: `fusionSessions` → multi-record **creation library** (`'id, updatedAt, createdAt'`, adds `name`+`createdAt`); old singleton backfilled.
 - **v9**: DNA recut to the **4-layer** card + `FusionSession.settingHistory` (the AI-edit snapshot stack); existing 5-dim cards lazily marked `dnaCardVersion:1` (retained, not migrated). Index strings unchanged.
 - **v10**: `FusionSession` drops the deprecated `storyboard` field (the manuscript is a single continuous opening now). Pure type-layer change; no-op upgrade.
+- **v11**: `FusionSession` drops `settingHistory` (creator diff-preview / version-history removed — AI tweaks now apply directly to the targeted block). Upgrade deletes the stale snapshot stack from existing records.
 
-`FusionSession` shape: `selectedIds`, `customPrompt`, `adversarialRules`, `step` (`material|directions|creator|manuscript`), `directions`, `blocks`, `directionTitle`, `sceneCount`, `sceneTexts`, `sceneResumeStatus`, `settingHistory?`, plus `name/createdAt/updatedAt`.
+`FusionSession` shape: `selectedIds`, `customPrompt`, `adversarialRules`, `step` (`material|directions|creator|manuscript`), `directions`, `blocks`, `directionTitle`, `sceneCount`, `sceneTexts`, `sceneResumeStatus`, plus `name/createdAt/updatedAt`.
 
 **Iron rule:** any change to the `Novel`/`Chapter`/`FusionSession` shape requires a new `this.version(n).stores(...).upgrade(...)` block — don't mutate existing version definitions. Components read reactively via `useLiveQuery` (`dexie-react-hooks`); mutations through `db.*.update(...)` propagate to all live queries.
 
@@ -141,7 +141,7 @@ The old `generate-storyboard` / `stream-storyboard` endpoints and `StoryboardRes
 - **FusionWorkshop** — the 4-step skin-swap funnel, persisted **per creation** to `db.fusionSessions` (keyed by `activeCreationId`):
   1. **配方台 (material)** — pick the **骨架(engine)** book (must be a 4-layer card) and optionally a **题材(skin)** book; `selectedIds[0]`=engine, `[1]`=skin. `mode` = `cross` (two books) or `self` (自我裂变, skin from `customPrompt`). `swapRoles` ⇅; optional 想往哪写 + 反套路约束. → `generate-fusion-directions`.
   2. **三方向 (directions)** — 3 migration directions, each with a `transferNote` (🧬 which engine beat → which skin).
-  3. **创世台 (creator)** — read-only engine source (①②) + 4 editable setting blocks; picking a direction auto-runs `repair-setting-gaps` (🩹 补洞). AI edits go command-bar → `tweak-fusion-blocks` → **diff** (`app/diff.ts`) → accept/reject (never silent overwrite); ✨ → `enhance-instruction` confirm gate; manual ✎ edit; **version history** (`settingHistory` via `app/settingHistory.ts`, 一键回退).
+  3. **创世台 (creator)** — read-only engine source (①②) + 4 editable setting blocks; picking a direction auto-runs `repair-setting-gaps` (🩹 补洞). AI edits go command-bar → `tweak-fusion-blocks` → **apply directly to the targeted block** (no diff / confirm gate); manual ✎ inline edit.
   4. **成稿 (manuscript)** — one continuous opening chapter streamed via `stream-scene-text` (停止 / 重写 / 继续接写 / 复制 / 导出 .md). Selecting a sentence triggers an in-place AI rewrite (preview → accept/reject). A client-side `applyAntiSlopFallback` is a backstop to the backend prompt constraint.
 - **ProviderCredentialsEditor** (`components/ProviderCredentialsEditor.tsx`) — the **shared** credential-form core + store wiring (`activeProvider`/profile/setters). Hosts supply only a shell + a `variant` theme (`minimal` | `crystal`), a `providerSelector` (`select` | `tabs`), and an optional `ollamaSlot`. Consumed by `SettingsPanel` (`minimal`/`select`) and `NovelUploader`'s crystal card (`crystal`/`tabs`).
 - **SettingsPanel** — minimal slide-over: readiness line + `<ProviderCredentialsEditor variant="minimal" providerSelector="select"/>` + a "keys stay local" note. (The global temperature slider was removed; temperature defaults to 0.7.)
@@ -150,7 +150,7 @@ The old `generate-storyboard` / `stream-storyboard` endpoints and `StoryboardRes
 
 ## Conventions
 
-- Everything is a client component. The UI is a custom **朱墨 / 宣纸 "atelier"** design system: CSS-variable tokens (`--vermilion`, `--paper-text`, `--ink-dim`, `--add`/`--del` for diffs, `--font-serif`…) + ~40 semantic component classes (`.atelier`, `.eyebrow`, `.lede`, `.cta`, `.setcard`, `.slab`, `.recipe`, `.studio`, `.manuscript`…) defined in `app/globals.css`; the chrome (sidebar/top bar/stepper) uses Tailwind utilities with zinc/amber/emerald status accents. Match the surrounding file. `lucide-react` is installed but **no longer used** — icons are inline glyphs/emoji (墨, ✂︎, ✨, 🔧, 🎨, →). Respect `prefers-reduced-motion`.
+- Everything is a client component. The UI is a custom **朱墨 / 宣纸 "atelier"** design system: CSS-variable tokens (`--vermilion`, `--paper-text`, `--ink-dim`, `--add`/`--del` for add/del accents, `--font-serif`…) + ~40 semantic component classes (`.atelier`, `.eyebrow`, `.lede`, `.cta`, `.setcard`, `.slab`, `.recipe`, `.studio`, `.manuscript`…) defined in `app/globals.css`; the chrome (sidebar/top bar/stepper) uses Tailwind utilities with zinc/amber/emerald status accents. Match the surrounding file. `lucide-react` is installed but **no longer used** — icons are inline glyphs/emoji (墨, ✂︎, ✨, 🔧, 🎨, →). Respect `prefers-reduced-motion`.
 - **Iron rules** (the codebase enforces these by comment & test): keep `app/dnaSchema.ts` ↔ `api/schemas.py` field-for-field camelCase; bump a new Dexie `version(n)` block for any stored-shape change; route LLM calls through `app/llmClient.ts` (`callStructured`/`streamSse`/`postWithLlmConfig`); keep `splitRegex.ts`/`splitQuality.ts` byte-equivalent with the worker copy (golden-vector test); preserve backend hardening (rate limit, SSRF, key masking, friendly errors); never persist keys server-side.
 - `tsconfig.json` defines `@/*` → `./*`, but components import via relative paths (`../app/db`). Follow whichever the neighboring file uses.
 - Single lockfile: `package-lock.json` (npm).

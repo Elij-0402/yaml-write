@@ -89,10 +89,12 @@ export function getNovelWorkflowSummary(
     id: 'split',
     label: '校验切分',
     shortLabel: '切分',
-    status: novel.splitStatus === 'needs_review' ? 'blocked' : 'done',
+    // 切分质量不再是硬闸门：超长 blob 已在导入时自动预切，且整本直提 / 弧窗提取并不依赖精确分章。
+    // needs_review 仅作软提示，绝不阻断 DNA。
+    status: 'done',
     hint:
       novel.splitStatus === 'needs_review'
-        ? '切分结果存在异常，建议先在切分校验台中修复后再提取。'
+        ? '切分质量一般，但不影响 DNA（整本 / 弧窗提取不依赖精确分章）；如需精修可进切分校验台。'
         : '章节切分结果可直接进入 DNA 提取。',
   };
 
@@ -120,14 +122,6 @@ export function getNovelWorkflowSummary(
       shortLabel: 'DNA',
       status: 'done',
       hint: 'DNA 创作骨架已就绪，可作为后续变体生成的输入资产。',
-    };
-  } else if (novel.splitStatus === 'needs_review') {
-    dnaStage = {
-      id: 'dna',
-      label: '提取 DNA',
-      shortLabel: 'DNA',
-      status: 'blocked',
-      hint: '建议先修复切分质量，再开始 DNA 提取。',
     };
   } else {
     dnaStage = {
@@ -160,9 +154,7 @@ export function getNovelWorkflowSummary(
         };
 
   const recommendedNextStep =
-    splitStage.status === 'blocked'
-      ? '先修复切分质量'
-      : dnaStage.status === 'blocked'
+    dnaStage.status === 'blocked'
       ? '先完成模型配置'
       : dnaStage.status === 'ready'
       ? '开始 DNA 提取'
@@ -182,14 +174,14 @@ export function getNovelWorkflowSummary(
 export function getStageStatusClasses(status: StageStatus): string {
   switch (status) {
     case 'done':
-      return 'border-emerald-500/20 bg-emerald-500/[0.04] text-emerald-400';
+      return 'border-[color:var(--add)]/25 bg-[color:var(--add-soft)] text-[color:var(--add)]';
     case 'running':
-      return 'border-amber-500/20 bg-amber-500/[0.04] text-amber-400';
+      return 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] text-[color:var(--vermilion)]';
     case 'ready':
       return 'border-[color:var(--blueprint)]/20 bg-[color:var(--blueprint-soft)] text-[color:var(--blueprint)]';
     case 'blocked':
-      return 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] text-[color:var(--vermilion)]';
+      return 'border-[color:var(--del)]/35 bg-[color:var(--del-soft)] text-[color:var(--del)]';
     default:
-      return 'border-hairline bg-white/[0.01] text-zinc-500';
+      return 'border-[color:var(--line)] bg-black/[0.12] text-[color:var(--ink-faint)]';
   }
 }

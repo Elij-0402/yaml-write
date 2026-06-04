@@ -176,25 +176,6 @@ class RepairSettingGapsInput(BaseModel):
 
 
 # ============================================================
-# 阶段三点三：✨意图增强（meta-prompt 带确认门）
-# 糙指令 → 精确创作简报 +「我理解你要…对吗」，前端先确认再执行 tweak（不带约束/不展示意图的 meta-prompt 只产泛化结果）。
-# ============================================================
-class EnhanceInstructionResponse(BaseModel):
-    interpretedBrief: str = Field(..., description="把用户糙指令翻译成的精确、可执行创作简报（改什么/改成什么/保留什么约束）")
-    confirmation: str = Field(..., description="一句『我理解你要……，对吗？』确认话术，供前端确认门展示")
-
-
-class EnhanceInstructionInput(BaseModel):
-    userInstruction: str = Field(..., min_length=1, max_length=2000)
-    targetBlock: Optional[str] = Field(None, pattern="^(worldviewBlock|protagonistBlock|antagonistBlock|narrativeTone)$")
-    blockContext: str = Field("", max_length=4000)
-    apiKey: str = Field(..., min_length=1, max_length=512)
-    baseUrl: str = Field(..., min_length=1, max_length=512)
-    model: str = Field(..., min_length=1, max_length=200)
-    temperature: float = Field(0.7, ge=0.0, le=1.5)
-
-
-# ============================================================
 # 阶段三点五：全局 Command 调整（仅返回被修改的积木）
 # ============================================================
 class TweakBlocksResponse(BaseModel):
