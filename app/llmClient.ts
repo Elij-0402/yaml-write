@@ -129,6 +129,24 @@ export class RateLimitSignal extends Error {
   }
 }
 
+// 瞬时服务端错误（5xx / 代理超时）哨兵，与致命错误（配置 / 模型能力错）区分。
+// callStructured 命中可重试 5xx 时抛出，dnaEngine.withRateLimitRetry 据 instanceof 静默退避重排。
+export class TransientError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'TransientError';
+    this.status = status;
+  }
+}
+
+// 可重试的瞬时状态码：5xx 与代理超时。422（结构化输出不合规）后端已重试耗尽，前端视为致命
+// （交由预检 fail-fast 明确提示换模型），不在此列。
+const TRANSIENT_STATUSES = new Set([500, 502, 503, 504]);
+export function isTransientStatus(status: number): boolean {
+  return TRANSIENT_STATUSES.has(status);
+}
+
 type StructuredInit<TResponse> = LlmPostInit & {
   // 默认 true：429 抛 RateLimitSignal 交给 withRateLimitRetry 静默退避；置 false 则把 429 当普通错误透出友好文案。
   rateLimitSignal?: boolean;
@@ -151,7 +169,13 @@ export async function callStructured<TResponse>(
     throw new RateLimitSignal();
   }
   if (!response.ok) {
-    throw new Error(await readApiErrorMessage(response));
+    const message = await readApiErrorMessage(response);
+    // 5xx / 代理超时 → 可重试瞬时错误，交 withRateLimitRetry 静默退避重排；
+    // 其余（400/401/403/404/413/422 等配置或模型能力错）→ 致命错误，立即上抛、不重试。
+    if (isTransientStatus(response.status)) {
+      throw new TransientError(message, response.status);
+    }
+    throw new Error(message);
   }
   const json: unknown = await response.json();
   return init?.parse ? init.parse(json) : (json as TResponse);

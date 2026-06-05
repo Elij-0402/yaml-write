@@ -1,7 +1,7 @@
 import { db, type Chapter } from './db';
 import { type ChapterMapSummary, type NovelDNACard, parseChapterMapSummary, parseNovelDNACard } from './dnaSchema';
 import { selectResumeTargets, planReconcile } from './dnaState';
-import { RateLimitSignal, callStructured } from './llmClient';
+import { RateLimitSignal, TransientError, callStructured } from './llmClient';
 import { useAppStore } from './store';
 import {
   routeBySize,
@@ -80,7 +80,8 @@ function interruptibleSleep(ms: number, signal: AbortSignal): Promise<'ok' | 'ab
   });
 }
 
-// 单一共享退避 helper（Map / Reduce / 融合工坊复用，勿重复造轮子）：捕获 RateLimitSignal → 点亮护航灯
+// 单一共享退避 helper（Map / Reduce / 融合工坊复用，勿重复造轮子）：捕获 RateLimitSignal（429）
+// 与 TransientError（5xx / 代理超时）→ 点亮护航灯静默退避重排；致命错误（配置 / 模型能力错）原样上抛。
 export async function withRateLimitRetry<T>(
   fn: () => Promise<T>,
   opts: { signal: AbortSignal }
@@ -92,11 +93,16 @@ export async function withRateLimitRetry<T>(
       try {
         return await fn();
       } catch (err) {
-        if (!(err instanceof RateLimitSignal)) {
-          throw err; // 非 429：原样上抛，沿用既有 abort 回滚 / 失败标记逻辑
+        // RateLimitSignal（429）与 TransientError（5xx / 代理超时）均为瞬时错误，静默退避重排；
+        // 其余（配置错 / 模型不支持结构化等致命错误）原样上抛，沿用既有 abort 回滚 / 失败标记逻辑。
+        const retryable = err instanceof RateLimitSignal || err instanceof TransientError;
+        if (!retryable) {
+          throw err;
         }
         if (attempt >= RL_MAX_ATTEMPTS) {
-          // 退避预算耗尽 → 作为真实失败兜底（调用方据此标 error / 计入 failures）
+          // 退避预算耗尽 → 作为真实失败兜底（调用方据此标 error / 计入 failures）。
+          // TransientError 保留原始友好文案（含真实 HTTP 状态）；RateLimitSignal 给「云端繁忙」兜底。
+          if (err instanceof TransientError) throw err;
           throw new Error('云端持续繁忙，已自动退避重试多次仍未成功，请稍后再试或调低测序档速。');
         }
         if (!parked) {
@@ -129,7 +135,11 @@ async function mapOneUnit(unit: ExtractionUnit, byId: Map<string, Chapter>, sign
     if (ch && ch.content) parts.push(`【${ch.name}】\n${ch.content}`);
   }
   let content = parts.join('\n\n');
-  if (content.length > MAX_ARC_INPUT_CHARS) content = content.slice(0, MAX_ARC_INPUT_CHARS);
+  if (content.length > MAX_ARC_INPUT_CHARS) {
+    // 砍尾不静默（决策 C2）：仅超长单章自成一窗且 >48k 时触发；记录截断量，UI 经 oversizedChapter 警告引导先裁切。
+    console.warn(`[dnaEngine] 弧窗「${unit.label}」原文 ${content.length} 字符超过单窗上限 ${MAX_ARC_INPUT_CHARS}，截断尾部 ${content.length - MAX_ARC_INPUT_CHARS} 字符（含超长单章，建议先到切分台裁切）。`);
+    content = content.slice(0, MAX_ARC_INPUT_CHARS);
+  }
   // callStructured 吸收 429→RateLimitSignal + !ok→错误 + json 取值；parse 做运行时校验；外层 withRateLimitRetry 负责静默退避重排。
   const summary = await callStructured<ChapterMapSummary>(
     '/api/py/extract-arc-map',
@@ -343,6 +353,30 @@ export async function runDnaExtraction(
     };
 
     try {
+      // —— 预检探活（决策 C1，fail-fast）：并发铺开前先串行跑第一个目标窗。——
+      // 「从来没成功过」「模型不支持结构化」等系统性故障会在这里秒级暴露，不再让其余窗白跑空耗额度。
+      if (targets.length > 0) {
+        const probe = targets[0];
+        await db.chapters.update(probe.id, { mapStatus: 'mapping' });
+        try {
+          await withRateLimitRetry(() => mapOneUnit(probe, byId, linkedSignal), { signal: linkedSignal });
+          completed += 1;
+          nextIndex = 1; // 已消费 targets[0]，worker 池从 1 开始铺开
+          await db.novels.update(novelId, { mapProgress: { total: progressTotal, current: completed } });
+        } catch (err) {
+          if (linkedSignal.aborted) {
+            await db.chapters.update(probe.id, { mapStatus: 'pending' });
+            await db.novels.update(novelId, { analysisStatus: 'idle' });
+            return;
+          }
+          // 致命错误（瞬时 5xx/429 已被 withRateLimitRetry 退避吃掉，落到这里多为配置错 / 模型不支持结构化）：
+          // 立即标 error 并写明确原因，绝不铺开其余窗白跑。
+          const reason = err instanceof Error ? err.message : String(err);
+          await db.chapters.update(probe.id, { mapStatus: 'error', errorMsg: reason });
+          await db.novels.update(novelId, { analysisStatus: 'error' });
+          throw new Error(`DNA 提取预检失败（首个弧窗未通过，已停止以免空跑）：${reason}`);
+        }
+      }
       spawnWorkersIfNeeded();
       await mapPhasePromise;
     } finally {
@@ -353,9 +387,18 @@ export async function runDnaExtraction(
       await db.novels.update(novelId, { analysisStatus: 'idle' });
       return;
     }
-    if (failures > 0) {
+    // 覆盖率阈值降级（决策 B2）：采样本是近似，不要求零失败。成功窗达到足够覆盖即继续归纳出卡，
+    // 失败窗降级为「覆盖度提示」（仍各自保留 error 标记可后续单独补齐）；不足阈值才整体判失败。
+    // arc / direct 维持全覆盖严格语义（minRequired = units.length）。
+    const minRequired = route === 'sampling'
+      ? Math.min(units.length, Math.max(2, Math.ceil(units.length * 0.6)))
+      : units.length;
+    if (completed < minRequired) {
       await db.novels.update(novelId, { analysisStatus: 'error' });
-      throw new Error(`有 ${failures} 个弧窗解析失败，请点击继续提取重试。`);
+      throw new Error(`弧窗成功率不足（成功 ${completed}/${units.length}），无法稳定归纳 DNA，请点击继续提取重试或检查模型配置。`);
+    }
+    if (failures > 0) {
+      console.info(`[dnaEngine] 部分弧窗失败（${failures}/${units.length}），成功 ${completed} 窗已达覆盖阈值 ${minRequired}，继续归纳 DNA；失败窗可后续单独补齐。`);
     }
 
     // —— Reduce：折叠所有 done 弧窗（lead）摘要 → 4 层 DNA ——

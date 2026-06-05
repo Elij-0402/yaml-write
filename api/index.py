@@ -11,6 +11,10 @@ from typing import Deque
 from urllib.parse import urlsplit, urlunsplit
 
 import instructor
+try:  # instructor.exceptions 在新版（1.15+）已废弃并将移除；优先 instructor.core，回退兼容旧布局。
+    from instructor.core import InstructorRetryException
+except ImportError:
+    from instructor.exceptions import InstructorRetryException
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -25,6 +29,8 @@ from openai import (
     PermissionDeniedError,
     RateLimitError,
 )
+from pydantic import ValidationError
+
 from api.schemas import (
     ArcMapInput,
     BookDirectInput,
@@ -207,7 +213,23 @@ def validate_llm_creds(api_key: str, model: str, temperature: float) -> None:
         raise ApiError(status_code=400, code="invalid_temperature", message="temperature 必须在 0 到 1.5 之间。")
 
 
+# 结构化解析失败（模型没按 JSON / tool schema 稳定返回）的统一友好文案。
+_STRUCTURED_FAIL_MSG = (
+    "模型未能稳定产出结构化结果（可能不支持结构化输出），"
+    "建议更换为支持结构化输出的 Chat 模型（如 deepseek-chat）。"
+)
+
+
 def classify_openai_error(exc: Exception) -> tuple[int, str, str]:
+    # instructor 重试异常先解包：其根因可能是 OpenAI SDK 异常（如 BadRequest=模型不支持 tools / Auth 失效），
+    # 也可能是模型没按结构化格式返回导致的 pydantic 校验失败。前者沿用下方精确分类，后者归 422（可重试）。
+    if isinstance(exc, InstructorRetryException):
+        cause = exc.__cause__
+        if cause is not None and cause is not exc:
+            return classify_openai_error(cause)
+        return 422, "structured_parse_failed", _STRUCTURED_FAIL_MSG
+    if isinstance(exc, ValidationError):
+        return 422, "structured_parse_failed", _STRUCTURED_FAIL_MSG
     if isinstance(exc, AuthenticationError):
         return 401, "auth_error", "API Key 无效或已失效。"
     if isinstance(exc, PermissionDeniedError):
@@ -313,6 +335,15 @@ def build_scene_user_prompt(data: SceneTextInput) -> str:
     )
 
 
+def pick_instructor_mode(base_url: str, model: str) -> instructor.Mode:
+    """选择 instructor 结构化模式：DeepSeek 系（直连或经硅基流动）的 function-calling 不稳定，
+    改用 JSON 模式（response_format）更可靠；OpenAI / Gemini 等原生支持 tools，保持默认 TOOLS。"""
+    probe = f"{base_url} {model}".lower()
+    if "deepseek" in probe:
+        return instructor.Mode.JSON
+    return instructor.Mode.TOOLS
+
+
 def build_openai_client(api_key: str, base_url: str, timeout: float) -> AsyncOpenAI:
     normalized_base_url = validate_base_url(base_url)
     return AsyncOpenAI(
@@ -339,7 +370,8 @@ async def run_structured(
 ):
     """Shared structured-extraction call: instructor + transient retry + friendly errors."""
     client = instructor.from_openai(
-        build_openai_client(api_key, base_url, timeout=timeout)
+        build_openai_client(api_key, base_url, timeout=timeout),
+        mode=pick_instructor_mode(base_url, model),
     )
     for attempt in range(MAX_PARSE_RETRIES + 1):
         try:
@@ -355,11 +387,16 @@ async def run_structured(
             )
         except Exception as exc:
             status_code, code, message = classify_openai_error(exc)
-            should_retry = status_code in {429, 502, 503, 504} and attempt < MAX_PARSE_RETRIES
+            # 422=模型结构化输出偶发不合规（temperature 抖动），与瞬时 5xx/429 一并给有限次重试。
+            should_retry = status_code in {422, 429, 502, 503, 504} and attempt < MAX_PARSE_RETRIES
             if should_retry:
                 await asyncio.sleep((2 ** attempt) + random.uniform(0.1, 0.4))
                 continue
-            logger.warning("%s failed ip=%s model=%s err=%s", label, get_client_ip(request), model, exc.__class__.__name__)
+            logger.warning(
+                "%s failed ip=%s model=%s status=%s err=%s msg=%s",
+                label, get_client_ip(request), model, status_code,
+                exc.__class__.__name__, scrub_sensitive(str(exc))[:200],
+            )
             raise ApiError(status_code=status_code, code=code, message=message) from exc
 
 
@@ -508,7 +545,7 @@ async def extract_arc_map(data: ArcMapInput, request: Request):
         response_model=ChapterMapSummaryResponse,
         system_prompt=system_prompt, user_prompt=user_prompt,
         temperature=data.temperature, request=request, label="extract_arc_map",
-        timeout=LONG_REQUEST_TIMEOUT_SECONDS,
+        instructor_retries=1, timeout=LONG_REQUEST_TIMEOUT_SECONDS,
     )
 
 

@@ -231,16 +231,10 @@ export default function Home() {
   };
 
   const extractingCount = novels.filter((novel) => getStatus(novel) === 'extracting').length;
-  const reviewCount = novels.filter((novel) => getStatus(novel) === 'review').length;
   const activeCreation = creations.find((creation) => creation.id === activeCreationId) || null;
   const currentWorkspaceLabel = workshopOpen
     ? activeCreation?.name || activeCreation?.directionTitle || '创作工坊'
     : selectedNovel?.name || '总览';
-  const shellStats = [
-    { label: '作品库', value: novels.length, hint: readyCount > 0 ? `${readyCount} 本 DNA 就绪` : '等待首本完成 DNA' },
-    { label: '待校验', value: reviewCount, hint: reviewCount > 0 ? '优先修正章节边界' : '切分结构稳定' },
-    { label: '创作台', value: creations.length, hint: workshopBusy ? '当前有生成任务' : '随时回到未完稿件' },
-  ];
   const activeTaskLabel = workshopBusy
     ? '创作工坊正在处理生成任务，建议保持当前会话。'
     : extractingCount > 0
@@ -264,33 +258,17 @@ export default function Home() {
       <aside
         className={`${
           mobileNavOpen ? 'fixed inset-y-0 left-0 z-40 flex' : 'hidden'
-        } w-[296px] flex-col border-r border-default bg-[rgba(14,11,10,0.99)] lg:static lg:z-auto lg:flex`}
+        } w-[296px] flex-col border-r border-default bg-[color:var(--paper-2)] lg:static lg:z-auto lg:flex`}
       >
         <div className="border-b border-default px-5 py-5">
           <div className="flex items-center gap-3">
             <span
-              className="grid h-10 w-10 place-items-center rounded-2xl text-[18px] font-bold text-white"
-              style={{ background: 'var(--vermilion)', fontFamily: 'var(--font-serif)' }}
+              className="grid h-10 w-10 place-items-center text-[20px] font-bold"
+              style={{ background: 'var(--ink)', color: 'var(--paper)', fontFamily: 'var(--font-display)' }}
             >墨</span>
             <div className="leading-tight">
-              <div className="text-[16px] text-primary" style={{ fontFamily: 'var(--font-display)', fontWeight: 600 }}>创作 DNA 工坊</div>
-              <div className="text-[10px] tracking-[0.22em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>PRO WRITING WORKBENCH</div>
-            </div>
-          </div>
-          <div className="mt-4 rounded-[12px] border border-default bg-[rgba(239,230,214,0.03)] p-4">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>Workspace Pulse</div>
-            <div className="mt-2 text-sm leading-6 text-primary">所有作品、DNA 和创作会话都挂在同一条连续工作流上。</div>
-            <div className="mt-3 text-xs leading-6 text-secondary">{activeTaskLabel}</div>
-            <div className="mt-4 grid gap-2">
-              {shellStats.map((item) => (
-                <div key={item.label} className="flex items-center justify-between rounded-2xl border border-default bg-black/10 px-3 py-2.5">
-                  <div>
-                    <div className="text-[11px] text-muted">{item.label}</div>
-                    <div className="text-[11px] text-secondary">{item.hint}</div>
-                  </div>
-                  <div className="text-xl text-primary" style={{ fontFamily: 'var(--font-display)' }}>{item.value}</div>
-                </div>
-              ))}
+              <div className="text-[16px] text-primary" style={{ fontFamily: 'var(--font-display)', fontWeight: 900 }}>创作 DNA 工坊</div>
+              <div className="text-[10px] tracking-[0.22em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>VARIATION ATELIER</div>
             </div>
           </div>
         </div>
@@ -313,7 +291,7 @@ export default function Home() {
                     className={`group relative mb-2 rounded-[12px] border px-4 py-3 transition-all ${
                       active
                         ? 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)]'
-                        : 'border-default bg-black/10 hover:border-[color:var(--line-strong)] hover:bg-[rgba(26,21,18,0.72)]'
+                        : 'border-default bg-black/10 hover:border-[color:var(--ink)] hover:bg-[color:var(--ink-raise)]'
                     }`}
                   >
                     <div
@@ -363,7 +341,7 @@ export default function Home() {
                         ? 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)]'
                         : workshopBusy
                         ? 'cursor-not-allowed border-default bg-black/10 opacity-50'
-                        : 'cursor-pointer border-default bg-black/10 hover:bg-[rgba(26,21,18,0.72)]'
+                        : 'cursor-pointer border-default bg-black/10 hover:bg-[color:var(--ink-raise)]'
                     }`}
                   >
                     <div
@@ -438,8 +416,8 @@ export default function Home() {
       <section className="relative z-[1] flex min-w-0 flex-1 flex-col">
         <header className="border-b border-default px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0">
-              <div className="flex min-w-0 items-center gap-2 text-sm">
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-2 text-sm" style={{ fontFamily: 'var(--font-mono)' }}>
             <button
               onClick={() => setMobileNavOpen(true)}
               className="text-secondary hover:text-primary lg:hidden"
@@ -449,42 +427,31 @@ export default function Home() {
             </button>
             <span className="truncate text-muted">{currentWorkspaceLabel}</span>
             <span className="text-muted">/</span>
-            <span className="truncate">{currentPath}</span>
+            <span className="truncate text-primary">{currentPath}</span>
               </div>
-              <h1 className="mt-2 text-[30px] text-primary sm:text-[34px]" style={{ fontFamily: 'var(--font-display)', lineHeight: 1.08 }}>
-                专业创作台，围绕一条主线完成导入、抽取与生成。
+              <h1 className="mt-2 text-[26px] text-primary sm:text-[30px]" style={{ fontFamily: 'var(--font-display)', fontWeight: 900, lineHeight: 1.06 }}>
+                把读过的书，拆成可换皮的引擎与皮。
               </h1>
-              <p className="mt-2 max-w-3xl text-sm leading-7 text-secondary">
-                现在的界面重点不是“看起来像 AI 工具”，而是让高频创作动作和后台状态都稳定、清楚、可追溯。
-              </p>
+              {/* 下一步红左栏单行（决策5：外壳留「下一步」一行） */}
+              <div className="mt-3 flex max-w-3xl items-center gap-2.5 border-l-[3px] border-[color:var(--vermilion)] py-0.5 pl-3 text-sm">
+                <span className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-[color:var(--vermilion)]" style={{ fontFamily: 'var(--font-mono)' }}>下一步</span>
+                <span className="text-secondary">{activeTaskLabel}</span>
+              </div>
             </div>
-            <div className="grid min-w-[280px] gap-3 sm:grid-cols-2">
-              <div className="panel-soft p-4">
-                <div className="text-[11px] uppercase tracking-[0.22em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>Current Guidance</div>
-                <div className="mt-2 text-sm text-primary">{workflowSummary.recommendedNextStep}</div>
-                <div className="mt-1 text-xs leading-6 text-secondary">{currentWorkspaceLabel} 的下一步已经锁定，不需要再自己猜流程。</div>
-              </div>
-              <div className="panel-soft p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>System Readiness</div>
-                  <span className={`status-pill ${readinessTone}`}>
-                    {llmReadiness.ok ? '模型已连接' : '模型待配置'}
-                  </span>
-                </div>
-                <div className="mt-2 text-xs leading-6 text-secondary">
-                  {persistError
-                    ? '浏览器本地存储暂不可用，设置与密钥可能无法稳定保存。'
-                    : llmReadiness.ok
-                    ? '模型链路正常，适合继续做 DNA 提取和创作生成。'
-                    : llmReadiness.reason || '配置模型后，阻塞中的阶段会自动恢复。'}
-                </div>
-              </div>
+            {/* 角落状态 chip */}
+            <div className="flex shrink-0 flex-col items-end gap-2">
+              <span className={`status-pill ${readinessTone}`}>
+                {llmReadiness.ok ? '模型已连接' : '模型待配置'}
+              </span>
+              {persistError && (
+                <span className="status-pill border-[color:var(--warn)] text-[color:var(--warn)]">⚠ 存储不可用</span>
+              )}
             </div>
           </div>
         </header>
 
-        {/* 主线进度 Stepper */}
-        <div className="border-b border-default px-4 py-5 sm:px-6 lg:px-8">
+        {/* 主线进度 Stepper（决策9：工坊态淡化为细带，主视觉让位给工坊） */}
+        <div className={`border-b border-default px-4 sm:px-6 lg:px-8 ${workshopOpen ? 'py-2 opacity-55' : 'py-5'}`}>
           <WorkflowStepper summary={workflowSummary} currentStageId={currentStageId} onStageClick={handleStageClick} />
         </div>
 
@@ -554,7 +521,8 @@ export default function Home() {
         <div
           role="status"
           aria-live="polite"
-          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-[color:var(--add)]/30 bg-black/90 px-4 py-2.5 text-sm text-[color:var(--add)] shadow-2xl"
+          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 border-2 border-[color:var(--add)] bg-[color:var(--paper)] px-4 py-2.5 text-sm text-[color:var(--add)]"
+          style={{ boxShadow: '5px 5px 0 var(--ink)' }}
         >
           <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--add)]" />
           {doneToast}

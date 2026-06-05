@@ -44,10 +44,10 @@ export default function WorkflowStepper({
               disabled={!interactive}
               title={stage.hint}
               aria-current={active ? 'step' : undefined}
-              className={`h-full w-full rounded-[12px] border px-4 py-4 text-left text-xs transition-all ${getStageStatusClasses(
+              className={`h-full w-full rounded-[12px] border-2 px-4 py-4 text-left text-xs transition-all ${getStageStatusClasses(
                 stage.status
-              )} ${active ? 'ring-1 ring-white/20 shadow-[0_18px_40px_rgba(0,0,0,0.18)]' : ''} ${
-                interactive ? 'cursor-pointer hover:-translate-y-0.5 hover:brightness-110' : 'cursor-default opacity-70'
+              )} ${active ? 'ring-2 ring-[color:var(--ink)] shadow-[4px_4px_0_var(--ink)]' : ''} ${
+                interactive ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-[3px_3px_0_var(--ink)]' : 'cursor-default opacity-70'
               }`}
             >
               <div className="mb-3 flex items-center justify-between gap-2">
