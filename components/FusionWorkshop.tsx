@@ -641,7 +641,7 @@ export default function FusionWorkshop() {
             >
               <option value="" disabled>选择骨架书…</option>
               {readyNovels.map((n) => (
-                <option key={n.id} value={n.id} className="bg-black">{n.name}{isFourLayerDnaCard(n.dnaCard) ? '' : '（旧版DNA）'}</option>
+                <option key={n.id} value={n.id}>{n.name}{isFourLayerDnaCard(n.dnaCard) ? '' : '（旧版DNA）'}</option>
               ))}
             </select>
             {engineDna ? (
@@ -796,10 +796,10 @@ export default function FusionWorkshop() {
           </div>
         )}
         {!repairing && repairGaps.length > 0 && (
-          <details className="mb-4 rounded-[9px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--add)', background: 'var(--add-soft)', color: '#a7d8b4' }}>
+          <details className="mb-4 rounded-[9px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--add)', background: 'var(--add-soft)', color: 'var(--add)' }}>
             <summary className="cursor-pointer select-none">🩹 已自动修补 {repairGaps.length} 处设定缺口，确保这条方向前后自洽（点开查看）</summary>
             <ul className="mt-2 space-y-1.5" style={{ color: 'var(--ink-dim)' }}>
-              {repairGaps.map((g, i) => (<li key={i}><b style={{ color: '#a7d8b4' }}>{g.beat}</b>：{g.issue} → {g.patch}</li>))}
+              {repairGaps.map((g, i) => (<li key={i}><b style={{ color: 'var(--add)' }}>{g.beat}</b>：{g.issue} → {g.patch}</li>))}
             </ul>
           </details>
         )}

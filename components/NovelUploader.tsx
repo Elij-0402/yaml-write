@@ -890,7 +890,7 @@ export default function NovelUploader() {
                 ['02', '校验切分', '把异常章节和风险位置提前暴露，避免错误一路带到后面。'],
                 ['03', '生成 DNA', '当结构可靠后，再交给模型提取骨架、题材与风格。'],
               ].map(([idx, title, desc]) => (
-                <div key={idx} className="rounded-2xl border border-default bg-[rgba(26,21,18,0.72)] p-4">
+                <div key={idx} className="rounded-2xl border border-default bg-[color:var(--ink-raise)] p-4">
                   <div className="font-mono text-[10px] tracking-[0.24em] text-muted">{idx}</div>
                   <div className="mt-2 text-sm text-primary">{title}</div>
                   <p className="mt-1 text-xs leading-6 text-secondary">{desc}</p>
@@ -976,7 +976,7 @@ export default function NovelUploader() {
   return (
     <div className="flex h-[calc(100vh-8rem)] w-full overflow-hidden rounded-[12px] border border-default bg-[var(--ink-raise)]">
       {/* Left panel: outline tree */}
-      <div className="flex h-full w-[360px] shrink-0 flex-col border-r border-default bg-[rgba(11,9,8,0.42)]">
+      <div className="flex h-full w-[360px] shrink-0 flex-col border-r border-default bg-[color:var(--paper-2)]">
         {/* Left header: info and settings */}
         <div className="shrink-0 space-y-4 border-b border-default p-5">
           <div className="flex items-start justify-between gap-2">
@@ -1130,7 +1130,7 @@ export default function NovelUploader() {
         )}
 
         {/* Chapter Search Filter */}
-        <div className="p-3 border-b border-[#1b1e36]/40 shrink-0">
+        <div className="p-3 border-b border-[color:var(--blueprint-line)]/40 shrink-0">
           <input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -1146,7 +1146,7 @@ export default function NovelUploader() {
           aria-label="章节大纲树"
         >
           {filteredChapters.length === 0 ? (
-            <p className="p-6 text-center text-xs text-slate-500 font-mono">未找到匹配的章节</p>
+            <p className="p-6 text-center text-xs text-[color:var(--ink-faint)] font-mono">未找到匹配的章节</p>
           ) : (
             filteredChapters.map((chapter) => {
               const isSelected = activeChapterId === chapter.id;
@@ -1157,7 +1157,7 @@ export default function NovelUploader() {
               else if (wordCount > 12000) warningType = 'long';
               
               let textClass = 'text-secondary hover:text-primary';
-              let bgClass = 'hover:bg-[rgba(239,230,214,0.04)]';
+              let bgClass = 'hover:bg-[color:var(--paper-2)]';
               let borderClass = 'border-l-2 border-transparent';
               
               if (isSelected) {
@@ -1220,14 +1220,14 @@ export default function NovelUploader() {
                       className="mr-2 h-3.5 w-3.5 shrink-0 cursor-pointer rounded border-default bg-black/20 text-vermilion focus:ring-[color:var(--vermilion-line)] disabled:cursor-not-allowed"
                       aria-label={`选择第${chapter.chapterIndex}章`}
                     />
-                    <span className="text-[#8a8f98] font-mono shrink-0 w-8">{chapter.chapterIndex}</span>
+                    <span className="text-[color:var(--ink-dim)] font-mono shrink-0 w-8">{chapter.chapterIndex}</span>
                     <span className={`truncate ${textClass}`}>{chapter.name}</span>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0 pl-2">
                     {/* DNA Sequencing State Badge or Hover Action */}
                     {chapter.mapStatus === 'mapping' ? (
-                      <div className="flex items-center gap-1 text-cyan-400 font-mono text-[10px]">
-                        <svg className="w-3 h-3 animate-spin text-cyan-400" viewBox="0 0 100 100">
+                      <div className="flex items-center gap-1 text-[color:var(--blueprint)] font-mono text-[10px]">
+                        <svg className="w-3 h-3 animate-spin text-[color:var(--blueprint)]" viewBox="0 0 100 100">
                           <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="12" strokeDasharray="160 80" fill="none" />
                         </svg>
                         <span>[分析中...]</span>
@@ -1240,7 +1240,7 @@ export default function NovelUploader() {
                       <div className="relative group/error shrink-0">
                         <span className="text-[color:var(--del)] cursor-help" title={chapter.errorMsg || '解析失败'}>⚠️</span>
                         {chapter.errorMsg && (
-                      <div className="absolute bottom-full right-0 z-50 mb-1 hidden w-48 break-all rounded-lg border border-[color:var(--del)]/30 bg-[rgba(16,13,11,0.94)] p-2 text-[10px] text-[color:var(--del)] shadow-xl backdrop-blur-md group-hover/error:block whitespace-normal">
+                      <div className="absolute bottom-full right-0 z-50 mb-1 hidden w-48 break-all rounded-lg border border-[color:var(--del)]/30 bg-[color:var(--ink-raise)] p-2 text-[10px] text-[color:var(--del)] shadow-xl backdrop-blur-md group-hover/error:block whitespace-normal">
                             {chapter.errorMsg}
                           </div>
                         )}
@@ -1275,7 +1275,7 @@ export default function NovelUploader() {
                           setActiveChapterId(chapter.id);
                           setIsSplitMode(true);
                         }}
-                        className="rounded border border-[color:var(--blueprint)]/25 bg-[color:var(--blueprint-soft)] px-1.5 py-0.5 text-[10px] text-blueprint opacity-0 transition-opacity hover:bg-[rgba(137,147,161,0.22)] hover:text-primary group-hover:opacity-100 disabled:opacity-40"
+                        className="rounded border border-[color:var(--blueprint)]/25 bg-[color:var(--blueprint-soft)] px-1.5 py-0.5 text-[10px] text-blueprint opacity-0 transition-opacity hover:bg-[color:var(--blueprint-soft)] hover:text-primary group-hover:opacity-100 disabled:opacity-40"
                         title="帮我裁切本章"
                         aria-label="一键裁切"
                       >
@@ -1294,7 +1294,7 @@ export default function NovelUploader() {
       </div>
 
       {/* Right panel: golden reader / empty state */}
-      <div className="relative flex h-full flex-1 flex-col overflow-hidden bg-[rgba(6,5,4,0.36)]">
+      <div className="relative flex h-full flex-1 flex-col overflow-hidden bg-[color:var(--paper)]">
         {!activeChapter ? (
           <div className="flex flex-1 flex-col items-center justify-center space-y-6 p-8 text-center select-none">
             <div className="grid h-28 w-28 place-items-center rounded-full border border-[color:var(--vermilion-line)] bg-[radial-gradient(circle,rgba(207,74,46,0.18),transparent_60%)] text-3xl text-vermilion">
@@ -1391,7 +1391,7 @@ export default function NovelUploader() {
             <div className="flex-1 flex h-full overflow-hidden relative">
               {/* Left Column: 裁剪仪表盘 (Split Control Dashboard) */}
               <div 
-                className="flex h-full w-[260px] shrink-0 flex-col justify-between border-r border-default bg-[rgba(16,13,11,0.84)] p-5 text-xs backdrop-blur-sm"
+                className="flex h-full w-[260px] shrink-0 flex-col justify-between border-r border-default bg-[color:var(--ink-raise)] p-5 text-xs backdrop-blur-sm"
               >
                 <div className="space-y-6">
                   <div>
@@ -1477,7 +1477,7 @@ export default function NovelUploader() {
                           >
                             ¶ {(pIdx + 1).toString().padStart(2, '0')}
                           </button>
-                          <p className="font-sans text-sm leading-[1.8] text-slate-300 whitespace-pre-wrap tracking-wide flex-1 select-text">
+                          <p className="font-sans text-sm leading-[1.8] text-[color:var(--ink)] whitespace-pre-wrap tracking-wide flex-1 select-text">
                             {pText}
                           </p>
                         </div>
@@ -1543,7 +1543,7 @@ export default function NovelUploader() {
                                       handleSplitAtParagraph(pIdx);
                                     }}
                                     disabled={processing}
-                                    className="absolute z-20 flex items-center gap-1 rounded-full border border-[color:var(--vermilion-line)] bg-[rgba(16,13,11,0.92)] px-3 py-1 text-[10px] font-semibold text-primary backdrop-blur-md transition-all duration-200 cursor-pointer pointer-events-auto"
+                                    className="absolute z-20 flex items-center gap-1 rounded-full border border-[color:var(--vermilion-line)] bg-[color:var(--ink-raise)] px-3 py-1 text-[10px] font-semibold text-primary backdrop-blur-md transition-all duration-200 cursor-pointer pointer-events-auto"
                                   >
                                     ✂️ 在此剪开
                                   </button>
@@ -1628,7 +1628,7 @@ export default function NovelUploader() {
               )}
               
               {/* Chapter Text body */}
-              <article className="font-sans text-base leading-[1.8] text-slate-300 whitespace-pre-wrap tracking-wide max-w-2xl mx-auto py-4">
+              <article className="font-sans text-base leading-[1.8] text-[color:var(--ink)] whitespace-pre-wrap tracking-wide max-w-2xl mx-auto py-4">
                 {activeChapter.content}
               </article>
             </div>
@@ -1643,7 +1643,7 @@ export default function NovelUploader() {
           style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}
           aria-hidden={!isCrystalOpen}
         >
-          <div className="flex h-full flex-col border-l border-default bg-[rgba(18,14,12,0.94)] shadow-[0_0_40px_rgba(0,0,0,0.55)] backdrop-blur-md">
+          <div className="flex h-full flex-col border-l border-default bg-[color:var(--ink-raise)] shadow-[0_0_40px_rgba(0,0,0,0.55)] backdrop-blur-md">
             {/* Totem header */}
             <div className="relative shrink-0 overflow-hidden border-b border-default p-5">
               <svg className="pointer-events-none absolute -right-6 -top-6 h-40 w-40 opacity-20" viewBox="0 0 100 100" fill="none">
@@ -1685,7 +1685,7 @@ export default function NovelUploader() {
                           ollamaStatus === 'online'
                             ? 'bg-[color:var(--add)]'
                             : ollamaStatus === 'checking' || ollamaStatus === 'unknown'
-                            ? 'animate-pulse bg-slate-500'
+                            ? 'animate-pulse bg-[color:var(--ink-dim)]'
                             : 'bg-[color:var(--vermilion)]'
                         }`}
                       />
@@ -1723,8 +1723,8 @@ export default function NovelUploader() {
       {toast && toast.show && (
         <div className={`fixed bottom-8 left-1/2 z-50 flex min-w-[320px] max-w-md -translate-x-1/2 flex-col rounded-xl p-4 text-xs shadow-2xl backdrop-blur-md animate-[fadeIn_150ms_ease-out] ${
           toast.type === 'success'
-            ? 'border border-[color:var(--add)]/30 bg-[rgba(16,13,11,0.96)] text-[color:var(--add)]'
-            : 'border border-[color:var(--vermilion-line)] bg-[rgba(16,13,11,0.96)] text-secondary'
+            ? 'border border-[color:var(--add)]/30 bg-[color:var(--ink-raise)] text-[color:var(--add)]'
+            : 'border border-[color:var(--vermilion-line)] bg-[color:var(--ink-raise)] text-secondary'
         }`}>
           <div className="flex items-center justify-between gap-4">
             <span className={`font-medium ${toast.type === 'success' ? 'text-[color:var(--add)]' : 'text-[color:var(--ink-dim)]'}`}>
@@ -1753,7 +1753,7 @@ export default function NovelUploader() {
 
       {/* Float Toolbar component (AC6) */}
       <div
-        className={`fixed bottom-8 left-1/2 z-40 flex -translate-x-1/2 transform items-center gap-4 rounded-full border border-default bg-[rgba(16,13,11,0.95)] px-6 py-3.5 shadow-2xl backdrop-blur-md transition-all duration-300 ${
+        className={`fixed bottom-8 left-1/2 z-40 flex -translate-x-1/2 transform items-center gap-4 rounded-full border border-default bg-[color:var(--paper)] px-6 py-3.5 shadow-2xl backdrop-blur-md transition-all duration-300 ${
           selectedChapterIds.size >= 2 ? 'translate-y-0 opacity-100 font-sans' : 'translate-y-20 opacity-0 pointer-events-none'
         }`}
       >
@@ -1780,7 +1780,7 @@ export default function NovelUploader() {
       {/* Bulk Confirmation Modal (AC7) */}
       {showBulkModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-[fadeIn_150ms_ease-out]">
-          <div className="w-full max-w-md space-y-5 rounded-2xl border border-default bg-[rgba(16,13,11,0.96)] p-6 shadow-2xl">
+          <div className="w-full max-w-md space-y-5 rounded-2xl border border-default bg-[color:var(--ink-raise)] p-6 shadow-2xl">
             <div className="flex items-center gap-2">
               <span className="text-base">🔗</span>
               <h3 className="text-sm font-semibold text-primary">批量物理合并确认</h3>

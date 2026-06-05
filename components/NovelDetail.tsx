@@ -8,10 +8,27 @@ import { useAppStore } from '../app/store';
 import { ensureLlmConfigReady } from '../app/llmClient';
 import { runDnaExtraction, reconcileExtraction } from '../app/dnaEngine';
 import { getLlmReadinessSummary } from '../app/workflow';
+import { routeBySize, buildArcWindows, selectSampledWindows, ARC_WINDOW_BUDGET_CHARS, SAMPLE_WINDOW_CAP } from '../app/dnaRouting';
+import { type StructureBeat } from '../app/dnaSchema';
 import AppDialog from './AppDialog';
 import AppNotice from './AppNotice';
 
 const EMPTY_CHAPTERS: Chapter[] = [];
+
+const EDITABLE_STRING_LAYERS = ['pacingSyuzhet', 'themeSkin', 'proseStyle'] as const;
+type StringLayer = (typeof EDITABLE_STRING_LAYERS)[number];
+type EditableLayer = 'structureSkeleton' | StringLayer;
+
+// 骨架整段文本 ⇄ StructureBeat[]：每行一个 beat，「功能 — 摘要」（摘要可省略）。宽容认 em/en/半角破折号。
+function parseSkeleton(text: string): StructureBeat[] {
+  return text.split('\n').map((l) => l.trim()).filter(Boolean).map((line) => {
+    const m = line.match(/^(.*?)\s[—–-]\s(.*)$/);
+    return m ? { function: m[1].trim(), summary: m[2].trim() } : { function: line, summary: '' };
+  });
+}
+function skeletonToText(beats: StructureBeat[]): string {
+  return beats.map((b) => (b.summary ? `${b.function} — ${b.summary}` : b.function)).join('\n');
+}
 
 function formatWordCount(count: number): string {
   if (count >= 10000) return `${(count / 10000).toFixed(1)}万字`;
@@ -89,6 +106,8 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [savedToast, setSavedToast] = useState<string | null>(null);
   const [confirmReextractOpen, setConfirmReextractOpen] = useState(false);
+  const [editingLayer, setEditingLayer] = useState<EditableLayer | null>(null);
+  const [layerDraft, setLayerDraft] = useState('');
   const abortRef = useRef<AbortController | null>(null);
   const reconciledRef = useRef(false);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -124,6 +143,15 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
   const needsReview = novel.splitStatus === 'needs_review';
   const oversizedChapter = chapters.find((c) => c.wordCount > 30000) || null;
   const failedChapters = chapters.filter((c) => c.mapStatus === 'error');
+  // C3：失败按 errorMsg 归类计数，让「同一类系统问题（如均为模型不支持结构化）」与「零星抖动」一眼可辨。
+  const failureGroups = Array.from(
+    failedChapters.reduce((m, c) => {
+      const key = c.errorMsg?.trim() || '未知错误';
+      return m.set(key, (m.get(key) || 0) + 1);
+    }, new Map<string, number>()),
+  )
+    .map(([msg, count]) => ({ msg, count }))
+    .sort((a, b) => b.count - a.count);
   const pct = progress.total ? Math.round((progress.current / progress.total) * 100) : status === 'reducing' ? 100 : 0;
   const dnaStepCopy = getDnaStepCopy({
     busy,
@@ -135,6 +163,12 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
   const analyzedCount = chapters.filter((c) => c.mapStatus === 'done').length;
   const shortCount = chapters.filter((c) => c.wordCount < 500).length;
   const longCount = chapters.filter((c) => c.wordCount > 12000).length;
+
+  // 覆盖度透明带（决策8，纯展示·零存储）：据体量路由现算这次 DNA 覆盖了全书多少。
+  const extractionRoute = routeBySize(novel.wordCount);
+  const arcWindows = extractionRoute === 'direct' ? [] : buildArcWindows(chapters, ARC_WINDOW_BUDGET_CHARS);
+  const coverageTotal = arcWindows.length;
+  const coverageCovered = extractionRoute === 'sampling' ? selectSampledWindows(arcWindows, SAMPLE_WINDOW_CAP).length : coverageTotal;
 
   // 重新提取 / 重试失败章（idle 起跑由 page.tsx 后台 manager 负责；这里仅覆盖 done/error 的手动入口）。
   const handleExtract = async () => {
@@ -154,6 +188,25 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
       setExtracting(false);
       abortRef.current = null;
     }
+  };
+
+  // DNA 内联编辑（决策8，本地写）：覆写已有 dnaCard 字段值，非形状变更 → 不动 schema、不 bump Dexie version。
+  const startLayerEdit = (layer: EditableLayer, currentText: string) => { setEditingLayer(layer); setLayerDraft(currentText); };
+  const cancelLayerEdit = () => { setEditingLayer(null); setLayerDraft(''); };
+  const saveLayer = async (layer: EditableLayer) => {
+    if (!isFourLayerDnaCard(dnaCard)) return;
+    const nextCard = { ...dnaCard };
+    if (layer === 'structureSkeleton') {
+      nextCard.structureSkeleton = parseSkeleton(layerDraft);
+    } else {
+      nextCard[layer] = layerDraft;
+    }
+    await db.novels.update(novelId, { dnaCard: nextCard });
+    setSavedToast('已保存修改，刷新后仍在');
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setSavedToast(null), 2500);
+    setEditingLayer(null);
+    setLayerDraft('');
   };
 
   return (
@@ -216,28 +269,77 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
             </div>
           </div>
 
+          {/* 覆盖度透明带（决策8）：这次 DNA 覆盖了全书多少，采样路由明示非全覆盖 */}
+          <div className="rounded-[12px] border border-default bg-black/10 px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>提取覆盖度</div>
+              {extractionRoute === 'sampling' ? (
+                <span className="status-pill border-[color:var(--warn)] text-[color:var(--warn)]">⚠ 采样估计</span>
+              ) : (
+                <span className="status-pill border-[color:var(--add)] text-[color:var(--add)]">全覆盖 ✓</span>
+              )}
+            </div>
+            <div className="mt-2 text-sm text-secondary">
+              {extractionRoute === 'direct'
+                ? '整本直提：全文一次性进入长上下文提取，无章节遗漏。'
+                : extractionRoute === 'arc'
+                ? `弧窗全覆盖：全书分 ${coverageTotal} 个弧窗逐窗提取，已覆盖 ${coverageCovered}/${coverageTotal}。`
+                : `饱和采样：全书 ${coverageTotal} 个弧窗中均匀实测 ${coverageCovered} 个（含首尾）；超大体量下为避免卡死，这是非全覆盖的估计。`}
+            </div>
+          </div>
+
           {isFourLayerDnaCard(dnaCard) ? (
             <div className="setcards">
               <div className="setcard eng">
-                <div className="lab"><span className="l">① 结构骨架 · 引擎</span></div>
-                <div className="body">
-                  {dnaCard.structureSkeleton.length === 0 ? '—' : dnaCard.structureSkeleton.map((b, i) => (
-                    <div key={i}>{b.function}{b.summary ? ` — ${b.summary}` : ''}</div>
-                  ))}
+                <div className="lab">
+                  <span className="l">① 结构骨架 · 引擎</span>
+                  {editingLayer !== 'structureSkeleton' && (
+                    <button className="editbtn" onClick={() => startLayerEdit('structureSkeleton', skeletonToText(dnaCard.structureSkeleton))}>✎ 改</button>
+                  )}
                 </div>
+                {editingLayer === 'structureSkeleton' ? (
+                  <div>
+                    <textarea value={layerDraft} onChange={(e) => setLayerDraft(e.target.value)} style={{ minHeight: 150 }} placeholder="每行一个 beat：功能 — 摘要（摘要可省略）" />
+                    <div className="diffbar">
+                      <span className="why">每行一个 beat，格式「功能 — 摘要」</span>
+                      <button className="mini" onClick={cancelLayerEdit}>取消</button>
+                      <button className="mini accept" onClick={() => void saveLayer('structureSkeleton')}>保存</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="body">
+                    {dnaCard.structureSkeleton.length === 0 ? '—' : dnaCard.structureSkeleton.map((b, i) => (
+                      <div key={i}>{b.function}{b.summary ? ` — ${b.summary}` : ''}</div>
+                    ))}
+                  </div>
+                )}
               </div>
-              <div className="setcard eng">
-                <div className="lab"><span className="l">② 编排节奏 · 引擎</span></div>
-                <div className="body">{dnaCard.pacingSyuzhet || '—'}</div>
-              </div>
-              <div className="setcard skn">
-                <div className="lab"><span className="l">③ 题材皮</span></div>
-                <div className="body">{dnaCard.themeSkin || '—'}</div>
-              </div>
-              <div className="setcard skn">
-                <div className="lab"><span className="l">④ 文笔</span></div>
-                <div className="body">{dnaCard.proseStyle || '—'}</div>
-              </div>
+              {([
+                { layer: 'pacingSyuzhet', label: '② 编排节奏 · 引擎', cls: 'eng' },
+                { layer: 'themeSkin', label: '③ 题材皮', cls: 'skn' },
+                { layer: 'proseStyle', label: '④ 文笔', cls: 'skn' },
+              ] as const).map(({ layer, label, cls }) => (
+                <div key={layer} className={`setcard ${cls}`}>
+                  <div className="lab">
+                    <span className="l">{label}</span>
+                    {editingLayer !== layer && (
+                      <button className="editbtn" onClick={() => startLayerEdit(layer, dnaCard[layer] || '')}>✎ 改</button>
+                    )}
+                  </div>
+                  {editingLayer === layer ? (
+                    <div>
+                      <textarea value={layerDraft} onChange={(e) => setLayerDraft(e.target.value)} />
+                      <div className="diffbar">
+                        <span className="why">手动编辑</span>
+                        <button className="mini" onClick={cancelLayerEdit}>取消</button>
+                        <button className="mini accept" onClick={() => void saveLayer(layer)}>保存</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="body">{dnaCard[layer] || '—'}</div>
+                  )}
+                </div>
+              ))}
             </div>
           ) : isLegacyDnaCard(dnaCard) ? (
             <div className="setcards">
@@ -268,7 +370,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
               action={<button onClick={() => setManageMode(true)} className="mini">前往切分校验台 →</button>}
             >
                 {oversizedChapter
-                  ? `章节「${oversizedChapter.name}」超过 30,000 字。请先到切分校验台用剪刀或智能拆分裁小，自动提取才会启动。`
+                  ? `章节「${oversizedChapter.name}」超过 30,000 字。提取时超出单弧窗上限的尾部会被截断、削弱该段 DNA 覆盖；建议先到切分校验台用剪刀或智能拆分裁小，再提取。`
                   : '当前切分置信度较低，可能影响 DNA 质量。建议先校验修复，修复后会自动开始提取。'}
             </AppNotice>
           )}
@@ -308,11 +410,13 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
                   title={`${failedChapters.length} 个章节提取失败`}
                   action={<button onClick={() => void handleExtract()} className="mini">继续提取（重试失败处）</button>}
                 >
-                  <div className="max-h-24 space-y-1 overflow-y-auto">
-                    {failedChapters.slice(0, 6).map((c) => (
-                      <div key={c.id} className="truncate">第 {c.chapterIndex} 章 · {c.name}{c.errorMsg ? ` — ${c.errorMsg}` : ''}</div>
+                  <div className="max-h-32 space-y-1.5 overflow-y-auto">
+                    {failureGroups.map(({ msg, count }) => (
+                      <div key={msg} className="flex items-start gap-2">
+                        <span className="mt-px shrink-0 rounded-full border border-default px-1.5 text-[11px] leading-4 text-muted">{count}</span>
+                        <span className="leading-5">{msg}</span>
+                      </div>
                     ))}
-                    {failedChapters.length > 6 && <div className="text-muted">…等共 {failedChapters.length} 处</div>}
                   </div>
                 </AppNotice>
               )}

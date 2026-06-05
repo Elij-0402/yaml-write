@@ -7,7 +7,7 @@ type NoticeTone = 'info' | 'success' | 'warning' | 'error';
 const TONE_STYLES: Record<NoticeTone, { border: string; background: string; title: string; body: string }> = {
   info: {
     border: 'var(--line-strong)',
-    background: 'rgba(137,147,161,.10)',
+    background: 'var(--blueprint-soft)',
     title: 'var(--ink-text)',
     body: 'var(--ink-dim)',
   },
