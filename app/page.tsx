@@ -240,7 +240,7 @@ export default function Home() {
     : extractingCount > 0
     ? `有 ${extractingCount} 本作品正在后台提取 DNA。`
     : workflowSummary.recommendedNextStep;
-  const readinessTone = llmReadiness.ok ? 'text-[color:var(--add)] border-[color:var(--add)]/25 bg-[color:var(--add-soft)]' : 'text-[color:var(--vermilion)] border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)]';
+  const readinessTone = llmReadiness.ok ? 'text-[color:var(--signal)] border-[color:var(--signal)]/30 bg-[color:var(--signal-soft)]' : 'text-[color:var(--muted)] border-[color:var(--hair)] bg-[color:var(--surface)]';
 
   return (
     <main className="workspace-shell flex min-h-screen">
@@ -250,7 +250,7 @@ export default function Home() {
           type="button"
           aria-label="关闭导航"
           onClick={() => setMobileNavOpen(false)}
-          className="fixed inset-0 z-30 bg-black/70 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-30 bg-[color:var(--ink)]/40 lg:hidden"
         />
       )}
 
@@ -258,16 +258,16 @@ export default function Home() {
       <aside
         className={`${
           mobileNavOpen ? 'fixed inset-y-0 left-0 z-40 flex' : 'hidden'
-        } w-[296px] flex-col border-r border-default bg-[color:var(--paper-2)] lg:static lg:z-auto lg:flex`}
+        } w-[296px] flex-col border-r border-default bg-[color:var(--well)] lg:static lg:z-auto lg:flex`}
       >
         <div className="border-b border-default px-5 py-5">
           <div className="flex items-center gap-3">
             <span
-              className="grid h-10 w-10 place-items-center text-[20px] font-bold"
-              style={{ background: 'var(--ink)', color: 'var(--paper)', fontFamily: 'var(--font-display)' }}
+              className="grid h-10 w-10 place-items-center rounded-[7px] border border-default text-[20px]"
+              style={{ color: 'var(--ink)', fontFamily: 'var(--serif)' }}
             >墨</span>
             <div className="leading-tight">
-              <div className="text-[16px] text-primary" style={{ fontFamily: 'var(--font-display)', fontWeight: 900 }}>创作 DNA 工坊</div>
+              <div className="text-[16px] text-primary" style={{ fontFamily: 'var(--serif)', fontWeight: 600 }}>创作 DNA 工坊</div>
               <div className="text-[10px] tracking-[0.22em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>VARIATION ATELIER</div>
             </div>
           </div>
@@ -290,8 +290,8 @@ export default function Home() {
                     key={novel.id}
                     className={`group relative mb-2 rounded-[12px] border px-4 py-3 transition-all ${
                       active
-                        ? 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)]'
-                        : 'border-default bg-black/10 hover:border-[color:var(--ink)] hover:bg-[color:var(--ink-raise)]'
+                        ? 'border-[color:var(--muted)] bg-[color:var(--surface)]'
+                        : 'border-default bg-transparent hover:border-[color:var(--muted)] hover:bg-[color:var(--surface)]'
                     }`}
                   >
                     <div
@@ -317,7 +317,7 @@ export default function Home() {
                         e.stopPropagation();
                         setDialogState({ kind: 'deleteNovel', novel });
                       }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-[color:var(--del)] group-hover:opacity-100"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-[color:var(--danger)] group-hover:opacity-100"
                     >
                       ×
                     </button>
@@ -338,10 +338,10 @@ export default function Home() {
                     title={workshopBusy && !active ? '生成中，暂不可切换创作' : undefined}
                     className={`group relative mb-2 rounded-[12px] border px-4 py-3 ${
                       active
-                        ? 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)]'
+                        ? 'border-[color:var(--muted)] bg-[color:var(--surface)]'
                         : workshopBusy
-                        ? 'cursor-not-allowed border-default bg-black/10 opacity-50'
-                        : 'cursor-pointer border-default bg-black/10 hover:bg-[color:var(--ink-raise)]'
+                        ? 'cursor-not-allowed border-default bg-transparent opacity-50'
+                        : 'cursor-pointer border-default bg-transparent hover:border-[color:var(--muted)] hover:bg-[color:var(--surface)]'
                     }`}
                   >
                     <div
@@ -370,7 +370,7 @@ export default function Home() {
                         e.stopPropagation();
                         setDialogState({ kind: 'deleteCreation', creation });
                       }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-[color:var(--del)] group-hover:opacity-100"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-[color:var(--danger)] group-hover:opacity-100"
                     >
                       ×
                     </button>
@@ -399,7 +399,7 @@ export default function Home() {
               setSettingsOpen(true);
               setMobileNavOpen(false);
             }}
-            className="mt-3 flex w-full items-center justify-between rounded-[12px] border border-default bg-black/10 px-4 py-3 text-left text-sm text-secondary hover:text-primary"
+            className="mt-3 flex w-full items-center justify-between rounded-[12px] border border-default bg-[color:var(--surface)] px-4 py-3 text-left text-sm text-secondary hover:text-primary"
           >
             <div>
               <span className="block text-primary">模型与偏好设置</span>
@@ -429,12 +429,12 @@ export default function Home() {
             <span className="text-muted">/</span>
             <span className="truncate text-primary">{currentPath}</span>
               </div>
-              <h1 className="mt-2 text-[26px] text-primary sm:text-[30px]" style={{ fontFamily: 'var(--font-display)', fontWeight: 900, lineHeight: 1.06 }}>
+              <h1 className="mt-2 text-[26px] text-primary sm:text-[30px]" style={{ fontFamily: 'var(--serif)', fontWeight: 600, lineHeight: 1.1 }}>
                 把读过的书，拆成可换皮的引擎与皮。
               </h1>
               {/* 下一步红左栏单行（决策5：外壳留「下一步」一行） */}
-              <div className="mt-3 flex max-w-3xl items-center gap-2.5 border-l-[3px] border-[color:var(--vermilion)] py-0.5 pl-3 text-sm">
-                <span className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-[color:var(--vermilion)]" style={{ fontFamily: 'var(--font-mono)' }}>下一步</span>
+              <div className="mt-3 flex max-w-3xl items-center gap-2.5 border-l-2 border-[color:var(--hair)] py-0.5 pl-3 text-sm">
+                <span className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-[color:var(--faint)]" style={{ fontFamily: 'var(--font-mono)' }}>下一步</span>
                 <span className="text-secondary">{activeTaskLabel}</span>
               </div>
             </div>
@@ -444,7 +444,7 @@ export default function Home() {
                 {llmReadiness.ok ? '模型已连接' : '模型待配置'}
               </span>
               {persistError && (
-                <span className="status-pill border-[color:var(--warn)] text-[color:var(--warn)]">⚠ 存储不可用</span>
+                <span className="status-pill border-[color:var(--danger)] text-[color:var(--danger)]">⚠ 存储不可用</span>
               )}
             </div>
           </div>
@@ -521,10 +521,10 @@ export default function Home() {
         <div
           role="status"
           aria-live="polite"
-          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 border-2 border-[color:var(--add)] bg-[color:var(--paper)] px-4 py-2.5 text-sm text-[color:var(--add)]"
-          style={{ boxShadow: '5px 5px 0 var(--ink)' }}
+          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-[9px] border border-[color:var(--signal)]/30 bg-[color:var(--surface)] px-4 py-2.5 text-sm text-[color:var(--signal)]"
+          style={{ boxShadow: '0 12px 32px -12px rgba(50,38,18,.30)' }}
         >
-          <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--add)]" />
+          <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--signal)]" />
           {doneToast}
           <button onClick={dismissToast} className="text-muted hover:text-primary" aria-label="关闭通知">×</button>
         </div>

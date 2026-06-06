@@ -3,11 +3,11 @@
 import { getStageStatusClasses, type WorkflowStage, type WorkflowSummary } from '../app/workflow';
 
 const STATUS_DOT: Record<WorkflowStage['status'], string> = {
-  done: 'bg-[color:var(--add)]',
-  running: 'bg-[color:var(--vermilion)]',
-  ready: 'bg-[color:var(--blueprint)]',
-  blocked: 'bg-[color:var(--del)]',
-  idle: 'bg-[color:var(--ink-faint)]',
+  done: 'bg-[color:var(--ink)]',
+  running: 'bg-[color:var(--signal)]',
+  ready: 'bg-[color:var(--faint)]',
+  blocked: 'bg-[color:var(--danger)]',
+  idle: 'bg-[color:var(--faint)]',
 };
 
 // 主线进度 Stepper：把 workflow.ts 里写好却从未被调用的 getNovelWorkflowSummary 变成顶部常驻导航，
@@ -28,7 +28,7 @@ export default function WorkflowStepper({
           <div className="eyebrow !mb-1">Workflow · 主线流程</div>
           <p className="max-w-2xl text-xs leading-6 text-secondary">把导入、切分、DNA、创作收进同一条主线里。每个阶段既说明当前状态，也说明你为什么能点、为什么还不能点。</p>
         </div>
-        <div className="hidden rounded-full border border-default bg-black/10 px-3 py-1 text-[11px] text-secondary md:block">
+        <div className="hidden rounded-full border border-default bg-surface px-3 py-1 text-[11px] text-secondary md:block">
           下一步 · <span className="text-primary">{summary.recommendedNextStep}</span>
         </div>
       </div>
@@ -44,10 +44,10 @@ export default function WorkflowStepper({
               disabled={!interactive}
               title={stage.hint}
               aria-current={active ? 'step' : undefined}
-              className={`h-full w-full rounded-[12px] border-2 px-4 py-4 text-left text-xs transition-all ${getStageStatusClasses(
+              className={`h-full w-full rounded-[12px] border px-4 py-4 text-left text-xs transition-all ${getStageStatusClasses(
                 stage.status
-              )} ${active ? 'ring-2 ring-[color:var(--ink)] shadow-[4px_4px_0_var(--ink)]' : ''} ${
-                interactive ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-[3px_3px_0_var(--ink)]' : 'cursor-default opacity-70'
+              )} ${active ? 'ring-1 ring-[color:var(--signal)]' : ''} ${
+                interactive ? 'cursor-pointer hover:border-[color:var(--muted)]' : 'cursor-default opacity-70'
               }`}
             >
               <div className="mb-3 flex items-center justify-between gap-2">

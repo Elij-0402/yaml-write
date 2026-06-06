@@ -1,0 +1,474 @@
+======================================================================
+书名：《斗破苍穹》小说全集txt版 | 解码：utf-8 | 清洗后总字数：6,149,720
+路由：sampling（auto 判定=sampling） | 模型：deepseek-v4-flash | base_url：https://api.deepseek.com
+sampling 弧窗：257 个 → 实测 48 窗
+新题材皮：深海高压：人类迁入万米海沟城市，靠改造身体承受水压，氧气与资源配额决定阶层与生死
+======================================================================
+
+[sampling] 全书 6,149,720 字 → 257 个 24k 弧窗 → 实测 48 窗（含首尾）
+
+>>> 弧窗 map 1/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（8.4s）
+
+>>> 弧窗 map 2/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（17.1s）
+
+>>> 弧窗 map 3/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（9.2s）
+
+>>> 弧窗 map 4/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（11.6s）
+
+>>> 弧窗 map 5/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（8.8s）
+
+>>> 弧窗 map 6/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（11.2s）
+
+>>> 弧窗 map 7/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（7.1s）
+
+>>> 弧窗 map 8/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（10.9s）
+
+>>> 弧窗 map 9/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+WARNING:novel_fusion_api:extract_arc_map failed ip=testclient model=deepseek-v4-flash status=500 err=InstructorRetryException msg=<failed_attempts>
+
+<generation number="1">
+<exception>
+    1 validation error for ChapterMapSummaryResponse
+  Invalid JSON: control character (\u0000-\u001F) found while parsing a string at line 6 col
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 500 Internal Server Error"
+!!! 弧窗 map 9/48 失败 HTTP 500：{"error":{"code":"internal_error","message":"服务暂时不可用，请稍后重试。"}}
+
+>>> 弧窗 map 9/48 · 重试1 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（6.5s）
+
+>>> 弧窗 map 10/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（6.1s）
+
+>>> 弧窗 map 11/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（9.8s）
+
+>>> 弧窗 map 12/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（9.7s）
+
+>>> 弧窗 map 13/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（8.6s）
+
+>>> 弧窗 map 14/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（6.9s）
+
+>>> 弧窗 map 15/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（10.8s）
+
+>>> 弧窗 map 16/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（9.0s）
+
+>>> 弧窗 map 17/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（8.7s）
+
+>>> 弧窗 map 18/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（9.3s）
+
+>>> 弧窗 map 19/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=23999
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（6.7s）
+
+>>> 弧窗 map 20/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（10.4s）
+
+>>> 弧窗 map 21/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（9.5s）
+
+>>> 弧窗 map 22/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（6.1s）
+
+>>> 弧窗 map 23/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（10.3s）
+
+>>> 弧窗 map 24/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（10.4s）
+
+>>> 弧窗 map 25/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（7.2s）
+
+>>> 弧窗 map 26/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（9.0s）
+
+>>> 弧窗 map 27/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（7.7s）
+
+>>> 弧窗 map 28/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（9.8s）
+
+>>> 弧窗 map 29/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（11.1s）
+
+>>> 弧窗 map 30/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（8.2s）
+
+>>> 弧窗 map 31/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（8.8s）
+
+>>> 弧窗 map 32/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（16.5s）
+
+>>> 弧窗 map 33/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（11.0s）
+
+>>> 弧窗 map 34/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（8.3s）
+
+>>> 弧窗 map 35/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（10.8s）
+
+>>> 弧窗 map 36/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（7.8s）
+
+>>> 弧窗 map 37/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（8.5s）
+
+>>> 弧窗 map 38/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（8.5s）
+
+>>> 弧窗 map 39/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（11.1s）
+
+>>> 弧窗 map 40/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（6.6s）
+
+>>> 弧窗 map 41/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（9.4s）
+
+>>> 弧窗 map 42/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（10.8s）
+
+>>> 弧窗 map 43/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（8.0s）
+
+>>> 弧窗 map 44/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（7.9s）
+
+>>> 弧窗 map 45/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（7.7s）
+
+>>> 弧窗 map 46/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=23999
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（13.6s）
+
+>>> 弧窗 map 47/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=24000
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（8.3s）
+
+>>> 弧窗 map 48/48 ...
+INFO:novel_fusion_api:extract_arc_map ip=testclient model=deepseek-v4-flash content_chars=5720
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-arc-map "HTTP/1.1 200 OK"
+    完成（8.0s）
+
+弧窗 map 完成：成功 48 / 失败 0（flash 失败率 0%）
+
+>>> extract-book-reduce（合并 → 4 层 DNA） ...
+INFO:novel_fusion_api:extract_book_reduce ip=testclient model=deepseek-v4-flash chapters=48
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/extract-book-reduce "HTTP/1.1 200 OK"
+    完成（15.1s）
+
+============================ 4 层 DNA ============================
+【① 结构骨架（引擎·可迁移）】
+   1. 天才陨落，受辱立誓 —— 主角从天才沦为废柴，被未婚妻退婚，愤怒立下三年之约，决心复仇。
+   2. 获得神秘师父与金手指 —— 戒指中的老爷爷现身，收主角为徒，传授修炼与炼药术，提供成长外挂。
+   3. 初露锋芒，小试牛刀 —— 主角突破瓶颈，展示实力，在拍卖或比试中初露头角，引起关注。
+   4. 野外冒险，获得奇遇 —— 主角在秘境或险地探险，获得稀有宝物（飞行斗技、异火线索等），结识重要伙伴。
+   5. 复仇前奏，实力突破 —— 主角通过苦修和战斗，实力大幅提升，为复仇做准备。
+   6. 公开约战，惊险获胜 —— 主角在公开场合击败仇敌，完成三年之约，但发现更大的幕后黑手。
+   7. 遭遇强敌，被迫逃亡 —— 主角因复仇得罪强大势力，被追杀，在逃亡中寻找新的力量。
+   8. 进入新地图，加入势力 —— 主角来到更高级的修炼区域，加入学院或宗门，接触新的修炼体系与资源。
+   9. 内部竞争，打脸同辈 —— 主角在组织内与同龄天才较量，屡次打脸，积累声名和资源。
+  10. 获得重要宝物异火 —— 主角通过考验或战斗，成功收服一种天地灵物，实力飞跃。
+  11. 营救师父，正面与黑暗势力冲突 —— 主角得知师父被囚，集结力量攻入敌方据点，救出师父，进一步与魂族结仇。
+  12. 大陆战争，守护家园 —— 主角的家乡或势力遭遇外敌入侵，率军击退敌人，成为一方领袖。
+  13. 身世揭秘，血脉觉醒 —— 主角发现自己的远古血脉，觉醒特殊能力，进入更高层势力视野。
+  14. 参加大型盛会，惊艳全场 —— 主角在炼药大会或比武大会中脱颖而出，获得稀有资格或宝物。
+  15. 联合盟友，对抗终极反派 —— 主角联合多方势力，与最终幕后黑手展开决战。
+  16. 突破至最高境界，最终决战 —— 主角在绝境中领悟或突破，以自创招式击败终极反派，拯救世界。
+  17. 结局：功成名就，传承与新生 —— 主角成为大陆巅峰强者，化解恩怨，留下传说与传承。
+
+【② 编排节奏】
+  视角以主角萧炎第一人称叙述为主，穿插第三方视角交代敌人与盟友动态。悬念设置密集：开篇退婚立约，通过三年之约贯穿前中期；每次突破或获得新异火前都铺垫危险与挑战，爽点出现在打脸、夺宝、突破等节奏点。信息差主要通过主角对敌人阴谋的一步步揭露以及自身底牌隐藏来实现。整体曲线为：废柴低潮（1-10章）→快速升级小高潮（10-30章）→中段积累冲突（30-60章）→复仇与救师高潮（60-80章）→大陆战争与血脉觉醒（80-120章）→最终决战与结局（120-140章）。节奏张弛有度，战斗密集期后必有修炼或情感缓冲章节。
+
+【③ 题材皮】
+  题材类型：玄幻修真（东方奇幻）。世界观底层规则：斗气修炼体系，衍生出炼药、异火、血脉、空间等子系统。代价体系：修炼需资源（丹药、功法），突破有瓶颈，异火收服有生命危险，血脉觉醒需机缘。核心意象：火焰（异火本命）、戒指（传承）、退婚（羞辱与动力）、三年之约（奋斗时限）。
+
+【④ 文笔】
+  语言颗粒度偏细，战斗描写具体到动作、能量颜色、爆炸效果，多用拟声词（轰、嘭、嗤）和比喻（如‘如蝗虫过境’）。白描与意象结合，环境描写简练但富有画面感。句式以短句为主，对话生动带古风（‘桀桀’‘嘿嘿’等语气词）。整体语调热血直白，情感渲染直接，心理活动多通过感叹号和重复强调。
+
+>>> generate-fusion-directions（重组：换皮 → 3 方向） ...
+INFO:novel_fusion_api:generate_fusion_directions ip=testclient model=deepseek-v4-flash mode=self beats=17
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/generate-fusion-directions "HTTP/1.1 200 OK"
+    完成（29.3s）
+
+============================ 三个换皮方向 ============================
+
+— 方向 1：深渊遗民 —
+  概念：曾经的水压适应天才，改造失败沦为废柴，被高氧贵族退婚，必须在一万米海沟的窒息法则中重新崛起。
+  🧬 溯源：保持天才陨落→老爷爷附身→修炼打脸→复仇的骨架节拍，将斗气替换为水压适应度（以深度单位度量），炼药替换为基因药剂调配，异火替换为深海深渊之心（能量晶体）。
+  世界观：公元2300年，海平面上升淹没大陆，人类迁入马里亚纳海沟的金属城市群。生存依赖基因改造——水压适应度、氧气转化效率、深海肌体强度。资源配额以“氧点”计算，由深层水处理器控制。城市分三层：顶层富氧区（贵族），中层平衡区（平民），底层高压区（罪犯和废柴）。海底充满未知生物和深渊能量场。
+  主角：陆渊，18岁，前基因改造天才，因14岁时的深度潜航事故导致水压适应基因链断裂，被降为F级，氧气配额压到生存线。未婚妻林曦在退婚日当众撕毁基因契约，羞辱他废物不如。脊椎中寄居着远古深海巨兽“迷雾水母”的残魂，自称“老水母”，能感知水压波动并改造基因链。
+  对手：林曦，高氧贵族林家嫡女，拥有A级水压适应，与深海联合企业“深蓝集团”继承人订婚。她退婚是为了攀附更高权力，并掩盖家族在实验室事故中的阴谋——陆渊的灾难是基因毒品实验的牺牲品。背后还有深蓝集团和监察局压制所有变异能力者。
+
+— 方向 2：深海归墟 —
+  概念：被人类视为怪物的深海变异体，在废除改造的极权社会中，必须伪装成废柴才能活命，而真正的深渊邪神正在他体内觉醒。
+  🧬 溯源：保留“废柴→金手指→打脸→复仇”的节奏，但反转了原书主角作为正义逆袭者的设定，改为压抑的邪恶力量觉醒。金手指化为不可控的邪神低语，三年之约变为暴露危机下的逃亡。
+  世界观：海底城市由“净化委员会”统治，推行基因纯化法案，任何非人类改造的变异体都被视为“归墟污染者”，格杀勿论。深海中存在远古邪神“沉睡者”，其低语会扭曲基因。城市靠金属穹顶与外界隔离，能源来自深海热泉。社会等级按“纯净度”划分，最高为未经任何基因改造的自然人（但极少），大多数公民接受标准改造。
+  主角：陈深，19岁，出生时基因检测为变异污染，被母亲注入人造基因掩盖，但实际拥有邪神共鸣体质。他被当作废柴养大，未婚妻周若退婚正是因为嗅到了他体内的深渊气息。退婚当晚邪神低语首次突破封印，他获得了“归墟之眼”——能看见物质的水压裂缝和生物的生命节律。
+  对手：周若，净化委员会监察官之女，表面退婚是为了联姻纯净度更高的执行官，实际上她是委员会的秘密猎杀者专杀变异体，已知晓陈深的秘密。委员会背后有狂热科学家，试图用邪神力量制造武器。
+
+— 方向 3：氧债轮回 —
+  概念：在氧气配额决定生死的极权深海城市，主角因退婚被切断供氧，进入死亡循环——每次死亡都会带着记忆重生回退婚当天。
+  🧬 溯源：保留“废柴→金手指→反复试炼→复仇”的骨架，但将成长系统替换为时间循环中的信息积累。老爷爷金手指变为记忆回溯能力，每次循环如同一次修炼突破，三年之约被压缩成有限次循环内的极限解谜。
+  世界观：深海水晶城完全依赖中央制氧机，氧气配额按社会等级分配。贵族拥有私人氧舱，平民每天最多获得10小时供氧，废柴则不足6小时。城市存在地下黑市，贩卖伪造的氧瓶。深海中有天然氧穴，但被怪兽占据。时间循环只能回到退婚节点，不能超过，且每次死亡循环会缩小世界边界（每次少10米活动范围）。
+  主角：纪北，17岁，原B级改造者，因一次深海勘探事故失去90%肺叶，被迫退役为F级。未婚妻韩依退婚当日切断了他的氧瓶管道，使他活活憋死。第一次死亡后重生，他发现自己记住了死亡前所有细节，并能通过每次循环优化行动。但身体每次死亡会留下永久性基因损伤。
+  对手：韩依，贵族韩家次女，退婚是为了加入深水管理局，获取更高的氧气配额。她不知道的是，纪北的勘探事故是她父亲一手策划，目的是独占领海区域的热泉资源。管理局和韩家联手垄断氧气生产。
+
+>>> repair-setting-gaps（补洞：方向 1） ...
+INFO:novel_fusion_api:repair_setting_gaps ip=testclient model=deepseek-v4-flash beats=17
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+WARNING:novel_fusion_api:repair_setting_gaps failed ip=testclient model=deepseek-v4-flash status=500 err=InstructorRetryException msg=<failed_attempts>
+
+<generation number="1">
+<exception>
+    1 validation error for RepairSettingGapsResponse
+  Invalid JSON: control character (\u0000-\u001F) found while parsing a string at line 3 col
+INFO:httpx:HTTP Request: POST http://testserver/api/py/repair-setting-gaps "HTTP/1.1 500 Internal Server Error"
+!!! repair-setting-gaps（补洞：方向 1） 失败 HTTP 500：{"error":{"code":"internal_error","message":"服务暂时不可用，请稍后重试。"}}
+
+>>> repair-setting-gaps（补洞：方向 1） · 重试1 ...
+INFO:novel_fusion_api:repair_setting_gaps ip=testclient model=deepseek-v4-flash beats=17
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/repair-setting-gaps "HTTP/1.1 200 OK"
+    完成（21.7s）
+
+============================ 补洞（方向 1） ============================
+  ⚠ 获得神秘师父与金手指：新题材下，原“炼药术”缺乏对应机制，老水母仅能改造基因链，无法提供类似丹药的消耗性强化手段。
+     补 → 赋予老水母“基因药剂调配”能力：利用深海生物材料（如深渊藻类、水母触须）合成基因强化液，可在短时间内提升水压适应度、氧气转化效率或修复断裂基因链。调配过程需精准控制水压与温度，类似炼药。
+  ⚠ 获得重要宝物异火：新题材无“异火”概念，原节拍中的天地灵物没有对应物，导致实力飞跃缺少关键载体。
+     补 → 引入“深渊核心”——一种由深渊能量场凝聚的活体结晶，具有独特的水压共鸣频率。收服深渊核心后，可使其与宿主基因融合，赋予操控水压或释放高压水流等特殊能力，其稀有度和提升强度对标异火。
+  ⚠ 营救师父，正面与黑暗势力冲突：老水母是寄生于主角脊柱的残魂，无法被囚禁，原节拍中“师父被囚”的逻辑断裂。
+     补 → 设定老水母的完整本体被深蓝集团囚禁在海底遗迹实验室中，主角体内的残魂只是碎片。主角后期需潜入实验室释放本体，从而获得完整力量，并正面对抗深蓝集团。
+
+>>> stream-scene-text（开篇正文）（流式）...
+INFO:novel_fusion_api:stream_scene_text ip=testclient model=deepseek-v4-flash scene=1
+INFO:httpx:HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://testserver/api/py/stream-scene-text "HTTP/1.1 200 OK"
+    完成（24.9s）
+
+======================== 开篇正文：深渊遗民 ========================
+
+氧浓度监测仪的红光在瞳孔里烧出残影。
+
+陆渊翻身坐起，后脑勺撞上生锈的金属上铺，铁屑簌簌掉进领口。他懒得拍，抬手看腕表——上午五点零三分，距离下一次氧气配额发放还有七个小时。肺部已经开始发紧，像有人往胸腔里塞了团浸透盐水的海绵，每次呼吸都要从纤维缝隙里硬挤出一点湿润。
+
+他光脚踩上地板，合金面板传来摄氏四度的触感，透过脚掌的薄茧往骨头里钻。这间胶囊舱长两米一、宽一米二，高不过一米五，是整个底层区最便宜的出租单元——月租六十氧点，相当于他全部配额的百分之四十。剩下六十氧点要养活呼吸、饮水和基础代谢，每天只能去中层区的黑市买两百毫升合成营养液，兑十倍的水撑三顿。
+
+墙壁上的水压监测表颤了一下，指针稳稳卡在三百七十五个大气压的位置。在这个深度，未经基因改造的普通人会在三秒内被压成一张纸。陆渊的基因链断在十四岁那年，从那以后他的身体就停止了对深海压强的适应性进化，靠着当年残留的百分之十一的改造度苟活至今。剩下的那点改造度能让他站起来走路，不至于像纯种陆地人那样被水压碾碎内脏，但也仅此而已。
+
+他弯腰从床底拖出那台改装过的基因分析仪。外壳是用废弃的外骨骼零件拼的，线缆裸露，屏幕裂了一条缝，渗出淡蓝色的电解液。这是他唯一值钱的家当——去年从底层区的电子垃圾场淘回来，花了三个月修好，能勉强读取基因链的断裂位点。
+
+接通电源的瞬间，脊柱中间某个位置传来一阵冰凉的蠕动，像是有什么东西在椎骨间的缝隙里翻了个身。
+
+“又来了。”陆渊低声说，手指按在分析仪的感应板上。
+
+那道冰凉的触感沿着脊髓往上攀爬，经过第七节胸椎时停了一下，然后在他后脑勺的位置凝聚成一团模糊的意识。没有声音，没有图像，只有一种近乎本能的感知——像被数千米深的水流包裹，每一滴海水都在向他传达微弱的压力波动。
+
+这是他十四岁那年从那场事故里带回来的东西。深潜舱爆炸时，他的脊椎被一道蓝色电弧劈中，接着就是这玩意儿钻进了他的身体。五年来他试过所有方法想把它弄出来，切割、电击、注射基因溶解酶，全都没用。它在他的脊柱里建立了某种共生关系，他的骨髓为它提供养分，它则偶尔帮他修复一两段断裂的基因链——修复得极其缓慢，像挤牙膏一样，一年下来能恢复百分之零点几的改造度就算走运。
+
+但最近三个月，它的活动频率明显变高了。
+
+陆渊盯着分析仪屏幕上跳动的数据链，突然注意到一个异常——第七号基因片段上出现了一段他从未见过的碱基序列，排列方式不像人类基因组里的任何东西，倒像是某种深海生物的遗传编码，而且正处于活跃复制状态。
+
+他的手指停在感应板上方，没按下去。
+
+那团意识又从后脑勺滑到了颈椎的位置，比刚才更清晰了一些。陆渊感觉到自己的手腕开始不受控制地轻微颤抖，指尖的毛细血管里传来丝丝缕缕的刺痛，像是有什么东西正在渗透他的血液。
+
+分析仪的屏幕突然黑了。
+
+不是断电，是整块显示屏被某种从内部爆发的电磁脉冲烧毁了。裂缝里渗出的电解液变成滚烫的蒸汽，咝咝作响。紧接着，腕表上的氧浓度监测也失灵了，数字乱跳了一秒后彻底熄灭。
+
+陆渊猛地收回手，后脑勺撞上上铺的钢板都没顾上疼。他盯着那台报废的仪器，又低头看了看自己的手掌——指尖的皮肤下面隐隐透出几缕蓝色的荧光纹路，像水母的触须在皮下缓慢游走。
+
+“你他妈到底想干什么？”他的声音在狭窄的胶囊舱里显得闷，不像质问，倒像自言自语。
+
+脊柱里的冰凉触感没有回应，但它沿着神经末梢蔓延到了他的右眼。陆渊眼前的世界突然变了色——胶囊舱的金属墙壁变得半透明，像是被某种声波探测仪扫描过的剖面图。他能“看”到墙壁后面三米处的水管里流动的水压波动，能“看”到天花板上面那间胶囊舱里一个男人的心跳频率，甚至能“看”到更远的地方——底层区中央广场的方向，有一片异常强烈的水压扰动，像一颗小型脉冲星在海底深处规律地跳动。
+
+那片扰动的位置，和深蓝集团在底层区设立的秘密监测站完全重合。
+
+蓝色的荧光从指尖消退，视觉也恢复了正常。陆渊闭上眼睛，在黑暗中感受到脊柱里那团东西传递来的唯一一个信息碎片——一个坐标，精确到小数点后五位，位置在底层区边缘的废弃矿区深处，离这里大约十二公里。
+
+他认识那个坐标。那是五年前深潜舱事故的发生地点，也是深蓝集团极力掩盖的秘密研究设施入口。
+
+腕表的氧浓度监测突然恢复了，数字重新亮起：百分之十八点三，比标准生存线低了整整三个百分点。陆渊的肺本能地抽搐了一下，像在催促他尽快去领取当天的氧气配额。但他没动，而是盯着报废的基因分析仪外壳上倒映出的自己——一个颧骨突出、眼窝深陷的十八岁青年，眼眶里有两团暗沉的光，不是绝望，是某种很长时间没有发作过的东西。
+
+脊柱里的冰凉触感彻底沉静下来，像完成了使命的深海信使，重新蜷缩进他的骨缝深处休眠。但那股蓝色的荧光纹路在消退之前，在他右眼的虹膜边缘留下了一圈若隐若现的环形印记，像一枚古老的契约烙印。
+
+陆渊站起来，额头贴着胶囊舱的低矮天花板，摸了摸自己的右眼。指尖触到眼睑时，感受到一阵微弱的脉冲震动，频率和水压监测仪下那颗脉冲星的跳动完全一致。
+
+他笑了，嘴唇干裂，笑得不怎么好看。
+
+“行，那就去看看。”
+
+氧气配额的事先放一边。他从床垫下面摸出一把用深海废料焊成的匕首，别在腰间，推开胶囊舱的合金门，踩着吱嘎作响的走廊通道往外走。路过公共氧气分配终端时，屏幕正在滚动播放深蓝集团的最新公告：因潮汐层异常波动，即日起底层区每日氧气配额削减百分之五，直至另行通知。
+
+走廊里排队等配额的几个居民骂骂咧咧，有人踹了终端一脚，屏幕裂了，公告还在滚。
+
+陆渊没停步，穿过走廊尽头那道锈蚀的防水闸门，走进底层区纵横交错的金属管道网络。头顶的照明带只有一半亮着，把交错的水管和电缆投出鬼影般的轮廓。他的脚步声在空心的合金地板上回荡，混着远处矿区的机械轰鸣，和更深处的某种低沉的、类似鲸歌的持续嗡鸣。
+
+那是深渊晶核矿脉的自然振动，也是深蓝集团和它的被压迫者们共享的、永恒的背景音。
+
+陆渊朝废弃矿区的方向走去，右眼的环形印记在昏暗的管廊里泛着幽蓝的微光。他身后，胶囊舱里的基因分析仪残骸还在冒着细小的烟，屏幕的残片上映出时间——上午五点十一分，距离下一次氧气配额发放还有六小时五十二分钟。
+
+而他的肺，已经开始用轻微的气喘提醒他：在氧气削减令生效的第三天，他选择了一个最耗氧的方向。
+
+[已存档 → D:\project\yaml-write\.scratch\dna-validate\result-_斗破苍穹_小说全集txt版-sampling.json]

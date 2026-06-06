@@ -230,6 +230,11 @@ def classify_openai_error(exc: Exception) -> tuple[int, str, str]:
         return 422, "structured_parse_failed", _STRUCTURED_FAIL_MSG
     if isinstance(exc, ValidationError):
         return 422, "structured_parse_failed", _STRUCTURED_FAIL_MSG
+    if isinstance(exc, json.JSONDecodeError):
+        # 模型偶发吐非法/截断 JSON（如 cheap flash 在补洞时）：与 pydantic 校验失败同类，归可重试的 422，
+        # 让 run_structured 退避重试救回，而不是落到下方不可重试的 500 兜底。
+        # 亦覆盖 InstructorRetryException.__cause__ 解包后为 JSONDecodeError（非 ValidationError）的情形。
+        return 422, "structured_parse_failed", _STRUCTURED_FAIL_MSG
     if isinstance(exc, AuthenticationError):
         return 401, "auth_error", "API Key 无效或已失效。"
     if isinstance(exc, PermissionDeniedError):

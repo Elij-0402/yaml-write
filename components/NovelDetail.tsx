@@ -217,11 +217,11 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
             <div className="eyebrow !mb-1">DNA 提取 · 工作流中段</div>
             <p className="text-sm leading-6 text-secondary">{dnaStepCopy.body}</p>
           </div>
-          <div className="rounded-full border border-default bg-black/10 px-3 py-1 text-[11px] text-secondary">
+          <div className="rounded-full border border-default bg-[color:var(--surface)] px-3 py-1 text-[11px] text-secondary">
             下一步 · <span className="text-primary">{dnaStepCopy.next}</span>
           </div>
         </div>
-        <div className="mt-4 rounded-[12px] border border-default bg-black/10 p-4">
+        <div className="mt-4 rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
           <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>当前阶段</div>
           <div className="mt-2 text-sm text-primary">{dnaStepCopy.title}</div>
           <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-secondary">
@@ -253,8 +253,8 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
       {dnaReady ? (
         <div className="mt-6 space-y-4">
           <div className="flex items-center justify-between">
-            <span className="flex items-center gap-2 text-sm" style={{ color: 'var(--add)' }}>
-              <span className="h-2 w-2 rounded-full" style={{ background: 'var(--add)' }} />
+            <span className="flex items-center gap-2 text-sm" style={{ color: 'var(--signal)' }}>
+              <span className="h-2 w-2 rounded-full" style={{ background: 'var(--signal)' }} />
               DNA 已就绪
             </span>
             <div className="flex items-center gap-2">
@@ -270,11 +270,11 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
           </div>
 
           {/* 覆盖度透明带（决策8）：这次 DNA 覆盖了全书多少，采样路由明示非全覆盖 */}
-          <div className="rounded-[12px] border border-default bg-black/10 px-4 py-3">
+          <div className="rounded-[12px] border border-default bg-[color:var(--surface)] px-4 py-3">
             <div className="flex items-center justify-between gap-3">
               <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>提取覆盖度</div>
               {extractionRoute === 'sampling' ? (
-                <span className="status-pill border-[color:var(--warn)] text-[color:var(--warn)]">⚠ 采样估计</span>
+                <span className="status-pill text-[color:var(--muted)]">⚠ 采样估计</span>
               ) : (
                 <span className="status-pill border-[color:var(--add)] text-[color:var(--add)]">全覆盖 ✓</span>
               )}
@@ -343,7 +343,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
             </div>
           ) : isLegacyDnaCard(dnaCard) ? (
             <div className="setcards">
-              <div className="rounded-[9px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--vermilion-line)', background: 'var(--vermilion-soft)', color: 'var(--vermilion)' }}>
+              <div className="rounded-[9px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--hair)', background: 'var(--surface)', color: 'var(--muted)' }}>
                 旧版 5 维 DNA（原文已保留不丢）。点「重新提取」可升级为引擎/皮 4 层模型。
               </div>
               {[
@@ -388,17 +388,17 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
           {busy ? (
             <div className="rounded-[12px] border border-default bg-secondary p-6 space-y-4">
               <div className="flex items-center gap-2 text-sm text-primary">
-                <span className="h-1.5 w-1.5 rounded-full animate-pulse motion-reduce:animate-none" style={{ background: 'var(--vermilion)' }} />
+                <span className="h-1.5 w-1.5 rounded-full animate-pulse motion-reduce:animate-none" style={{ background: 'var(--signal)' }} />
                 {status === 'reducing' ? '正在归纳全书创作 DNA…' : `正在提取 DNA ${progress.current}/${progress.total || '…'}`}
               </div>
               <div className="h-1 rounded-full overflow-hidden" style={{ background: 'var(--line)' }}>
-                <div className="h-full rounded-full transition-all duration-300" style={{ width: `${pct}%`, background: 'var(--vermilion)' }} />
+                <div className="h-full rounded-full transition-all duration-300" style={{ width: `${pct}%`, background: 'var(--signal)' }} />
               </div>
               {rateLimited && (
-                <p className="text-xs" style={{ color: 'var(--vermilion)' }}>云端有些拥挤，已自动放缓退避重试，测序绝不中断。</p>
+                <p className="text-xs" style={{ color: 'var(--signal)' }}>云端有些拥挤，已自动放缓退避重试，测序绝不中断。</p>
               )}
               <p className="text-[11px] text-muted">正在后台自动提取（按体量自适应），可切到别处，跑完会通知你。</p>
-              <div className="rounded-[12px] border border-default bg-black/10 p-3 text-xs leading-6 text-secondary">
+              <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-3 text-xs leading-6 text-secondary">
                 当前状态会在这里持续更新，所以用户不用猜“系统是不是卡住了”，也不用切去别的面板确认后端有没有继续工作。
               </div>
             </div>
@@ -422,7 +422,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
               )}
 
               {llmReadiness.ok && (
-              <div className="rounded-[12px] border border-default bg-black/10 p-4 text-xs leading-6 text-secondary">
+              <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-4 text-xs leading-6 text-secondary">
                   DNA 会在后台自动按体量提取。若长时间没有推进，优先检查切分质量与模型配置。
                 </div>
               )}
@@ -444,8 +444,8 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
       )}
 
       {savedToast && (
-        <div role="status" aria-live="polite" className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg border px-4 py-2.5 text-xs shadow-2xl" style={{ borderColor: 'var(--add)', background: 'var(--ink-raise)', color: 'var(--add)' }}>
-          <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--add)' }} />
+        <div role="status" aria-live="polite" className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg border px-4 py-2.5 text-xs shadow-[0_12px_32px_-12px_rgba(50,38,18,.30)]" style={{ borderColor: 'var(--signal)', background: 'var(--surface)', color: 'var(--signal)' }}>
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--signal)' }} />
           {savedToast}
         </div>
       )}

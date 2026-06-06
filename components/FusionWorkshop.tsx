@@ -64,7 +64,7 @@ function WorkshopProgress({
           <div className="eyebrow !mb-1">Creation Workflow · 创作后半程</div>
           <p className="text-sm leading-6 text-secondary">这里承接前面已经完成的 DNA 结果，继续完成题材选择、设定定稿和开篇生成。每一步都会明确告诉你系统在做什么、你现在要做什么。</p>
         </div>
-        <div className="rounded-full border border-default bg-black/10 px-3 py-1 text-[11px] text-secondary">
+        <div className="rounded-full border border-default bg-[color:var(--surface)] px-3 py-1 text-[11px] text-secondary">
           下一步 · <span className="text-primary">{nextLabel}</span>
         </div>
       </div>
@@ -77,17 +77,17 @@ function WorkshopProgress({
               key={step.id}
               className={`min-w-[148px] rounded-2xl border px-3 py-3 text-left ${
                 active
-                  ? 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)]'
+                  ? 'border-[color:var(--signal)]/40 bg-[color:var(--signal-soft)]'
                   : complete
-                  ? 'border-[color:var(--add)]/25 bg-[color:var(--add-soft)]'
-                  : 'border-default bg-black/10'
+                  ? 'border-default bg-[color:var(--surface)]'
+                  : 'border-default bg-transparent'
               }`}
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="font-mono text-[10px] tracking-[0.18em] text-muted">0{idx + 1}</span>
                 <span
                   className={`h-1.5 w-1.5 rounded-full ${
-                    active ? 'bg-[color:var(--vermilion)]' : complete ? 'bg-[color:var(--add)]' : 'bg-[color:var(--ink-faint)]'
+                    active ? 'bg-[color:var(--signal)]' : complete ? 'bg-[color:var(--ink)]' : 'bg-[color:var(--faint)]'
                   }`}
                 />
               </div>
@@ -615,13 +615,13 @@ export default function FusionWorkshop() {
       <div className="atelier">
         <WorkshopProgress current="material" nextLabel={nextActionLabel} />
         <div className="mb-6 grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="rounded-[12px] border border-default bg-black/10 p-4">
+          <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
             <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>当前素材来源</div>
             <div className="mt-2 text-sm text-primary">{sourceSummary}</div>
             <p className="mt-1 text-xs leading-6 text-secondary">先决定哪本书提供叙事引擎，哪本书提供题材和表皮。后面所有方向、设定和正文都会围绕这组输入展开。</p>
           </div>
-          <div className="rounded-[12px] border p-4" style={{ borderColor: modelReady ? 'var(--add)' : 'var(--vermilion-line)', background: modelReady ? 'var(--add-soft)' : 'var(--vermilion-soft)' }}>
-            <div className="text-[11px] uppercase tracking-[0.24em]" style={{ fontFamily: 'var(--font-mono)', color: modelReady ? 'var(--add)' : 'var(--vermilion)' }}>系统状态</div>
+          <div className="rounded-[12px] border p-4" style={{ borderColor: modelReady ? 'var(--signal)' : 'var(--hair)', background: modelReady ? 'var(--signal-soft)' : 'var(--surface)' }}>
+            <div className="text-[11px] uppercase tracking-[0.24em]" style={{ fontFamily: 'var(--font-mono)', color: modelReady ? 'var(--signal)' : 'var(--muted)' }}>系统状态</div>
             <div className="mt-2 text-sm" style={{ color: 'var(--ink-text)' }}>{modelReady ? '模型已就绪，可直接生成方向。' : '模型还没配置，点击生成时会直接带你去设置。'}</div>
             <p className="mt-1 text-xs leading-6 text-secondary">{backendStatus}</p>
           </div>
@@ -632,7 +632,7 @@ export default function FusionWorkshop() {
 
         <div className="recipe">
           <div className="slab engine">
-            <div className="role">🔧 骨架 · ENGINE</div>
+            <div className="role">🔧 骨架</div>
             <select
               className="bk"
               style={{ background: 'transparent', border: 'none', outline: 'none', cursor: 'pointer', maxWidth: '100%' }}
@@ -657,7 +657,7 @@ export default function FusionWorkshop() {
           <div className="swap"><button title="对调骨架 / 题材" onClick={swapRoles} disabled={selectedIds.length !== 2}>⇅</button></div>
 
           <div className="slab skin">
-            <div className="role">🎨 题材 · SKIN</div>
+            <div className="role">🎨 题材</div>
             <select
               className="bk"
               style={{ background: 'transparent', border: 'none', outline: 'none', cursor: 'pointer', maxWidth: '100%', color: 'var(--paper-text)' }}
@@ -696,14 +696,14 @@ export default function FusionWorkshop() {
             onChange={(e) => setAdversarialRules(e.target.value)}
             rows={2}
             placeholder="反套路约束（可选）：例如 禁止王子救公主、禁止开局废柴龙傲天、对手必须有合理动机…"
-            className="w-full rounded-[11px] border border-default bg-secondary p-3 text-sm text-secondary focus:outline-none focus:border-[color:var(--vermilion-line)]"
+            className="w-full rounded-[11px] border border-default bg-secondary p-3 text-sm text-secondary focus:outline-none focus:border-[color:var(--signal)]"
             style={{ fontFamily: 'var(--font-serif)' }}
           />
         </div>
 
         {recipeErr && <p className="mt-3 text-sm" style={{ color: 'var(--del)' }}>{recipeErr}</p>}
         {error && <p className="mt-2 text-sm" style={{ color: 'var(--del)' }}>{error}</p>}
-        {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--vermilion)' }}>云端有些拥挤，已自动放缓退避重试，请稍候…</p>}
+        {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--signal)' }}>云端有些拥挤，已自动放缓退避重试，请稍候…</p>}
 
         <div className="mt-6">
           <button className="cta" onClick={collide} disabled={colliding || !engineNovel}>
@@ -722,7 +722,7 @@ export default function FusionWorkshop() {
     return (
       <div className="atelier">
         <WorkshopProgress current="directions" nextLabel={nextActionLabel} />
-        <div className="mb-6 rounded-[12px] border border-default bg-black/10 p-4">
+        <div className="mb-6 rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>方向上下文</div>
@@ -769,17 +769,17 @@ export default function FusionWorkshop() {
       <div className="atelier">
         <WorkshopProgress current="creator" nextLabel={nextActionLabel} />
         <div className="mb-6 grid gap-3 lg:grid-cols-3">
-          <div className="rounded-[12px] border border-default bg-black/10 p-4">
+          <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
             <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>当前方向</div>
             <div className="mt-2 text-sm text-primary">{selectedDirectionReady ? directionTitle : '还未确认方向'}</div>
             <p className="mt-1 text-xs leading-6 text-secondary">这里展示的是已经把骨架和题材嫁接后的新书地基，不是素材摘抄。</p>
           </div>
-          <div className="rounded-[12px] border border-default bg-black/10 p-4">
+          <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
             <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>AI 状态</div>
             <div className="mt-2 text-sm text-primary">{backendStatus}</div>
             <p className="mt-1 text-xs leading-6 text-secondary">AI 修改会直接套用到选中的设定卡；你也可以随时 ✎ 手改或继续追加指令。</p>
           </div>
-          <div className="rounded-[12px] border border-default bg-black/10 p-4">
+          <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
             <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>下一决策</div>
             <div className="mt-2 text-sm text-primary">确认设定并写开篇</div>
             <p className="mt-1 text-xs leading-6 text-secondary">把世界观、人物关系和叙事语气捋顺后，就可以进入流式成稿，不需要再跳去别的页面找入口。</p>
@@ -790,8 +790,8 @@ export default function FusionWorkshop() {
         <p className="lede">系统已经把题材迁移和设定补全做完了。这里是你确认世界观、主角、对手和叙事语气的地方；AI 改动会直接套用到选中的设定卡，你也可以随时手改。</p>
 
         {repairing && (
-          <div className="mb-4 flex items-center gap-2 rounded-[9px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--vermilion-line)', background: 'var(--vermilion-soft)', color: 'var(--vermilion)' }}>
-            <span className="inline-block h-1.5 w-1.5 rounded-full animate-pulse motion-reduce:animate-none" style={{ background: 'var(--vermilion)' }} />
+          <div className="mb-4 flex items-center gap-2 rounded-[9px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--signal)', background: 'var(--signal-soft)', color: 'var(--signal)' }}>
+            <span className="inline-block h-1.5 w-1.5 rounded-full animate-pulse motion-reduce:animate-none" style={{ background: 'var(--signal)' }} />
             正在补洞：核对新题材能否撑起原结构骨架，修补逻辑断裂点…
           </div>
         )}
@@ -828,7 +828,7 @@ export default function FusionWorkshop() {
                 <div
                   key={key}
                   className="setcard skn"
-                  style={active ? { borderColor: 'var(--vermilion-line)' } : undefined}
+                  style={active ? { borderColor: 'var(--ink)' } : undefined}
                   onClick={() => { if (!editing) setTweakTarget(key); }}
                 >
                   <div className="lab">
@@ -869,7 +869,7 @@ export default function FusionWorkshop() {
         </div>
 
         {error && <p className="mt-4 text-sm" style={{ color: 'var(--del)' }}>{error}</p>}
-        {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--vermilion)' }}>云端有些拥挤，已自动退避重试，请稍候…</p>}
+        {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--signal)' }}>云端有些拥挤，已自动退避重试，请稍候…</p>}
 
         <div className="mt-7 flex gap-3">
           <button className="cta" onClick={goManuscript} disabled={repairing}>确认设定 · 开始写开篇 →</button>
@@ -884,17 +884,17 @@ export default function FusionWorkshop() {
     <div className="atelier">
       <WorkshopProgress current="manuscript" nextLabel={nextActionLabel} />
       <div className="mb-6 grid gap-3 lg:grid-cols-3">
-        <div className="rounded-[12px] border border-default bg-black/10 p-4">
+        <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
           <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>Generation State</div>
           <div className="mt-2 text-sm text-primary">{backendStatus}</div>
           <p className="mt-1 text-xs leading-6 text-secondary">{streaming ? '正文正在一段一段落下，你可以随时停止，不会丢失当前已生成内容。' : '当前正文已保存在本地创作会话里，可以继续写、复制或导出。'} </p>
         </div>
-        <div className="rounded-[12px] border border-default bg-black/10 p-4">
+        <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
           <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>Source Recipe</div>
           <div className="mt-2 text-sm text-primary">骨架《{engSrc}》 × 题材《{skinSrc}》</div>
           <p className="mt-1 text-xs leading-6 text-secondary">这让正文来源可追溯，也让用户知道现在看到的文稿为什么会呈现这种结构与气质。</p>
         </div>
-        <div className="rounded-[12px] border border-default bg-black/10 p-4">
+        <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
           <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>Editing Contract</div>
           <div className="mt-2 text-sm text-primary">{fragmentDraft ? '正在预览片段改写' : '可选句微调，先预览再替换'}</div>
           <p className="mt-1 text-xs leading-6 text-secondary">不论是整篇重写还是片段改写，都遵守“先看结果，再决定落不落”的规则，减少失控感。</p>
@@ -954,7 +954,7 @@ export default function FusionWorkshop() {
       </div>
 
       {error && <p className="mt-4 text-sm" style={{ color: 'var(--del)' }}>{error}</p>}
-      {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--vermilion)' }}>云端有些拥挤，已自动退避重试，请稍候…</p>}
+      {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--signal)' }}>云端有些拥挤，已自动退避重试，请稍候…</p>}
 
       <AppDialog
         open={Boolean(pendingDirectionChoice)}

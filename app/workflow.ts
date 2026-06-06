@@ -174,14 +174,14 @@ export function getNovelWorkflowSummary(
 export function getStageStatusClasses(status: StageStatus): string {
   switch (status) {
     case 'done':
-      return 'border-[color:var(--add)]/25 bg-[color:var(--add-soft)] text-[color:var(--add)]';
+      return 'border-[color:var(--hair)] bg-[color:var(--surface)] text-[color:var(--muted)]';
     case 'running':
-      return 'border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] text-[color:var(--vermilion)]';
+      return 'border-[color:var(--signal)]/40 bg-[color:var(--signal-soft)] text-[color:var(--signal)]';
     case 'ready':
-      return 'border-[color:var(--blueprint)]/20 bg-[color:var(--blueprint-soft)] text-[color:var(--blueprint)]';
+      return 'border-[color:var(--hair)] bg-[color:var(--surface)] text-[color:var(--ink)]';
     case 'blocked':
-      return 'border-[color:var(--del)]/35 bg-[color:var(--del-soft)] text-[color:var(--del)]';
+      return 'border-[color:var(--danger)]/35 bg-[color:var(--danger-soft)] text-[color:var(--danger)]';
     default:
-      return 'border-[color:var(--line)] bg-black/[0.12] text-[color:var(--ink-faint)]';
+      return 'border-[color:var(--hair)] bg-[color:var(--surface)] text-[color:var(--faint)]';
   }
 }

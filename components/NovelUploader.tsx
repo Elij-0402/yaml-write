@@ -899,24 +899,23 @@ export default function NovelUploader() {
             </div>
           </div>
 
-          <div className="rounded-[12px] border border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] p-5">
-            <div className="text-[11px] uppercase tracking-[0.28em] text-vermilion" style={{ fontFamily: 'var(--font-mono)' }}>文件投入口</div>
+          <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-5">
+            <div className="text-[11px] uppercase tracking-[0.28em] text-[color:var(--faint)]" style={{ fontFamily: 'var(--font-mono)' }}>文件投入口</div>
             <p className="mt-2 text-sm leading-6 text-secondary">支持拖拽导入，也可以点按选择文件。导入完成后会直接进入切分校验台，不需要你再猜下一步该去哪。</p>
             <div
               onClick={() => fileInputRef.current?.click()}
               className={`relative mt-5 cursor-pointer overflow-hidden rounded-[12px] border border-dashed px-8 py-14 text-center transition-all duration-150 ${
                 dragActive
-                  ? 'border-[color:var(--vermilion)] bg-[color:var(--vermilion-soft)]'
-                  : 'border-[color:var(--vermilion-line)] bg-black/10 hover:border-[color:var(--vermilion)]'
+                  ? 'border-[color:var(--signal)] bg-[color:var(--signal-soft)]'
+                  : 'border-[color:var(--hair)] bg-transparent hover:border-[color:var(--muted)]'
               }`}
             >
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(207,74,46,0.14),transparent_55%)] opacity-80" />
               <div className="relative space-y-4">
-                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-[color:var(--vermilion-line)] bg-black/20 text-2xl text-primary">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-[color:var(--hair)] bg-[color:var(--surface)] text-2xl text-[color:var(--muted)]">
                   文
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-primary" style={{ color: dragActive ? 'var(--vermilion)' : undefined }}>
+                  <p className="text-sm font-medium text-primary" style={{ color: dragActive ? 'var(--signal)' : undefined }}>
                     {dragActive ? '松开鼠标，开始导入这本书' : '点击选择或拖拽 TXT 到这里'}
                   </p>
                   <p className="mt-2 text-xs leading-6 text-secondary">
@@ -935,29 +934,19 @@ export default function NovelUploader() {
         </div>
 
         {uploading && (
-          <div className="mt-6 rounded-[12px] border border-default bg-black/15 p-6">
+          <div className="mt-6 rounded-[12px] border border-default bg-[color:var(--surface)] p-6">
             <div className="flex items-center gap-5">
               <div className="relative h-16 w-16 will-change-transform">
                 <svg className="h-full w-full animate-[spin_6s_linear_infinite]" viewBox="0 0 100 100">
-                  <circle cx="50" cy="50" r="40" stroke="url(#vermilion-grad)" strokeWidth="3" strokeDasharray="180 60" fill="none" className="opacity-90" />
-                  <circle cx="50" cy="50" r="29" stroke="url(#ink-grad)" strokeWidth="2.5" strokeDasharray="120 42" fill="none" className="opacity-80 origin-center animate-[spin_4s_linear_infinite_reverse]" />
-                  <circle cx="50" cy="50" r="6" fill="#cf4a2e" className="animate-pulse motion-reduce:animate-none" />
-                  <defs>
-                    <linearGradient id="vermilion-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor="#cf4a2e" />
-                      <stop offset="100%" stopColor="#f2c078" />
-                    </linearGradient>
-                    <linearGradient id="ink-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor="#8993a1" />
-                      <stop offset="100%" stopColor="#efe6d6" />
-                    </linearGradient>
-                  </defs>
+                  <circle cx="50" cy="50" r="40" stroke="var(--signal)" strokeWidth="3" strokeDasharray="180 60" fill="none" className="opacity-90" />
+                  <circle cx="50" cy="50" r="29" stroke="var(--faint)" strokeWidth="2.5" strokeDasharray="120 42" fill="none" className="opacity-80 origin-center animate-[spin_4s_linear_infinite_reverse]" />
+                  <circle cx="50" cy="50" r="6" fill="var(--signal)" className="animate-pulse motion-reduce:animate-none" />
                 </svg>
               </div>
               <div className="space-y-1">
                 <p className="text-sm font-medium text-primary">{stageLabelMap[uploadStage]}</p>
                 <p className="text-xs leading-6 text-secondary">导入完成后会自动带你进入切分校验台，避免“已经进来了但不知道接下来去哪”的断层感。</p>
-                {uploadStageText && <p className="text-xs font-mono tracking-wider text-vermilion">{uploadStageText}</p>}
+                {uploadStageText && <p className="text-xs font-mono tracking-wider text-[color:var(--signal)]">{uploadStageText}</p>}
               </div>
             </div>
           </div>
@@ -993,7 +982,7 @@ export default function NovelUploader() {
               关闭
             </button>
           </div>
-          <div className="rounded-2xl border border-default bg-black/10 p-3 text-[11px] font-mono leading-relaxed text-secondary">
+          <div className="rounded-2xl border border-default bg-[color:var(--surface)] p-3 text-[11px] font-mono leading-relaxed text-secondary">
             <div>{formatWordCount(activeNovel?.wordCount || 0)}字 · {chapters.length}章</div>
             <div>均字：{Math.round(derivedStats?.avgChapterChars ?? 0)}字/章</div>
             {!!activeNovel?.purifiedCount && activeNovel.purifiedCount > 0 && (
@@ -1004,10 +993,10 @@ export default function NovelUploader() {
                 <span
                   className={`inline-block rounded-full px-2 py-1 text-[10px] font-medium ${
                     splitMeta.confidenceLevel === 'high'
-                      ? 'bg-[color:var(--add-soft)] text-[color:var(--add)]'
+                      ? 'bg-[color:var(--signal-soft)] text-[color:var(--signal)]'
                       : splitMeta.confidenceLevel === 'medium'
-                      ? 'bg-[color:var(--vermilion-soft)] text-[color:var(--vermilion)]'
-                      : 'bg-[color:var(--del-soft)] text-[color:var(--del)]'
+                      ? 'bg-[color:var(--surface)] text-[color:var(--muted)]'
+                      : 'bg-[color:var(--danger-soft)] text-[color:var(--danger)]'
                   }`}
                 >
                   切分置信度 {splitMeta.confidenceLevel === 'high' ? '高' : splitMeta.confidenceLevel === 'medium' ? '中' : '低'} · {Math.round(splitMeta.confidence * 100)}%
@@ -1021,7 +1010,7 @@ export default function NovelUploader() {
             <button
               onClick={handleSmartSplitClick}
               disabled={smartSplitLoading || processing}
-              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] px-2 py-2.5 text-xs font-semibold text-vermilion transition-all disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-[color:var(--hair)] bg-[color:var(--surface)] px-2 py-2.5 text-xs font-semibold text-[color:var(--ink)] transition-all hover:border-[color:var(--muted)] disabled:opacity-50"
               title="当切分质量过低时，借助模型推荐更合理的切开点"
             >
               {smartSplitLoading ? '✨ 正在智能分析…' : '✨ AI 辅助拆分'}
@@ -1034,14 +1023,14 @@ export default function NovelUploader() {
               <button
                 onClick={() => void runResplit('auto_v2')}
                 disabled={repairing}
-                className="flex-1 rounded-xl border border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] px-2 py-2 text-xs font-medium text-vermilion transition-all disabled:opacity-50"
+                className="flex-1 rounded-xl border border-[color:var(--hair)] bg-[color:var(--surface)] px-2 py-2 text-xs font-medium text-[color:var(--ink)] transition-all hover:border-[color:var(--muted)] disabled:opacity-50"
               >
                 {repairing ? '修复中...' : '先修风险章节'}
               </button>
             ) : (
               <button
                 onClick={() => setManageMode(false)}
-                className="flex-1 rounded-xl border border-default bg-secondary px-2 py-2 text-xs font-medium text-primary transition-all hover:border-[color:var(--vermilion-line)]"
+                className="flex-1 rounded-xl border border-default bg-secondary px-2 py-2 text-xs font-medium text-primary transition-all hover:border-[color:var(--muted)]"
               >
                 返回 DNA 页面 →
               </button>
@@ -1099,9 +1088,9 @@ export default function NovelUploader() {
 
         {/* Diagnostic info or progress bar */}
         {(uploading || repairing || errorMsg || needsSmartRepair) && (
-          <div className="shrink-0 space-y-1 border-b border-default bg-black/10 p-3 text-xs">
+          <div className="shrink-0 space-y-1 border-b border-default bg-[color:var(--surface)] p-3 text-xs">
             {needsSmartRepair && (
-              <div className="flex items-center gap-1.5 font-mono text-[color:var(--vermilion)]">
+              <div className="flex items-center gap-1.5 font-mono text-[color:var(--muted)]">
                 <span>● 先修风险章节再继续</span>
                 {splitMeta && <span className="text-muted">({Math.round(splitMeta.confidence * 100)}% 置信度)</span>}
               </div>
@@ -1112,7 +1101,7 @@ export default function NovelUploader() {
               </div>
             )}
             {(uploading || repairing) && (
-              <div className="flex items-center gap-2 text-vermilion">
+              <div className="flex items-center gap-2 text-[color:var(--signal)]">
                 <div className="relative w-3.5 h-3.5">
                   <svg className="w-full h-full animate-spin" viewBox="0 0 100 100">
                     <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="12" strokeDasharray="160 80" fill="none" />
@@ -1130,12 +1119,12 @@ export default function NovelUploader() {
         )}
 
         {/* Chapter Search Filter */}
-        <div className="p-3 border-b border-[color:var(--blueprint-line)]/40 shrink-0">
+        <div className="p-3 border-b border-default shrink-0">
           <input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="搜索章节标题..."
-            className="w-full rounded-xl border border-default bg-black/10 px-3 py-2 text-xs text-primary transition-colors focus:border-[color:var(--vermilion-line)] focus:outline-none"
+            className="w-full rounded-xl border border-default bg-[color:var(--surface)] px-3 py-2 text-xs text-primary transition-colors focus:border-[color:var(--signal)] focus:outline-none"
           />
         </div>
 
@@ -1157,24 +1146,16 @@ export default function NovelUploader() {
               else if (wordCount > 12000) warningType = 'long';
               
               let textClass = 'text-secondary hover:text-primary';
-              let bgClass = 'hover:bg-[color:var(--paper-2)]';
+              let bgClass = 'hover:bg-[color:var(--surface)]';
               let borderClass = 'border-l-2 border-transparent';
               
               if (isSelected) {
-                bgClass = 'bg-[color:var(--vermilion-soft)]';
-                borderClass = 'border-l-2 border-[color:var(--vermilion)]';
-                if (warningType === 'short') {
-                  textClass = 'text-[color:var(--vermilion)] font-medium';
-                } else if (warningType === 'long') {
-                  textClass = 'text-blueprint font-medium';
-                } else {
-                  textClass = 'text-primary font-medium';
-                }
+                bgClass = 'bg-[color:var(--surface)]';
+                borderClass = 'border-l-2 border-[color:var(--ink)]';
+                textClass = 'text-primary font-medium';
               } else {
-                if (warningType === 'short') {
-                  textClass = 'text-[color:var(--vermilion)]/80 hover:text-[color:var(--vermilion)]';
-                } else if (warningType === 'long') {
-                  textClass = 'text-[color:rgba(137,147,161,0.82)] hover:text-blueprint';
+                if (warningType === 'short' || warningType === 'long') {
+                  textClass = 'text-[color:var(--muted)] hover:text-[color:var(--ink)]';
                 }
               }
               
@@ -1196,7 +1177,7 @@ export default function NovelUploader() {
                       setActiveChapterId(chapter.id);
                     }
                   }}
-                  className={`group flex items-center justify-between rounded px-3 py-2 text-xs transition-all duration-150 cursor-pointer ${bgClass} ${borderClass} focus:outline-none focus:ring-1 focus:ring-[color:var(--vermilion-line)]`}
+                  className={`group flex items-center justify-between rounded px-3 py-2 text-xs transition-all duration-150 cursor-pointer ${bgClass} ${borderClass} focus:outline-none focus:ring-1 focus:ring-[color:var(--signal)]`}
                 >
                   <div className="flex items-center min-w-0 gap-2 flex-1">
                     <input
@@ -1217,7 +1198,7 @@ export default function NovelUploader() {
                         });
                       }}
                       onClick={(e) => e.stopPropagation()}
-                      className="mr-2 h-3.5 w-3.5 shrink-0 cursor-pointer rounded border-default bg-black/20 text-vermilion focus:ring-[color:var(--vermilion-line)] disabled:cursor-not-allowed"
+                      className="mr-2 h-3.5 w-3.5 shrink-0 cursor-pointer rounded border-default bg-[color:var(--surface)] text-[color:var(--ink)] focus:ring-[color:var(--signal)] disabled:cursor-not-allowed"
                       aria-label={`选择第${chapter.chapterIndex}章`}
                     />
                     <span className="text-[color:var(--ink-dim)] font-mono shrink-0 w-8">{chapter.chapterIndex}</span>
@@ -1226,8 +1207,8 @@ export default function NovelUploader() {
                   <div className="flex items-center gap-1.5 shrink-0 pl-2">
                     {/* DNA Sequencing State Badge or Hover Action */}
                     {chapter.mapStatus === 'mapping' ? (
-                      <div className="flex items-center gap-1 text-[color:var(--blueprint)] font-mono text-[10px]">
-                        <svg className="w-3 h-3 animate-spin text-[color:var(--blueprint)]" viewBox="0 0 100 100">
+                      <div className="flex items-center gap-1 text-[color:var(--signal)] font-mono text-[10px]">
+                        <svg className="w-3 h-3 animate-spin text-[color:var(--signal)]" viewBox="0 0 100 100">
                           <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="12" strokeDasharray="160 80" fill="none" />
                         </svg>
                         <span>[分析中...]</span>
@@ -1240,7 +1221,7 @@ export default function NovelUploader() {
                       <div className="relative group/error shrink-0">
                         <span className="text-[color:var(--del)] cursor-help" title={chapter.errorMsg || '解析失败'}>⚠️</span>
                         {chapter.errorMsg && (
-                      <div className="absolute bottom-full right-0 z-50 mb-1 hidden w-48 break-all rounded-lg border border-[color:var(--del)]/30 bg-[color:var(--ink-raise)] p-2 text-[10px] text-[color:var(--del)] shadow-xl backdrop-blur-md group-hover/error:block whitespace-normal">
+                      <div className="absolute bottom-full right-0 z-50 mb-1 hidden w-48 break-all rounded-lg border border-[color:var(--danger)]/30 bg-[color:var(--surface)] p-2 text-[10px] text-[color:var(--danger)] shadow-[0_6px_20px_-8px_rgba(50,38,18,.25)] group-hover/error:block whitespace-normal">
                             {chapter.errorMsg}
                           </div>
                         )}
@@ -1254,7 +1235,7 @@ export default function NovelUploader() {
                           e.stopPropagation();
                           handleStitch(chapter.id);
                         }}
-                        className="rounded border border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] px-1.5 py-0.5 text-[10px] text-[color:var(--vermilion)] opacity-0 transition-opacity hover:bg-[color:var(--vermilion-line)] hover:text-[color:var(--near-white)] group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="rounded border border-[color:var(--hair)] bg-[color:var(--surface)] px-1.5 py-0.5 text-[10px] text-[color:var(--muted)] opacity-0 transition-opacity hover:border-[color:var(--muted)] hover:text-[color:var(--ink)] group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
                         title={chapter.id === chapters[0]?.id ? '第一章无法向前缝合' : '将本章物理缝合至上一章'}
                         aria-label="一键缝合"
                       >
@@ -1265,7 +1246,7 @@ export default function NovelUploader() {
                       {wordCount}
                     </span>
                     {warningType === 'short' && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-[color:var(--vermilion)] shrink-0" title="字数极少警告" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-[color:var(--danger)] shrink-0" title="字数极少警告" />
                     )}
                     {warningType === 'long' && (
                       <button
@@ -1275,7 +1256,7 @@ export default function NovelUploader() {
                           setActiveChapterId(chapter.id);
                           setIsSplitMode(true);
                         }}
-                        className="rounded border border-[color:var(--blueprint)]/25 bg-[color:var(--blueprint-soft)] px-1.5 py-0.5 text-[10px] text-blueprint opacity-0 transition-opacity hover:bg-[color:var(--blueprint-soft)] hover:text-primary group-hover:opacity-100 disabled:opacity-40"
+                        className="rounded border border-[color:var(--hair)] bg-[color:var(--surface)] px-1.5 py-0.5 text-[10px] text-[color:var(--muted)] opacity-0 transition-opacity hover:border-[color:var(--muted)] hover:text-[color:var(--ink)] group-hover:opacity-100 disabled:opacity-40"
                         title="帮我裁切本章"
                         aria-label="一键裁切"
                       >
@@ -1283,7 +1264,7 @@ export default function NovelUploader() {
                       </button>
                     )}
                     {warningType === 'long' && (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[color:var(--blueprint)]" title="字数极长警告" />
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[color:var(--danger)]" title="字数极长警告" />
                     )}
                   </div>
                 </div>
@@ -1297,7 +1278,7 @@ export default function NovelUploader() {
       <div className="relative flex h-full flex-1 flex-col overflow-hidden bg-[color:var(--paper)]">
         {!activeChapter ? (
           <div className="flex flex-1 flex-col items-center justify-center space-y-6 p-8 text-center select-none">
-            <div className="grid h-28 w-28 place-items-center rounded-full border border-[color:var(--vermilion-line)] bg-[radial-gradient(circle,rgba(207,74,46,0.18),transparent_60%)] text-3xl text-vermilion">
+            <div className="grid h-28 w-28 place-items-center rounded-full border border-[color:var(--hair)] bg-[color:var(--surface)] text-3xl text-[color:var(--muted)]">
               章
             </div>
 
@@ -1325,8 +1306,8 @@ export default function NovelUploader() {
                 100% { transform: translateY(4px); opacity: 0.5; }
               }
               @keyframes glowFade {
-                0% { height: 1px; opacity: 1; box-shadow: 0 0 8px #06b6d4; }
-                100% { height: 8px; opacity: 0; box-shadow: 0 0 16px #06b6d4; }
+                0% { height: 1px; opacity: 1; }
+                100% { height: 8px; opacity: 0; }
               }
               .animate-tear-up {
                 animation: tearUp 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
@@ -1353,9 +1334,9 @@ export default function NovelUploader() {
             `}</style>
 
             {/* Split Mode Header */}
-            <div className="flex items-center justify-between border-b border-default bg-black/10 px-8 py-4 shrink-0 backdrop-blur-sm">
+            <div className="flex items-center justify-between border-b border-default bg-[color:var(--surface)] px-8 py-4 shrink-0">
               <div className="min-w-0">
-                <div className="font-mono text-[10px] uppercase tracking-widest text-vermilion">
+                <div className="font-mono text-[10px] uppercase tracking-widest text-[color:var(--faint)]">
                   {splitRecommendations.length > 0 ? '✨ AI 智能语义拆分建议' : '✂️ 游标剪刀交互裁切舱'}
                 </div>
                 <h3 className="mt-0.5 truncate text-sm font-semibold text-primary">
@@ -1369,7 +1350,7 @@ export default function NovelUploader() {
                   <button
                     onClick={handleSmartSplitClick}
                     disabled={smartSplitLoading || processing}
-                    className="workspace-button-secondary workspace-button px-3 py-1.5 text-xs text-blueprint disabled:opacity-50"
+                    className="workspace-button-secondary workspace-button px-3 py-1.5 text-xs disabled:opacity-50"
                   >
                     {smartSplitLoading ? '分析中…' : splitRecommendations.length > 0 ? '↻ 重新推荐' : '✨ 智能语义拆分'}
                   </button>
@@ -1391,7 +1372,7 @@ export default function NovelUploader() {
             <div className="flex-1 flex h-full overflow-hidden relative">
               {/* Left Column: 裁剪仪表盘 (Split Control Dashboard) */}
               <div 
-                className="flex h-full w-[260px] shrink-0 flex-col justify-between border-r border-default bg-[color:var(--ink-raise)] p-5 text-xs backdrop-blur-sm"
+                className="flex h-full w-[260px] shrink-0 flex-col justify-between border-r border-default bg-[color:var(--surface)] p-5 text-xs"
               >
                 <div className="space-y-6">
                   <div>
@@ -1405,25 +1386,25 @@ export default function NovelUploader() {
                   <div>
                     <h4 className="mb-2 font-mono text-[10px] uppercase tracking-wider text-muted">裁切字数预测</h4>
                     {(hoveredGapIndex !== null || selectedMobileGapIndex !== null) ? (
-                      <div className="space-y-3 rounded-lg border border-default bg-black/20 p-3 animate-[fadeIn_150ms_ease-out]">
+                      <div className="space-y-3 rounded-lg border border-default bg-[color:var(--surface)] p-3 animate-[fadeIn_150ms_ease-out]">
                         <div className="space-y-1">
                           <div className="text-secondary">前半章 ({activeChapter.name}):</div>
-                          <div className="font-mono font-semibold text-vermilion">{predictedWordsA} 字 ({percentageA}%)</div>
+                          <div className="font-mono font-semibold text-[color:var(--ink)]">{predictedWordsA} 字 ({percentageA}%)</div>
                         </div>
                         <div className="space-y-1">
                           <div className="text-secondary">后半章 ({activeChapter.name} (下)):</div>
-                          <div className="font-mono font-semibold text-blueprint">{predictedWordsB} 字 ({percentageB}%)</div>
+                          <div className="font-mono font-semibold text-[color:var(--ink)]">{predictedWordsB} 字 ({percentageB}%)</div>
                         </div>
                         <div className="mt-2 border-t border-default pt-2 text-[10px]">
                           {(predictedWordsA < 2000 || predictedWordsB < 2000) ? (
-                            <span className="text-[color:var(--vermilion)]">⚠️ 分割后章节偏短</span>
+                            <span className="text-[color:var(--danger)]">⚠️ 分割后章节偏短</span>
                           ) : (
                             <span className="text-[color:var(--add)]">✅ 比例非常协调</span>
                           )}
                         </div>
                       </div>
                     ) : (
-                      <div className="rounded-lg border border-default bg-black/10 p-3 italic text-muted">
+                      <div className="rounded-lg border border-default bg-[color:var(--surface)] p-3 italic text-muted">
                         请将鼠标悬浮在右侧段落之间的缝隙上以预览裁切比例
                       </div>
                     )}
@@ -1433,7 +1414,7 @@ export default function NovelUploader() {
                     <h4 className="font-mono text-[10px] uppercase tracking-wider text-muted">操作指南</h4>
                     <ul className="list-disc space-y-1 pl-4 leading-relaxed text-secondary">
                       <li>鼠标悬浮于段落行间缝隙</li>
-                      <li>点击出现的 <span className="text-vermilion">“在此剪开”</span> 气泡</li>
+                      <li>点击出现的 <span className="text-[color:var(--ink)]">“在此剪开”</span> 气泡</li>
                       <li>♿ 移动端：双击缝隙，或点击段落左侧的行号 `¶` 即可触发</li>
                       <li>裁切后支持 6 秒撤销</li>
                     </ul>
@@ -1472,7 +1453,7 @@ export default function NovelUploader() {
                               if (processing) return;
                               setSelectedMobileGapIndex(pIdx);
                             }}
-                            className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] text-muted opacity-50 transition-all select-none hover:bg-[color:var(--vermilion-soft)] hover:text-vermilion group-hover/paragraph:opacity-100"
+                            className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] text-muted opacity-50 transition-all select-none hover:bg-[color:var(--surface)] hover:text-[color:var(--ink)] group-hover/paragraph:opacity-100"
                             title="激活本段落后的剪开气泡"
                           >
                             ¶ {(pIdx + 1).toString().padStart(2, '0')}
@@ -1501,10 +1482,10 @@ export default function NovelUploader() {
                           >
                             {rec ? (
                               /* AC5: AI 推荐裁切点“预涂色”高亮 + 复用 Story 1.5 原子切分事务 */
-                              <div className="my-1.5 w-full rounded-lg border border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] p-2 backdrop-blur-sm animate-[fadeIn_200ms_ease-out]">
+                              <div className="my-1.5 w-full rounded-lg border border-[color:var(--hair)] bg-[color:var(--surface)] p-2 animate-[fadeIn_200ms_ease-out]">
                                 <div className="flex items-start justify-between gap-3">
                                   <div className="min-w-0 flex-1">
-                                    <div className="text-[11px] font-medium text-vermilion">💡 AI 推荐在此拆分</div>
+                                    <div className="text-[11px] font-medium text-[color:var(--ink)]">💡 AI 推荐在此拆分</div>
                                     <div className="mt-0.5 text-[11px] leading-relaxed text-secondary">{rec.reason}</div>
                                     {rec.suggestedTitle && (
                                       <div className="mt-1 truncate font-mono text-[10px] text-muted">
@@ -1530,8 +1511,8 @@ export default function NovelUploader() {
                                 {/* Fluorescent blue gradient dashed cut line */}
                                 <div className={`w-full h-0.5 border-t border-dashed transition-all duration-150 ${
                                   isGlowFade
-                                    ? 'animate-glow-fade border-[color:var(--vermilion)]'
-                                    : 'border-[color:var(--vermilion-line)] opacity-30 group-hover/split-gap:animate-pulse group-hover/split-gap:border-[color:var(--vermilion)] group-hover/split-gap:opacity-100'
+                                    ? 'animate-glow-fade border-[color:var(--signal)]'
+                                    : 'border-[color:var(--hair)] opacity-30 group-hover/split-gap:animate-pulse group-hover/split-gap:border-[color:var(--signal)] group-hover/split-gap:opacity-100'
                                 }`} />
 
                                 {/* Glassmorphic split button */}
@@ -1543,7 +1524,7 @@ export default function NovelUploader() {
                                       handleSplitAtParagraph(pIdx);
                                     }}
                                     disabled={processing}
-                                    className="absolute z-20 flex items-center gap-1 rounded-full border border-[color:var(--vermilion-line)] bg-[color:var(--ink-raise)] px-3 py-1 text-[10px] font-semibold text-primary backdrop-blur-md transition-all duration-200 cursor-pointer pointer-events-auto"
+                                    className="absolute z-20 flex items-center gap-1 rounded-full border border-[color:var(--hair)] bg-[color:var(--surface)] px-3 py-1 text-[10px] font-semibold text-[color:var(--ink)] transition-all duration-200 cursor-pointer pointer-events-auto"
                                   >
                                     ✂️ 在此剪开
                                   </button>
@@ -1570,7 +1551,7 @@ export default function NovelUploader() {
             `}</style>
             
             {/* Reader header */}
-            <div className="flex items-center justify-between border-b border-default bg-black/10 px-8 py-4 shrink-0 backdrop-blur-sm">
+            <div className="flex items-center justify-between border-b border-default bg-[color:var(--surface)] px-8 py-4 shrink-0">
               <div className="min-w-0">
                 <div className="font-mono text-[10px] uppercase tracking-widest text-muted">
                   Chapter {activeChapter.chapterIndex}
@@ -1584,7 +1565,7 @@ export default function NovelUploader() {
                   <button
                     onClick={() => setIsSplitMode(true)}
                     disabled={processing}
-                    className="workspace-button-secondary workspace-button gap-1 px-3 py-1.5 text-xs text-blueprint"
+                    className="workspace-button-secondary workspace-button gap-1 px-3 py-1.5 text-xs"
                   >
                     ✂️ 帮我裁切
                   </button>
@@ -1599,7 +1580,7 @@ export default function NovelUploader() {
             <div className="flex-1 overflow-y-auto px-8 py-6 space-y-6 relative select-text">
               {/* Warnings panel */}
               {activeChapter.wordCount < 120 && (
-                <div className="p-3.5 rounded-xl border border-[color:var(--vermilion-line)] bg-[color:var(--vermilion-soft)] text-[color:var(--vermilion)] backdrop-blur-md text-xs leading-relaxed flex items-start gap-2.5 shadow-lg shadow-black/40 animate-[fadeIn_150ms_ease-out]">
+                <div className="p-3.5 rounded-xl border border-[color:var(--danger)]/30 bg-[color:var(--danger-soft)] text-[color:var(--danger)] text-xs leading-relaxed flex items-start gap-2.5 animate-[fadeIn_150ms_ease-out]">
                   <span className="text-base shrink-0">⚠️</span>
                   <div>
                     <span className="font-semibold">本章字数极低（只有 {activeChapter.wordCount} 字）。</span>
@@ -1609,7 +1590,7 @@ export default function NovelUploader() {
               )}
               
               {activeChapter.wordCount > 12000 && (
-                <div className="flex items-start gap-2.5 rounded-xl border border-[color:var(--blueprint)]/20 bg-[color:var(--blueprint-soft)] p-3.5 text-xs leading-relaxed text-primary shadow-lg shadow-black/40 backdrop-blur-md animate-[fadeIn_150ms_ease-out]">
+                <div className="flex items-start gap-2.5 rounded-xl border border-default bg-[color:var(--surface)] p-3.5 text-xs leading-relaxed text-primary animate-[fadeIn_150ms_ease-out]">
                   <span className="text-base shrink-0">✂️</span>
                   <div className="flex-1 flex justify-between items-center gap-4">
                     <div>
@@ -1643,19 +1624,19 @@ export default function NovelUploader() {
           style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}
           aria-hidden={!isCrystalOpen}
         >
-          <div className="flex h-full flex-col border-l border-default bg-[color:var(--ink-raise)] shadow-[0_0_40px_rgba(0,0,0,0.55)] backdrop-blur-md">
+          <div className="flex h-full flex-col border-l border-default bg-[color:var(--surface)] shadow-[-12px_0_40px_-16px_rgba(50,38,18,0.30)]">
             {/* Totem header */}
             <div className="relative shrink-0 overflow-hidden border-b border-default p-5">
               <svg className="pointer-events-none absolute -right-6 -top-6 h-40 w-40 opacity-20" viewBox="0 0 100 100" fill="none">
-                <polygon points="50,8 86,30 86,70 50,92 14,70 14,30" stroke="var(--vermilion)" strokeWidth="0.6" />
-                <polygon points="50,24 72,37 72,63 50,76 28,63 28,37" stroke="var(--blueprint)" strokeWidth="0.5" />
-                <line x1="50" y1="8" x2="50" y2="92" stroke="var(--vermilion)" strokeWidth="0.3" />
-                <line x1="14" y1="30" x2="86" y2="70" stroke="var(--blueprint)" strokeWidth="0.3" />
-                <line x1="86" y1="30" x2="14" y2="70" stroke="var(--blueprint)" strokeWidth="0.3" />
+                <polygon points="50,8 86,30 86,70 50,92 14,70 14,30" stroke="var(--faint)" strokeWidth="0.6" />
+                <polygon points="50,24 72,37 72,63 50,76 28,63 28,37" stroke="var(--faint)" strokeWidth="0.5" />
+                <line x1="50" y1="8" x2="50" y2="92" stroke="var(--faint)" strokeWidth="0.3" />
+                <line x1="14" y1="30" x2="86" y2="70" stroke="var(--faint)" strokeWidth="0.3" />
+                <line x1="86" y1="30" x2="14" y2="70" stroke="var(--faint)" strokeWidth="0.3" />
               </svg>
               <div className="relative flex items-start justify-between gap-2">
                 <div>
-                  <div className="font-mono text-[10px] uppercase tracking-widest text-vermilion">Model Config</div>
+                  <div className="font-mono text-[10px] uppercase tracking-widest text-[color:var(--faint)]">Model Config</div>
                   <h3 className="mt-0.5 text-sm font-semibold text-primary">模型配置</h3>
                   <p className="mt-1 text-[11px] leading-relaxed text-secondary">配置云端 API Key，或确认本地 Ollama 已就绪，然后再执行 AI 辅助拆分。</p>
                 </div>
@@ -1678,7 +1659,7 @@ export default function NovelUploader() {
                 keyHelpText="🔒 密钥仅以混淆形式存储于本地浏览器，绝不上传服务器。"
                 ollamaSlot={
                   /* AC3/AC4: 本地 Ollama 心跳在线状态点 + 模型审计引导 */
-                  <div className="space-y-2 rounded-lg border border-default bg-black/10 p-3">
+                  <div className="space-y-2 rounded-lg border border-default bg-[color:var(--surface)] p-3">
                     <div className="flex items-center gap-2">
                       <span
                         className={`h-2 w-2 rounded-full transition-colors duration-100 ${
@@ -1686,7 +1667,7 @@ export default function NovelUploader() {
                             ? 'bg-[color:var(--add)]'
                             : ollamaStatus === 'checking' || ollamaStatus === 'unknown'
                             ? 'animate-pulse bg-[color:var(--ink-dim)]'
-                            : 'bg-[color:var(--vermilion)]'
+                            : 'bg-[color:var(--danger)]'
                         }`}
                       />
                       <span className="text-xs font-medium text-primary">
@@ -1721,10 +1702,10 @@ export default function NovelUploader() {
 
       {/* Undo/Success Toast component (AC4, AC5) */}
       {toast && toast.show && (
-        <div className={`fixed bottom-8 left-1/2 z-50 flex min-w-[320px] max-w-md -translate-x-1/2 flex-col rounded-xl p-4 text-xs shadow-2xl backdrop-blur-md animate-[fadeIn_150ms_ease-out] ${
+        <div className={`fixed bottom-8 left-1/2 z-50 flex min-w-[320px] max-w-md -translate-x-1/2 flex-col rounded-xl p-4 text-xs shadow-[0_12px_32px_-12px_rgba(50,38,18,0.30)] animate-[fadeIn_150ms_ease-out] ${
           toast.type === 'success'
-            ? 'border border-[color:var(--add)]/30 bg-[color:var(--ink-raise)] text-[color:var(--add)]'
-            : 'border border-[color:var(--vermilion-line)] bg-[color:var(--ink-raise)] text-secondary'
+            ? 'border border-[color:var(--signal)]/30 bg-[color:var(--surface)] text-[color:var(--signal)]'
+            : 'border border-default bg-[color:var(--surface)] text-secondary'
         }`}>
           <div className="flex items-center justify-between gap-4">
             <span className={`font-medium ${toast.type === 'success' ? 'text-[color:var(--add)]' : 'text-[color:var(--ink-dim)]'}`}>
@@ -1733,17 +1714,17 @@ export default function NovelUploader() {
             {toast.type === 'stitch' && canUndo && (
               <button
                 onClick={handleUndo}
-                className="flex shrink-0 items-center gap-1 rounded px-2 py-1 font-semibold text-vermilion transition-colors hover:bg-[color:var(--vermilion-soft)] hover:text-primary"
+                className="flex shrink-0 items-center gap-1 rounded px-2 py-1 font-semibold text-[color:var(--ink)] transition-colors hover:bg-[color:var(--surface)] hover:text-primary"
                 aria-label="撤销操作"
               >
                 撤销 ↩️
               </button>
             )}
           </div>
-          <div className="mt-2.5 h-1 w-full overflow-hidden rounded-full bg-black/20">
+          <div className="mt-2.5 h-1 w-full overflow-hidden rounded-full bg-[color:var(--hair)]">
             <div
               className={`h-full transition-all duration-100 ease-linear ${
-                toast.type === 'success' ? 'bg-[color:var(--add)]' : 'bg-[color:var(--vermilion)]'
+                toast.type === 'success' ? 'bg-[color:var(--signal)]' : 'bg-[color:var(--muted)]'
               }`}
               style={{ width: `${(toast.countdown / 6000) * 100}%` }}
             />
@@ -1753,14 +1734,14 @@ export default function NovelUploader() {
 
       {/* Float Toolbar component (AC6) */}
       <div
-        className={`fixed bottom-8 left-1/2 z-40 flex -translate-x-1/2 transform items-center gap-4 rounded-full border border-default bg-[color:var(--paper)] px-6 py-3.5 shadow-2xl backdrop-blur-md transition-all duration-300 ${
+        className={`fixed bottom-8 left-1/2 z-40 flex -translate-x-1/2 transform items-center gap-4 rounded-full border border-default bg-[color:var(--surface)] px-6 py-3.5 shadow-[0_12px_32px_-12px_rgba(50,38,18,0.30)] transition-all duration-300 ${
           selectedChapterIds.size >= 2 ? 'translate-y-0 opacity-100 font-sans' : 'translate-y-20 opacity-0 pointer-events-none'
         }`}
       >
         <span className="text-xs font-semibold text-primary">
-          已选中 <span className="font-mono text-vermilion">{selectedChapterIds.size}</span> 个章节
+          已选中 <span className="font-mono text-[color:var(--ink)]">{selectedChapterIds.size}</span> 个章节
         </span>
-        <div className="h-4 w-px bg-black/20" />
+        <div className="h-4 w-px bg-[color:var(--hair)]" />
         <button
           onClick={() => setShowBulkModal(true)}
           className="workspace-button flex items-center gap-1 rounded-full px-3.5 py-1.5 text-xs"
@@ -1770,7 +1751,7 @@ export default function NovelUploader() {
         </button>
         <button
           onClick={() => setSelectedChapterIds(new Set())}
-          className="rounded-full px-3 py-1.5 text-xs text-secondary transition-all hover:bg-black/10 hover:text-primary"
+          className="rounded-full px-3 py-1.5 text-xs text-secondary transition-all hover:bg-[color:var(--surface)] hover:text-primary"
           aria-label="取消选择"
         >
           取消选择
@@ -1779,14 +1760,14 @@ export default function NovelUploader() {
 
       {/* Bulk Confirmation Modal (AC7) */}
       {showBulkModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-[fadeIn_150ms_ease-out]">
-          <div className="w-full max-w-md space-y-5 rounded-2xl border border-default bg-[color:var(--ink-raise)] p-6 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[color:var(--ink)]/40 animate-[fadeIn_150ms_ease-out]">
+          <div className="w-full max-w-md space-y-5 rounded-2xl border border-default bg-[color:var(--surface)] p-6 shadow-[0_24px_60px_-24px_rgba(50,38,18,0.4)]">
             <div className="flex items-center gap-2">
               <span className="text-base">🔗</span>
               <h3 className="text-sm font-semibold text-primary">批量物理合并确认</h3>
             </div>
             <p className="font-sans text-xs leading-relaxed text-secondary">
-              确认合并选中的 <span className="font-semibold text-vermilion">{selectedChapterIds.size}</span> 个章节？此操作将按目录顺序物理拼接文本，且第一章无法被并入。
+              确认合并选中的 <span className="font-semibold text-[color:var(--ink)]">{selectedChapterIds.size}</span> 个章节？此操作将按目录顺序物理拼接文本，且第一章无法被并入。
             </p>
             <div className="flex justify-end gap-3 text-xs pt-2">
               <button

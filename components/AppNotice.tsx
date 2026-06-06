@@ -6,28 +6,28 @@ type NoticeTone = 'info' | 'success' | 'warning' | 'error';
 
 const TONE_STYLES: Record<NoticeTone, { border: string; background: string; title: string; body: string }> = {
   info: {
-    border: 'var(--line-strong)',
-    background: 'var(--blueprint-soft)',
-    title: 'var(--ink-text)',
-    body: 'var(--ink-dim)',
+    border: 'var(--hair)',
+    background: 'var(--surface)',
+    title: 'var(--ink)',
+    body: 'var(--muted)',
   },
   success: {
-    border: 'var(--add)',
-    background: 'var(--add-soft)',
-    title: 'var(--add)',
-    body: 'var(--ink-dim)',
+    border: 'var(--signal)',
+    background: 'var(--signal-soft)',
+    title: 'var(--signal)',
+    body: 'var(--muted)',
   },
   warning: {
-    border: 'var(--vermilion-line)',
-    background: 'var(--vermilion-soft)',
-    title: 'var(--vermilion)',
-    body: 'var(--ink-dim)',
+    border: 'var(--hair)',
+    background: 'var(--surface)',
+    title: 'var(--ink)',
+    body: 'var(--muted)',
   },
   error: {
-    border: 'var(--del)',
-    background: 'var(--del-soft)',
-    title: 'var(--del)',
-    body: 'var(--ink-dim)',
+    border: 'var(--danger)',
+    background: 'var(--danger-soft)',
+    title: 'var(--danger)',
+    body: 'var(--muted)',
   },
 };
 

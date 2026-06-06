@@ -47,11 +47,11 @@ export default function AppDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[color:var(--ink)]/40 px-4">
       <button type="button" className="absolute inset-0" onClick={onClose} aria-label="关闭对话框" />
-      <div className="relative w-full max-w-md rounded-[12px] border-2 border-default bg-[var(--ink-raise)] p-6 shadow-[8px_8px_0_var(--ink)]">
+      <div className="relative w-full max-w-md rounded-[12px] border border-default bg-[color:var(--surface)] p-6 shadow-[0_24px_60px_-24px_rgba(50,38,18,0.4)]">
         <div className="eyebrow !mb-2">Confirm · 应用内确认</div>
-        <h3 className="text-[22px] text-primary" style={{ fontFamily: 'var(--font-display)', lineHeight: 1.2 }}>{title}</h3>
+        <h3 className="text-[22px] text-primary" style={{ fontFamily: 'var(--serif)', fontWeight: 600, lineHeight: 1.2 }}>{title}</h3>
         <p className="mt-2 text-sm leading-6 text-secondary">{description}</p>
 
         {inputLabel && (
