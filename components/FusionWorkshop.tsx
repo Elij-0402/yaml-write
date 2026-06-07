@@ -59,41 +59,38 @@ function WorkshopProgress({
   nextLabel: string;
 }) {
   return (
-    <div className="mb-8 rounded-[12px] border border-default bg-[var(--ink-raise)] p-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="eyebrow !mb-1">Creation Workflow · 创作后半程</div>
-          <p className="text-sm leading-6 text-secondary">这里承接前面已经完成的 DNA 结果，继续完成题材选择、设定定稿和开篇生成。每一步都会明确告诉你系统在做什么、你现在要做什么。</p>
-        </div>
-        <div className="rounded-full border border-default bg-[color:var(--surface)] px-3 py-1 text-[11px] text-secondary">
-          下一步 · <span className="text-primary">{nextLabel}</span>
-        </div>
+    <div className="mb-8 rounded-[12px] border border-default bg-[color:var(--surface)] p-5">
+      <div className="mb-4">
+        <div className="eyebrow !mb-2 text-[11px]">创作工程 · 4 步走</div>
+        <p className="text-xs leading-5 text-secondary max-w-2xl">承接 DNA 提取，逐步完成题材配方、创意方向、设定确认、开篇成稿。系统会在每一步清晰提示下一个动作。</p>
       </div>
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="grid gap-2 auto-cols-fr lg:grid-cols-4 lg:gap-3 mt-4">
         {WORKSHOP_STEPS.map((step, idx) => {
           const active = step.id === current;
           const complete = WORKSHOP_STEPS.findIndex((item) => item.id === current) > idx;
           return (
             <div
               key={step.id}
-              className={`min-w-[148px] rounded-2xl border px-3 py-3 text-left ${
+              className={`rounded-[10px] border px-3 py-3 text-left transition-all ${
                 active
-                  ? 'border-[color:var(--signal)]/40 bg-[color:var(--signal-soft)]'
+                  ? 'border-[color:var(--signal)]/50 bg-[color:var(--signal-soft)] ring-1 ring-[color:var(--signal)]/30'
                   : complete
-                  ? 'border-default bg-[color:var(--surface)]'
+                  ? 'border-default bg-[color:var(--ink-raise)]'
                   : 'border-default bg-transparent'
               }`}
             >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-[10px] tracking-[0.18em] text-muted">0{idx + 1}</span>
-                <span
-                  className={`h-1.5 w-1.5 rounded-full ${
-                    active ? 'bg-[color:var(--signal)]' : complete ? 'bg-[color:var(--ink)]' : 'bg-[color:var(--faint)]'
-                  }`}
-                />
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">Step {idx + 1}</span>
+                <span className={`text-[12px] ${
+                  active ? 'text-[color:var(--signal)]' : complete ? 'text-[color:var(--ink)]' : 'text-[color:var(--faint)]'
+                }`}>
+                  {active ? '⏳' : complete ? '✓' : '·'}
+                </span>
               </div>
-              <div className="mt-2 text-sm text-primary">{step.label}</div>
-              <div className="mt-1 text-[11px] leading-5 text-secondary">{step.kicker}</div>
+              <div className={`text-[12px] font-semibold ${active || complete ? 'text-primary' : 'text-secondary'}`}>
+                {step.label}
+              </div>
+              <div className="mt-1.5 text-[10px] leading-4 text-muted opacity-75">{step.kicker}</div>
             </div>
           );
         })}

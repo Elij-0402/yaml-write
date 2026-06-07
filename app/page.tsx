@@ -243,7 +243,7 @@ export default function Home() {
   const readinessTone = llmReadiness.ok ? 'text-[color:var(--signal)] border-[color:var(--signal)]/30 bg-[color:var(--signal-soft)]' : 'text-[color:var(--muted)] border-[color:var(--hair)] bg-[color:var(--surface)]';
 
   return (
-    <main className="workspace-shell flex min-h-screen">
+    <main className="workspace-shell flex min-h-screen flex-col bg-[color:var(--well)]">
       {/* Mobile nav scrim */}
       {mobileNavOpen && (
         <button
@@ -254,170 +254,11 @@ export default function Home() {
         />
       )}
 
-      {/* Sidebar — static on lg, slide-in drawer below lg */}
-      <aside
-        className={`${
-          mobileNavOpen ? 'fixed inset-y-0 left-0 z-40 flex' : 'hidden'
-        } w-[296px] flex-col border-r border-default bg-[color:var(--well)] lg:static lg:z-auto lg:flex`}
-      >
-        <div className="border-b border-default px-5 py-5">
-          <div className="flex items-center gap-3">
-            <span
-              className="grid h-10 w-10 place-items-center rounded-[7px] border border-default text-[20px]"
-              style={{ color: 'var(--ink)', fontFamily: 'var(--serif)' }}
-            >墨</span>
-            <div className="leading-tight">
-              <div className="text-[16px] text-primary" style={{ fontFamily: 'var(--serif)', fontWeight: 600 }}>创作 DNA 工坊</div>
-              <div className="text-[10px] tracking-[0.22em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>VARIATION ATELIER</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-4 py-4">
-          <button onClick={goImport} className="workspace-button w-full justify-between">
-            <span>导入新作品</span>
-            <span className="font-mono text-xs">+</span>
-          </button>
-
-          {novels.length > 0 && (
-            <div className="mt-5">
-              <div className="mb-2 px-1 text-[11px] uppercase tracking-[0.18em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>作品库 · {novels.length}</div>
-              {novels.map((novel) => {
-                const active = !workshopOpen && selectedNovelId === novel.id;
-                const status = getStatus(novel);
-                return (
-                  <div
-                    key={novel.id}
-                    className={`group relative mb-2 rounded-[12px] border px-4 py-3 transition-all ${
-                      active
-                        ? 'border-[color:var(--muted)] bg-[color:var(--surface)]'
-                        : 'border-default bg-transparent hover:border-[color:var(--muted)] hover:bg-[color:var(--surface)]'
-                    }`}
-                  >
-                    <div
-                      onClick={() => {
-                        setSelectedNovelId(novel.id);
-                        setWorkshopOpen(false);
-                        setMobileNavOpen(false);
-                      }}
-                      className="flex items-center justify-between"
-                    >
-                      <div className="min-w-0">
-                        <span className={`block truncate text-sm ${active ? 'text-primary' : 'text-secondary'}`}>
-                          {novel.name}
-                        </span>
-                        <span className="mt-1 inline-flex rounded-full border border-default px-2 py-0.5 text-[10px] text-muted">{getStatusLabel(status)}</span>
-                      </div>
-                      <span className="ml-3 text-xs text-muted">
-                        {status === 'ready' ? '●' : status === 'extracting' ? '◐' : status === 'review' ? '○' : '·'}
-                      </span>
-                    </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDialogState({ kind: 'deleteNovel', novel });
-                      }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-[color:var(--danger)] group-hover:opacity-100"
-                    >
-                      ×
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {creations.length > 0 && (
-            <div className="mt-5 border-t border-default pt-5">
-              <div className="mb-2 px-1 text-[11px] uppercase tracking-[0.18em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>创作会话 · {creations.length}</div>
-              {creations.map((creation) => {
-                const active = workshopOpen && activeCreationId === creation.id;
-                return (
-                  <div
-                    key={creation.id}
-                    title={workshopBusy && !active ? '生成中，暂不可切换创作' : undefined}
-                    className={`group relative mb-2 rounded-[12px] border px-4 py-3 ${
-                      active
-                        ? 'border-[color:var(--muted)] bg-[color:var(--surface)]'
-                        : workshopBusy
-                        ? 'cursor-not-allowed border-default bg-transparent opacity-50'
-                        : 'cursor-pointer border-default bg-transparent hover:border-[color:var(--muted)] hover:bg-[color:var(--surface)]'
-                    }`}
-                  >
-                    <div
-                      onClick={() => {
-                        if (workshopBusy) return;
-                        setActiveCreationId(creation.id);
-                        setMobileNavOpen(false);
-                      }}
-                      className="flex items-center justify-between"
-                    >
-                      <span className={`truncate text-sm ${active ? 'text-primary' : 'text-secondary'}`}>
-                        {creation.name || creation.directionTitle || '未命名创作'}
-                      </span>
-                    </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDialogState({ kind: 'renameCreation', creation });
-                      }}
-                      className="absolute right-7 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-primary group-hover:opacity-100"
-                    >
-                      ✎
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDialogState({ kind: 'deleteCreation', creation });
-                      }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-[color:var(--danger)] group-hover:opacity-100"
-                    >
-                      ×
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="border-t border-default px-4 py-4">
-          <button
-            onClick={() => {
-              if (workshopBusy || readyCount < 1) return;
-              setActiveCreationId(crypto.randomUUID());
-              setMobileNavOpen(false);
-            }}
-            className={`workspace-button w-full justify-between ${workshopBusy || readyCount < 1 ? 'opacity-50' : ''}`}
-            disabled={workshopBusy || readyCount < 1}
-          >
-            <span>新建创作</span>
-            <span className="font-mono text-xs">{readyCount >= 1 ? readyCount : '0'}</span>
-          </button>
-          <button
-            onClick={() => {
-              setSettingsOpen(true);
-              setMobileNavOpen(false);
-            }}
-            className="mt-3 flex w-full items-center justify-between rounded-[12px] border border-default bg-[color:var(--surface)] px-4 py-3 text-left text-sm text-secondary hover:text-primary"
-          >
-            <div>
-              <span className="block text-primary">模型与偏好设置</span>
-              <span className="text-[11px] text-muted">管理 API Key、模型地址和当前工作流阻塞项</span>
-            </div>
-            <span className={`status-pill ${readinessTone}`}>
-              {llmReadiness.ok ? '已连接' : '待配置'}
-            </span>
-          </button>
-        </div>
-      </aside>
-
-      {/* Main */}
-      <section className="relative z-[1] flex min-w-0 flex-1 flex-col">
-        <header className="border-b border-default px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 items-center gap-2 text-sm" style={{ fontFamily: 'var(--font-mono)' }}>
+      {/* Top nav bar — always visible, contains branding + status */}
+      <header className="border-b border-default bg-[color:var(--well)] px-4 py-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between gap-4">
+          {/* Left: branding + workspace context */}
+          <div className="flex min-w-0 items-center gap-4">
             <button
               onClick={() => setMobileNavOpen(true)}
               className="text-secondary hover:text-primary lg:hidden"
@@ -425,46 +266,214 @@ export default function Home() {
             >
               ☰
             </button>
-            <span className="truncate text-muted">{currentWorkspaceLabel}</span>
-            <span className="text-muted">/</span>
-            <span className="truncate text-primary">{currentPath}</span>
-              </div>
-              <h1 className="mt-2 text-[26px] text-primary sm:text-[30px]" style={{ fontFamily: 'var(--serif)', fontWeight: 600, lineHeight: 1.1 }}>
-                把读过的书，拆成可换皮的引擎与皮。
-              </h1>
-              {/* 下一步红左栏单行（决策5：外壳留「下一步」一行） */}
-              <div className="mt-3 flex max-w-3xl items-center gap-2.5 border-l-2 border-[color:var(--hair)] py-0.5 pl-3 text-sm">
-                <span className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-[color:var(--faint)]" style={{ fontFamily: 'var(--font-mono)' }}>下一步</span>
-                <span className="text-secondary">{activeTaskLabel}</span>
+            <div className="flex items-center gap-3">
+              <span
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-[6px] border border-default text-[18px]"
+                style={{ color: 'var(--ink)', fontFamily: 'var(--serif)' }}
+              >墨</span>
+              <div className="hidden min-w-0 leading-tight sm:block">
+                <div className="text-[13px] text-primary" style={{ fontFamily: 'var(--serif)', fontWeight: 600 }}>创作 DNA</div>
+                <div className="text-[9px] tracking-[0.18em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>ATELIER</div>
               </div>
             </div>
-            {/* 角落状态 chip */}
-            <div className="flex shrink-0 flex-col items-end gap-2">
-              <span className={`status-pill ${readinessTone}`}>
-                {llmReadiness.ok ? '模型已连接' : '模型待配置'}
-              </span>
-              {persistError && (
-                <span className="status-pill border-[color:var(--danger)] text-[color:var(--danger)]">⚠ 存储不可用</span>
-              )}
+            <div className="hidden min-w-0 border-l border-default pl-4 md:block">
+              <div className="text-[11px] tracking-[0.16em] text-muted font-mono">当前：{currentWorkspaceLabel}</div>
+              <div className="mt-0.5 truncate text-[13px] text-primary font-serif">{currentPath}</div>
             </div>
           </div>
-        </header>
 
-        {/* 主线进度 Stepper（决策9：工坊态淡化为细带，主视觉让位给工坊） */}
-        <div className={`border-b border-default px-4 sm:px-6 lg:px-8 ${workshopOpen ? 'py-2 opacity-55' : 'py-5'}`}>
-          <WorkflowStepper summary={workflowSummary} currentStageId={currentStageId} onStageClick={handleStageClick} />
+          {/* Right: status pills */}
+          <div className="flex shrink-0 items-center gap-2">
+            <span className={`status-pill text-xs ${readinessTone}`}>
+              {llmReadiness.ok ? '模型就绪' : '待配置'}
+            </span>
+            {persistError && (
+              <span className="status-pill border-[color:var(--danger)] text-[color:var(--danger)] text-xs">⚠</span>
+            )}
+            <button
+              onClick={() => setSettingsOpen(true)}
+              className="rounded-[6px] border border-default px-3 py-2 text-xs text-secondary hover:text-primary hover:border-[color:var(--muted)]"
+            >
+              ⚙
+            </button>
+          </div>
         </div>
+      </header>
 
-        <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
-          {workshopOpen ? (
-            <FusionWorkshop />
-          ) : selectedNovel && !manageMode ? (
-            <NovelDetail novelId={selectedNovel.id} />
-          ) : (
-            <NovelUploader />
-          )}
-        </div>
+      {/* Main workflow section */}
+      <section className="border-b border-default px-4 py-4 sm:px-6 lg:px-8">
+        <WorkflowStepper summary={workflowSummary} currentStageId={currentStageId} onStageClick={handleStageClick} />
       </section>
+
+      {/* Layout: sidebar + content */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        {/* Sidebar — projects & creations */}
+        <aside
+          className={`${
+            mobileNavOpen ? 'fixed inset-y-0 left-0 z-40 flex' : 'hidden'
+          } w-[280px] flex-col border-r border-default bg-[color:var(--surface)] lg:static lg:z-auto lg:flex overflow-y-auto`}
+        >
+          {/* Nav: Import + stats header */}
+          <div className="border-b border-default px-4 py-4 space-y-3">
+            <button 
+              onClick={goImport} 
+              className="w-full rounded-[10px] bg-[color:var(--ink)] text-[color:var(--well)] px-3 py-2.5 text-sm font-medium hover:opacity-90 transition"
+            >
+              + 导入新作品
+            </button>
+            {novels.length > 0 && (
+              <div className="text-[10px] text-muted font-mono tracking-wider uppercase">
+                {novels.length} 部作品 · {readyCount} 部就绪
+              </div>
+            )}
+          </div>
+
+          {/* Novels list */}
+          {novels.length > 0 && (
+            <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-muted px-1 py-2">作品库</div>
+              {novels.map((novel) => {
+                const active = !workshopOpen && selectedNovelId === novel.id;
+                const status = getStatus(novel);
+                const statusIcon = status === 'ready' ? '●' : status === 'extracting' ? '◐' : status === 'review' ? '○' : '·';
+                return (
+                  <div
+                    key={novel.id}
+                    className={`group relative rounded-[8px] border px-3 py-2.5 text-sm transition-all ${
+                      active
+                        ? 'border-[color:var(--muted)] bg-[color:var(--ink-raise)]'
+                        : 'border-default hover:border-[color:var(--muted)] hover:bg-[color:var(--ink-raise)]'
+                    }`}
+                    onClick={() => {
+                      setSelectedNovelId(novel.id);
+                      setWorkshopOpen(false);
+                      setMobileNavOpen(false);
+                    }}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className={`truncate font-medium ${active ? 'text-primary' : 'text-secondary'}`}>
+                          {novel.name}
+                        </div>
+                        <div className="mt-1 inline-flex items-center gap-1 text-[9px] text-muted">
+                          <span>{statusIcon}</span>
+                          <span>{getStatusLabel(status)}</span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDialogState({ kind: 'deleteNovel', novel });
+                        }}
+                        className="text-muted opacity-0 group-hover:opacity-100 hover:text-[color:var(--danger)] transition text-xs"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Creations list */}
+          {creations.length > 0 && (
+            <div className="flex-1 overflow-y-auto border-t border-default px-3 py-3 space-y-2">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-muted px-1 py-2">创作会话</div>
+              {creations.map((creation) => {
+                const active = workshopOpen && activeCreationId === creation.id;
+                return (
+                  <div
+                    key={creation.id}
+                    className={`group relative rounded-[8px] border px-3 py-2.5 text-sm transition-all ${
+                      active
+                        ? 'border-[color:var(--muted)] bg-[color:var(--ink-raise)]'
+                        : workshopBusy
+                        ? 'border-default opacity-50 cursor-not-allowed'
+                        : 'border-default hover:border-[color:var(--muted)] hover:bg-[color:var(--ink-raise)]'
+                    }`}
+                    onClick={() => {
+                      if (workshopBusy) return;
+                      setActiveCreationId(creation.id);
+                      setMobileNavOpen(false);
+                    }}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className={`truncate font-medium flex-1 ${active ? 'text-primary' : 'text-secondary'}`}>
+                        {creation.name || creation.directionTitle || '未命名创作'}
+                      </div>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDialogState({ kind: 'renameCreation', creation });
+                          }}
+                          className="text-muted opacity-0 group-hover:opacity-100 hover:text-primary transition text-xs"
+                        >
+                          ✎
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDialogState({ kind: 'deleteCreation', creation });
+                          }}
+                          className="text-muted opacity-0 group-hover:opacity-100 hover:text-[color:var(--danger)] transition text-xs"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Footer: New creation button */}
+          <div className="border-t border-default px-3 py-3">
+            <button
+              onClick={() => {
+                if (workshopBusy || readyCount < 1) return;
+                setActiveCreationId(crypto.randomUUID());
+                setMobileNavOpen(false);
+              }}
+              className={`w-full rounded-[8px] bg-[color:var(--signal-soft)] text-[color:var(--signal)] px-3 py-2.5 text-sm font-medium border border-[color:var(--signal)]/30 hover:border-[color:var(--signal)]/50 transition ${
+                workshopBusy || readyCount < 1 ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
+              disabled={workshopBusy || readyCount < 1}
+            >
+              ✨ 新建创作
+            </button>
+          </div>
+        </aside>
+
+        {/* Content area */}
+        <section className="relative z-[1] flex min-w-0 flex-1 flex-col overflow-hidden">
+          {/* Hint bar: next action */}
+          <div className="border-b border-default px-4 py-3 sm:px-6 lg:px-8 bg-[color:var(--ink-raise)]/40">
+            <div className="flex items-center gap-3">
+              <span className="shrink-0 text-[9px] uppercase tracking-[0.18em] text-[color:var(--muted)] font-mono">Next Step</span>
+              <span className="text-sm text-secondary">{activeTaskLabel}</span>
+            </div>
+          </div>
+
+          {/* Main content */}
+          <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
+            {workshopOpen ? (
+              <FusionWorkshop />
+            ) : selectedNovel && !manageMode ? (
+              <NovelDetail novelId={selectedNovel.id} />
+            ) : (
+              <NovelUploader />
+            )}
+          </div>
+        </section>
+      </div>
+    </main>
 
       <SettingsPanel
         isOpen={settingsOpen}
