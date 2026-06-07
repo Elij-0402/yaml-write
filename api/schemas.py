@@ -135,6 +135,8 @@ class FusionDirectionsInput(BaseModel):
     engineCard: Optional[EngineCardInput] = None
     skinSource: Optional[SkinSourceInput] = None
     mode: Optional[str] = Field(None, pattern="^(self|cross)$")
+    # 0→1 原创模式开关（与 mode:self/cross 正交）：True=松绑「节拍不变」、DNA 当灵感调色板、用户意图压过源书节拍；False=换皮变题（默认，逐字保持现状）。
+    freedom: bool = Field(False, description="True 走 0→1 原创 / 自由重组分支；False（默认）走换皮变题分支。")
     userCustomPrompt: Optional[str] = Field(None, max_length=2000)
     adversarialRules: Optional[str] = Field(None, max_length=2000)
     # 候选池：再生成时把已有方向（title：concept）喂回，提示模型避开雷同（方向页候选池·去重）。

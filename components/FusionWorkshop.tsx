@@ -16,6 +16,7 @@ interface FusionRecipe {
   engineCard: { novelName: string; structureSkeleton: StructureBeat[]; pacingSyuzhet: string };
   skinSource: { novelName: string; themeSkin: string; proseStyle: string; userBrief: string };
   mode: 'self' | 'cross';
+  freedom: boolean;
 }
 
 type WorkshopStep = 'material' | 'directions' | 'creator' | 'manuscript';
@@ -117,6 +118,8 @@ export default function FusionWorkshop() {
   // selectedIds[0] = 骨架(引擎)，selectedIds[1] = 题材(皮)；皮可缺省（自我裂变，题材取口述）。
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [customPrompt, setCustomPrompt] = useState('');
+  // 生成模式开关（ephemeral，刻意不持久化进 db.fusionSessions）：false=换皮变题（默认），true=0→1 原创。
+  const [freedom, setFreedom] = useState(false);
   const [colliding, setColliding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -314,6 +317,7 @@ export default function FusionWorkshop() {
     const mode: 'self' | 'cross' = skinNovel ? 'cross' : 'self';
     return {
       mode,
+      freedom,
       engineCard: { novelName: engineNovel.name, structureSkeleton: engineDna.structureSkeleton, pacingSyuzhet: engineDna.pacingSyuzhet },
       skinSource: {
         novelName: skinNovel?.name ?? '',
@@ -331,6 +335,7 @@ export default function FusionWorkshop() {
         engineCard: recipe.engineCard,
         skinSource: recipe.skinSource,
         mode: recipe.mode,
+        freedom: recipe.freedom,
         userCustomPrompt: recipe.mode === 'cross' ? (customPrompt.trim() || undefined) : undefined,
         adversarialRules: adversarialRules.trim() || undefined,
         avoidDirections: avoid.length ? avoid : undefined,
@@ -659,6 +664,34 @@ export default function FusionWorkshop() {
         <div className="eyebrow">创作配方 · 素材拼装</div>
         <h2 className="atelier-h1">谁当<span className="it">骨架</span>，谁换<span className="it">皮</span>?</h2>
         <p className="lede">这一步只需要决定两件事：哪本书提供结构骨架，哪本书提供题材与风格。没有复杂参数，其余交给系统完成。</p>
+
+        <div className="mb-7 flex flex-wrap items-center gap-3">
+          <span className="text-[11px] uppercase tracking-[0.24em]" style={{ fontFamily: 'var(--mono)', color: 'var(--muted)' }}>生成模式</span>
+          <div className="inline-flex gap-1 rounded-[8px] p-1" style={{ border: '1px solid var(--hair)', background: 'var(--surface)' }} role="group" aria-label="生成模式">
+            {([{ v: false, label: '换皮变题' }, { v: true, label: '0→1 原创' }] as const).map((opt) => {
+              const active = freedom === opt.v;
+              return (
+                <button
+                  key={String(opt.v)}
+                  type="button"
+                  onClick={() => setFreedom(opt.v)}
+                  aria-pressed={active}
+                  className="rounded-[6px] px-3 py-1.5 text-[13px] font-semibold transition-colors"
+                  style={{
+                    fontFamily: 'var(--sans)',
+                    background: active ? 'var(--ink)' : 'transparent',
+                    color: active ? 'var(--on-ink)' : 'var(--muted)',
+                    border: active ? '1px solid var(--ink)' : '1px solid transparent',
+                    cursor: 'pointer',
+                  }}
+                >{opt.label}</button>
+              );
+            })}
+          </div>
+          <span className="text-xs" style={{ color: 'var(--muted)', fontFamily: 'var(--serif)' }}>
+            {freedom ? 'DNA 当灵感调色板，以你的意图为主轴自由重组结构' : '保持源书结构骨架，只换题材与文风'}
+          </span>
+        </div>
 
         <div className="recipe">
           <div className="slab engine">
