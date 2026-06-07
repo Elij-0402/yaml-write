@@ -23,7 +23,7 @@ function getStatus(novel: Novel): string {
 }
 
 function getStatusLabel(status: string): string {
-  if (status === 'ready') return 'DNA 就绪';
+  if (status === 'ready') return '就绪';
   if (status === 'extracting') return '提取中';
   if (status === 'review') return '待校验';
   return '待处理';
@@ -235,10 +235,12 @@ export default function Home() {
   const currentWorkspaceLabel = workshopOpen
     ? activeCreation?.name || activeCreation?.directionTitle || '创作工坊'
     : selectedNovel?.name || '总览';
+  // 单一「下一步」多路复用（IF-8/IF-10）：工坊忙 / 后台提取 / 常态推荐。前两者是「正在发生」→ value 着信号青。
+  const activeTaskLive = workshopBusy || extractingCount > 0;
   const activeTaskLabel = workshopBusy
     ? '创作工坊正在处理生成任务，建议保持当前会话。'
     : extractingCount > 0
-    ? `有 ${extractingCount} 本作品正在后台提取 DNA。`
+    ? `有 ${extractingCount} 本作品正在后台提取 DNA · 可离开，提取在后台继续。`
     : workflowSummary.recommendedNextStep;
   const readinessTone = llmReadiness.ok ? 'text-[color:var(--signal)] border-[color:var(--signal)]/30 bg-[color:var(--signal-soft)]' : 'text-[color:var(--muted)] border-[color:var(--hair)] bg-[color:var(--surface)]';
 
@@ -300,16 +302,30 @@ export default function Home() {
                         setWorkshopOpen(false);
                         setMobileNavOpen(false);
                       }}
-                      className="flex items-center justify-between"
+                      className="flex items-center gap-2.5"
                     >
-                      <div className="min-w-0">
-                        <span className={`block truncate text-sm ${active ? 'text-primary' : 'text-secondary'}`}>
-                          {novel.name}
-                        </span>
-                        <span className="mt-1 inline-flex rounded-full border border-default px-2 py-0.5 text-[10px] text-muted">{getStatusLabel(status)}</span>
-                      </div>
-                      <span className="ml-3 text-xs text-muted">
-                        {status === 'ready' ? '●' : status === 'extracting' ? '◐' : status === 'review' ? '○' : '·'}
+                      {/* 状态点（IF-5/IF-10/R1）：仅「提取中」着信号青并呼吸；就绪/待校验/待处理一律 faint，绝不着青 */}
+                      <span
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                          status === 'extracting'
+                            ? 'animate-pulse bg-[color:var(--signal)] motion-reduce:animate-none'
+                            : 'bg-[color:var(--faint)]'
+                        }`}
+                      />
+                      <span className={`min-w-0 flex-1 truncate text-sm ${active ? 'text-primary' : 'text-secondary'}`}>
+                        {novel.name}
+                      </span>
+                      {/* 行尾 mono 状态词：提取中=青 / 就绪=muted / 待校验·待处理=faint */}
+                      <span
+                        className={`shrink-0 font-mono text-[10px] tracking-[0.04em] ${
+                          status === 'extracting'
+                            ? 'text-[color:var(--signal)]'
+                            : status === 'ready'
+                            ? 'text-[color:var(--muted)]'
+                            : 'text-[color:var(--faint)]'
+                        }`}
+                      >
+                        {getStatusLabel(status)}
                       </span>
                     </div>
                     <button
@@ -329,7 +345,7 @@ export default function Home() {
 
           {creations.length > 0 && (
             <div className="mt-5 border-t border-default pt-5">
-              <div className="mb-2 px-1 text-[11px] uppercase tracking-[0.18em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>创作会话 · {creations.length}</div>
+              <div className="mb-2 px-1 text-[11px] uppercase tracking-[0.18em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>创作库 · {creations.length}</div>
               {creations.map((creation) => {
                 const active = workshopOpen && activeCreationId === creation.id;
                 return (
@@ -435,7 +451,7 @@ export default function Home() {
               {/* 下一步红左栏单行（决策5：外壳留「下一步」一行） */}
               <div className="mt-3 flex max-w-3xl items-center gap-2.5 border-l-2 border-[color:var(--hair)] py-0.5 pl-3 text-sm">
                 <span className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-[color:var(--faint)]" style={{ fontFamily: 'var(--font-mono)' }}>下一步</span>
-                <span className="text-secondary">{activeTaskLabel}</span>
+                <span className={activeTaskLive ? 'text-[color:var(--signal)]' : 'text-secondary'}>{activeTaskLabel}</span>
               </div>
             </div>
             {/* 角落状态 chip */}

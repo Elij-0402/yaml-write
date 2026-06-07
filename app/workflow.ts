@@ -180,7 +180,9 @@ export function getStageStatusClasses(status: StageStatus): string {
     case 'ready':
       return 'border-[color:var(--hair)] bg-[color:var(--surface)] text-[color:var(--ink)]';
     case 'blocked':
-      return 'border-[color:var(--danger)]/35 bg-[color:var(--danger-soft)] text-[color:var(--danger)]';
+      // 软门 = 前置条件、非错误（R2）：用 muted 系，绝不用 danger 红（danger 仅留真错误）。
+      // 与 idle 的 text-faint 仅靠字色强弱区分。
+      return 'border-[color:var(--hair)] bg-[color:var(--surface)] text-[color:var(--muted)]';
     default:
       return 'border-[color:var(--hair)] bg-[color:var(--surface)] text-[color:var(--faint)]';
   }
