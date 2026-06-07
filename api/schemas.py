@@ -137,6 +137,8 @@ class FusionDirectionsInput(BaseModel):
     mode: Optional[str] = Field(None, pattern="^(self|cross)$")
     userCustomPrompt: Optional[str] = Field(None, max_length=2000)
     adversarialRules: Optional[str] = Field(None, max_length=2000)
+    # 候选池：再生成时把已有方向（title：concept）喂回，提示模型避开雷同（方向页候选池·去重）。
+    avoidDirections: List[str] = Field(default_factory=list, max_length=40)
     apiKey: str = Field(..., min_length=1, max_length=512)
     baseUrl: str = Field(..., min_length=1, max_length=512)
     model: str = Field(..., min_length=1, max_length=200)

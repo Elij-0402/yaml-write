@@ -596,6 +596,15 @@ async def generate_fusion_directions(data: FusionDirectionsInput, request: Reque
         extra += f"\n\n【用户自定义大方向】：{data.userCustomPrompt.strip()}"
     if data.adversarialRules and data.adversarialRules.strip():
         extra += f"\n\n【用户红队对抗规则（最高优先级，违反即重写）】：{data.adversarialRules.strip()}"
+    if data.avoidDirections:
+        avoid_lines = "\n".join(
+            f"- {a.strip()}" for a in data.avoidDirections if (a or "").strip()
+        )
+        if avoid_lines:
+            extra += (
+                "\n\n【已生成过的方向（必须明显避开：题材内核 / 核心机制 / 角色配置都要换，"
+                "禁止换名雷同或换汤不换药）】：\n" + avoid_lines
+            )
 
     system_prompt = (
         "你是一位精通「换皮变题」的小说迁移大师（学理：Propp 功能不变·角色可替换；Riedl『story analogues』类推迁移）。"

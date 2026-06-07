@@ -45,7 +45,7 @@ interface FragmentDraft { original: string; rewritten: string; }
 
 const WORKSHOP_STEPS: Array<{ id: WorkshopStep; label: string; kicker: string }> = [
   { id: 'material', label: '配方设定', kicker: '选择骨架与题材' },
-  { id: 'directions', label: '方向筛选', kicker: '比较 3 条创作路线' },
+  { id: 'directions', label: '方向筛选', kicker: '挑一条，可随时再来一批' },
   { id: 'creator', label: '设定定稿', kicker: '确认世界观与人物关系' },
   { id: 'manuscript', label: '开篇成稿', kicker: '流式生成并微调正文' },
 ];
@@ -324,6 +324,20 @@ export default function FusionWorkshop() {
     };
   };
 
+  // 候选池：单次生成请求（首发覆盖 / 再来一批追加共用）。avoid=已有方向，喂回后端去重。
+  const requestDirections = (recipe: FusionRecipe, avoid: string[], signal: AbortSignal) =>
+    withRateLimitRetry(
+      () => callStructured<{ directions: FusionDirection[] }>('/api/py/generate-fusion-directions', {
+        engineCard: recipe.engineCard,
+        skinSource: recipe.skinSource,
+        mode: recipe.mode,
+        userCustomPrompt: recipe.mode === 'cross' ? (customPrompt.trim() || undefined) : undefined,
+        adversarialRules: adversarialRules.trim() || undefined,
+        avoidDirections: avoid.length ? avoid : undefined,
+      }, { signal, parse: parseFusionDirections }),
+      { signal }
+    );
+
   const collide = async () => {
     if (!guardLlm() || colliding) return;
     const recipe = buildRecipe();
@@ -332,16 +346,7 @@ export default function FusionWorkshop() {
     setColliding(true);
     try {
       const ac = new AbortController();
-      const data = await withRateLimitRetry(
-        () => callStructured<{ directions: FusionDirection[] }>('/api/py/generate-fusion-directions', {
-          engineCard: recipe.engineCard,
-          skinSource: recipe.skinSource,
-          mode: recipe.mode,
-          userCustomPrompt: recipe.mode === 'cross' ? (customPrompt.trim() || undefined) : undefined,
-          adversarialRules: adversarialRules.trim() || undefined,
-        }, { signal: ac.signal, parse: parseFusionDirections }),
-        { signal: ac.signal }
-      );
+      const data = await requestDirections(recipe, [], ac.signal);
       if (!mountedRef.current) return;
       setDirections(data.directions || []);
       setStep('directions');
@@ -352,6 +357,31 @@ export default function FusionWorkshop() {
       if (mountedRef.current) setColliding(false);
     }
   };
+
+  // 再来一批：在原配方上追加 3 条，把现有方向喂回后端去重，停留在方向页（候选池累积）。
+  const rerollDirections = async () => {
+    if (!guardLlm() || colliding) return;
+    const recipe = buildRecipe();
+    if ('error' in recipe) { setError(recipe.error); return; }
+    setError(null);
+    setColliding(true);
+    try {
+      const ac = new AbortController();
+      const avoid = directions.slice(-20).map((d) => `${d.title}：${d.concept}`);
+      const data = await requestDirections(recipe, avoid, ac.signal);
+      if (!mountedRef.current) return;
+      setDirections((prev) => [...prev, ...(data.directions || [])]);
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setError(err instanceof Error ? err.message : '生成方向失败');
+    } finally {
+      if (mountedRef.current) setColliding(false);
+    }
+  };
+
+  // 扔掉候选池里的一条（纯前端 filter；directions 已随会话持久化）。
+  const discardDirection = (idx: number) =>
+    setDirections((prev) => prev.filter((_, i) => i !== idx));
 
   const applyDirection = async (direction: FusionDirection) => {
     const baseBlocks = {
@@ -714,11 +744,16 @@ export default function FusionWorkshop() {
     );
   }
 
-  // ===== 三方向 =====
+  // ===== 候选池（原三方向）=====
   if (step === 'directions') {
-    const idxLabel = ['i.', 'ii.', 'iii.', 'iv.', 'v.'];
+    const idxLabel = ['i.', 'ii.', 'iii.', 'iv.', 'v.', 'vi.', 'vii.', 'viii.', 'ix.', 'x.'];
     const engName = engineNovel?.name || '骨架';
     const skinLabel = skinNovel?.name || '口述题材';
+    const rerollBtn = (
+      <button className="cta ghost" onClick={() => void rerollDirections()} disabled={colliding}>
+        {colliding ? '生成中…' : '🎲 再来三条'}
+      </button>
+    );
     return (
       <div className="atelier">
         <WorkshopProgress current="directions" nextLabel={nextActionLabel} />
@@ -727,31 +762,68 @@ export default function FusionWorkshop() {
             <div>
               <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>方向上下文</div>
               <div className="mt-2 text-sm text-primary">{engName} 的结构引擎 × {skinLabel} 的题材表皮</div>
-              <p className="mt-1 text-xs leading-6 text-secondary">这一步不是重新写 prompt，而是在同一组输入上挑选最合理的一条创作方向。你选中的那条会继续流入设定定稿与正文生成。</p>
+              <p className="mt-1 text-xs leading-6 text-secondary">在同一组输入上挑一条创作方向。不满意就「再来三条」往池子里追加（系统会避开已生成过的），不想要的随手扔掉。选中的那条会继续流入设定定稿与正文生成。</p>
             </div>
             <div className="rounded-full border border-default px-3 py-1 text-[11px] text-secondary">状态 · {backendStatus}</div>
           </div>
         </div>
-        <div className="eyebrow">创作方向 · 三案对比</div>
-        <h2 className="atelier-h1">三条可执行的<span className="it">创作方向</span>。挑一个。</h2>
-        <p className="lede">同一套「{engName} 的结构骨架 × {skinLabel} 的题材风格」，系统会给出三条不同的创作路线。你只需要挑出最像你要写的那一条。</p>
-        <div className="dirs">
-          {directions.map((dir, idx) => (
-            <button key={idx} className="dir" onClick={() => void chooseDirection(dir)}>
-              <span className="idx">{idxLabel[idx] || `${idx + 1}.`}</span>
-              <h4>{dir.title}</h4>
-              <p className="concept">{dir.concept}</p>
-              {dir.transferNote && <p className="concept" style={{ color: 'var(--ink-faint)', fontSize: 12 }}>🧬 {dir.transferNote}</p>}
-              <div className="recipe-tag">
-                <span className="chip eng">{engName}</span>
-                <span className="chip skn">{skinLabel}</span>
-              </div>
-              <span className="pick">选择此方向 ↗</span>
-            </button>
-          ))}
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <div className="eyebrow">创作方向 · 候选池（{directions.length}）</div>
+            <h2 className="atelier-h1">挑一条，或<span className="it">再来一批</span>。</h2>
+          </div>
+          {directions.length > 0 && rerollBtn}
         </div>
-        <div className="mt-7">
+        <p className="lede">同一套「{engName} 的结构骨架 × {skinLabel} 的题材风格」能生出无数条路线。先看这几条，喜欢的留着、选中其一往下走；都不对就再抽一批。</p>
+
+        {directions.length === 0 ? (
+          <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-8 text-center">
+            <p className="text-sm text-secondary">候选池空了。再抽一批新方向，或回配方台调整骨架与题材。</p>
+            <div className="mt-4 flex flex-wrap justify-center gap-3">
+              {rerollBtn}
+              <button className="cta ghost" onClick={() => setStep('material')}>← 回配方台</button>
+            </div>
+          </div>
+        ) : (
+          <div className="dirs">
+            {directions.map((dir, idx) => (
+              <div
+                key={idx}
+                className="dir"
+                role="button"
+                tabIndex={0}
+                onClick={() => void chooseDirection(dir)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void chooseDirection(dir); } }}
+              >
+                <button
+                  type="button"
+                  title="扔掉这条"
+                  aria-label="扔掉这条"
+                  onClick={(e) => { e.stopPropagation(); discardDirection(idx); }}
+                  style={{ position: 'absolute', top: 8, right: 8, lineHeight: 1, fontSize: 13, color: 'var(--muted)', padding: 4, background: 'transparent', border: 'none', cursor: 'pointer' }}
+                >
+                  ✕
+                </button>
+                <span className="idx">{idxLabel[idx] || `${idx + 1}.`}</span>
+                <h4>{dir.title}</h4>
+                <p className="concept">{dir.concept}</p>
+                {dir.transferNote && <p className="concept" style={{ color: 'var(--ink-faint)', fontSize: 12 }}>🧬 {dir.transferNote}</p>}
+                <div className="recipe-tag">
+                  <span className="chip eng">{engName}</span>
+                  <span className="chip skn">{skinLabel}</span>
+                </div>
+                <span className="pick">选择此方向 ↗</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {error && <p className="mt-4 text-sm" style={{ color: 'var(--del)' }}>{error}</p>}
+        {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--signal)' }}>云端有些拥挤，已自动放缓退避重试，请稍候…</p>}
+
+        <div className="mt-7 flex flex-wrap gap-3">
           <button className="cta ghost" onClick={() => setStep('material')}>← 回配方台</button>
+          {directions.length > 0 && rerollBtn}
         </div>
       </div>
     );
