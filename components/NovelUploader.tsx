@@ -1,21 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Chapter, type Novel, type SplitMeta, type SplitStatus, type SplitStrategyId } from '../app/db';
+import { Loader2, Sparkles, Link2, Scissors, Dna, AlertCircle, AlertTriangle, Check, Undo2, X } from 'lucide-react';
+import { db, type Chapter, type Novel, type SplitStatus, type SplitStrategyId } from '../app/db';
 import { isExtracting } from '../app/dnaState';
 import { useAppStore } from '../app/store';
 import { getProviderMeta } from '../app/llmProviders';
 import { getLlmConfigError, postWithLlmConfig, readApiErrorMessage } from '../app/llmClient';
 import { rescoreSplit } from '../app/splitQuality';
-import { parseNovelFile, resplit } from '../app/novelParser';
+import { resplit } from '../app/novelParser';
 import { planBlobPresplit } from '../app/blobPresplit';
 import { planStitch, planBulkStitch, planSplit, buildStitchBackup } from '../app/chapterOps';
 import { DEFAULT_CUSTOM_REGEX, validateLineRegex } from '../app/splitRegex';
 import ProviderCredentialsEditor from './ProviderCredentialsEditor';
 import AppDialog from './AppDialog';
-import AppNotice from './AppNotice';
-
-const MAX_UPLOAD_SIZE_MB = 50;
-const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
 
 // === Story 1.6: JIT 智能语义拆分 / Ollama 心跳 ===
 const SMART_SPLIT_MIN_WORDS = 8000; // 分章置信度极低判定：分章数 <= 1 且总字数 >= 此阈值
@@ -50,15 +47,15 @@ async function computeSha256(text: string): Promise<string> {
   return hashHex;
 }
 
+// 章节校验台（切分复核）：导入由 LibraryView 负责，本组件只在已选中作品时被 NovelWorkspace 的「章节校验」tab 挂载。
 export default function NovelUploader() {
-  const { selectedNovelId, setSelectedNovelId, setManageMode, llmConfig } =
+  const { selectedNovelId, setManageMode, llmConfig } =
     useAppStore();
   const activeProvider = llmConfig.activeProvider;
   const activeProviderMeta = getProviderMeta(activeProvider);
   const activeProfile = llmConfig.providerProfiles[activeProvider];
 
-  const [dragActive, setDragActive] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [uploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [uploadStage, setUploadStage] = useState<UploadStage>('idle');
   const [uploadStageText, setUploadStageText] = useState('');
@@ -88,7 +85,7 @@ export default function NovelUploader() {
   const [isTearing, setIsTearing] = useState(false);
   const [splittingIndex, setSplittingIndex] = useState<number | null>(null);
 
-  // Story 1.6 State — JIT 水晶配置卡 + Ollama 心跳 + 智能语义拆分推荐
+  // Story 1.6 State — JIT 配置卡 + Ollama 心跳 + 智能语义拆分推荐
   const [isCrystalOpen, setIsCrystalOpen] = useState(false);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>('unknown');
   const [ollamaMessage, setOllamaMessage] = useState('');
@@ -116,10 +113,7 @@ export default function NovelUploader() {
     setSplitRecommendations([]);
   }, [activeChapterId]);
 
-
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  // 解析 Worker 的中止句柄：卸载时 abort，由 app/novelParser 内部 terminate + 清看门狗（替代旧的 worker/watchdog 双 ref）。
+  // 解析 Worker 的中止句柄：卸载时 abort，由 app/novelParser 内部 terminate + 清看门狗。
   const parserAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -149,7 +143,7 @@ export default function NovelUploader() {
   const splitMeta = activeNovel?.splitMeta;
   const reviewReasons = splitMeta?.reviewReasons || [];
 
-  // Story 1.6 derived — 智能语义拆分入口判定 / 水晶卡就绪态 / 推荐点索引
+  // Story 1.6 derived — 智能语义拆分入口判定 / 配置卡就绪态 / 推荐点索引
   const oversizedChapter = chapters.find((c) => c.wordCount > 30000) || null;
   const canSmartSplit =
     chapters.length >= 1 &&
@@ -168,7 +162,7 @@ export default function NovelUploader() {
   }, [splitRecommendations]);
 
   // T3/T4: Ollama 5s 静默心跳 + 1.5s 极限超时熔断 + /api/tags 模型静默审计。
-  // 仅在水晶卡打开且选用 Ollama 时轮询，避免无谓的后台请求。
+  // 仅在配置卡打开且选用 Ollama 时轮询，避免无谓的后台请求。
   const ollamaBaseUrl = llmConfig.providerProfiles.ollama.baseUrl;
   useEffect(() => {
     if (!isCrystalOpen || activeProvider !== 'ollama') {
@@ -458,132 +452,6 @@ export default function NovelUploader() {
     saving: '写入本地项目与章节索引...',
   };
 
-  const handleDrag = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === 'dragenter' || e.type === 'dragover') setDragActive(true);
-    else if (e.type === 'dragleave') setDragActive(false);
-  };
-
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    if (e.dataTransfer.files?.[0]) await processFile(e.dataTransfer.files[0]);
-  };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.[0]) await processFile(e.target.files[0]);
-    e.target.value = '';
-  };
-
-  const ensureStorageCapacity = async (file: File): Promise<void> => {
-    const storageManager = (navigator as Navigator & { storage?: StorageManager }).storage;
-    if (!storageManager || typeof storageManager.estimate !== 'function') return;
-    try {
-      const estimate = await storageManager.estimate();
-      const quota = estimate.quota ?? 0;
-      const usage = estimate.usage ?? 0;
-      if (!quota) return;
-      const freeBytes = quota - usage;
-      const requiredBytes = Math.max(file.size * 2.2, 8 * 1024 * 1024);
-      if (freeBytes < requiredBytes) throw new Error('存储空间不足');
-    } catch (err) {
-      if (err instanceof Error && err.message.includes('存储空间')) throw err;
-    }
-  };
-
-  const processFile = async (file: File) => {
-    if (uploading || repairing) return;
-    if (!file.name.toLowerCase().endsWith('.txt')) { setErrorMsg('仅支持 .txt'); return; }
-    if (file.size > MAX_UPLOAD_SIZE_BYTES) { setErrorMsg(`文件过大 (>${MAX_UPLOAD_SIZE_MB}MB)`); return; }
-
-    setUploading(true);
-    setUploadStage('detecting');
-    setUploadStageText('');
-    setErrorMsg(null);
-
-    const novelId = crypto.randomUUID();
-    const novelName = file.name.replace(/\.[^/.]+$/, '');
-    const ac = new AbortController();
-    parserAbortRef.current = ac;
-
-    try {
-      await ensureStorageCapacity(file);
-
-      // Silently request storage persistence as per T3
-      if (navigator.storage && navigator.storage.persist) {
-        await navigator.storage.persist();
-      }
-
-      const { chapters: parsedChapters, splitMeta: computedSplitMeta, cleanedText, purifiedCount } =
-        await parseNovelFile(file, {
-          signal: ac.signal,
-          onProgress: ({ stage, percent }) => {
-            setUploadStage(stage as UploadStage);
-            setUploadStageText(percent !== undefined ? `${percent}%` : '');
-          },
-        });
-
-      setUploadStage('saving');
-      setUploadStageText('');
-
-      // 超长 blob 自动预切：盗版 txt 常把整本/多章塞进一个几万字单章，切成 ≤12k 片，
-      // 杜绝后端 extract-arc-map 砍尾，并清掉「超大章节」对 DNA 闸门的误锁。预切后 worker 的 splitMeta 失真 → 就地 rescore。
-      const presplit = planBlobPresplit(parsedChapters);
-      const effectiveChapters = presplit.chapters;
-      const { splitStatus: effSplitStatus, splitMeta: effSplitMeta } = presplit.didSplit
-        ? rescoreSplit(
-            effectiveChapters.map((c) => ({ name: c.title, wordCount: c.wordCount, chapterIndex: c.chapterIndex })),
-            computedSplitMeta,
-          )
-        : { splitStatus: (computedSplitMeta.confidenceLevel === 'low' ? 'needs_review' : 'ok') as SplitStatus, splitMeta: computedSplitMeta };
-
-      await db.transaction('rw', [db.novels, db.chapters], async () => {
-        // Write to novels with camelCase fields
-        await db.novels.add({
-          id: novelId,
-          name: novelName,
-          wordCount: effectiveChapters.reduce((sum, c) => sum + c.wordCount, 0),
-          createdAt: Date.now(),
-          purifiedCount,
-          sourceTextCleaned: cleanedText,
-          splitStatus: effSplitStatus,
-          splitMeta: effSplitMeta,
-          analysisStatus: 'idle',
-          mapProgress: { total: 0, current: 0 },
-          dnaCard: null,
-        });
-
-        // Format chapters with camelCase fields and contentSha256
-        const chaptersToSave = effectiveChapters.map((chapter) => ({
-          id: crypto.randomUUID(),
-          novelId,
-          chapterIndex: chapter.chapterIndex,
-          name: chapter.title,
-          content: chapter.content,
-          wordCount: chapter.wordCount,
-          contentSha256: chapter.contentSha256,
-          status: 'unparsed' as const,
-          mapStatus: 'pending' as const,
-        }));
-
-        await db.chapters.bulkAdd(chaptersToSave);
-      });
-
-      setSelectedNovelId(novelId);
-      resetChapterListView();
-      // 导入后永远落到「校验切分」管理视图：先看见章节+质量再显式进 DNA —— 导入↔切分合为一条连续流。
-      setManageMode(true);
-    } catch (err: unknown) {
-      if (err instanceof DOMException && err.name === 'AbortError') return; // 卸载中止：静默
-      setErrorMsg(err instanceof Error ? err.message : '解析或保存小说失败');
-    } finally {
-      setUploading(false);
-      setUploadStage('idle');
-    }
-  };
-
   const doResplit = async (strategy: SplitStrategyId) => {
     if (!activeNovel || repairing || uploading) return;
     if (!activeNovel.sourceTextCleaned?.trim()) { setErrorMsg('本地缓纯文本内容缺失，无法重分章'); return; }
@@ -664,7 +532,7 @@ export default function NovelUploader() {
       if (effSplitMeta.confidenceLevel === 'low') {
         setToast({
           show: true,
-          message: '重切后置信度仍偏低，可改用「分章规则」自定义正则，或用 ✨ 智能语义拆分。',
+          message: '重切后置信度仍偏低，可改用「分章规则」自定义正则，或用智能语义拆分。',
           countdown: 6000,
         });
       } else {
@@ -857,7 +725,7 @@ export default function NovelUploader() {
     }
   };
 
-  // AC1: 未配置当前 Provider 的钥匙（或 Ollama 未就绪）则滑入水晶卡，否则直接拆分。
+  // AC1: 未配置当前 Provider 的钥匙（或 Ollama 未就绪）则滑入配置卡，否则直接拆分。
   const handleSmartSplitClick = () => {
     if (!crystalReady || getLlmConfigError(llmConfig)) {
       setIsCrystalOpen(true);
@@ -866,196 +734,62 @@ export default function NovelUploader() {
     void runSmartSplit();
   };
 
-  // AC1 / AC3: High-end Linear dark aesthetic drop舱
-  if (!selectedNovelId) {
-    return (
-      <div
-        className="atelier mx-auto w-full max-w-5xl rounded-[12px] border border-default bg-[var(--ink-raise)] p-8"
-        onDragEnter={handleDrag}
-        onDragOver={handleDrag}
-        onDragLeave={handleDrag}
-        onDrop={handleDrop}
-      >
-        <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".txt" className="hidden" />
+  const confidenceTone = splitMeta
+    ? splitMeta.confidenceLevel === 'high' ? 'text-success'
+      : splitMeta.confidenceLevel === 'medium' ? 'text-fg-muted'
+      : 'text-danger'
+    : 'text-fg-muted';
 
-        <div className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="py-2">
-            <div className="eyebrow">导入起点 · 工作流开场</div>
-            <h1 className="atelier-h1" style={{ fontSize: 30 }}>把读过的书，整理成一条可继续创作的工作流。</h1>
-            <p className="lede">导入 TXT 之后，系统会先做清洗与切分，再把可用章节送进 DNA 提取。整个过程都围绕同一条主线，不会让你在页面之间重新理解一遍产品。</p>
-
-            <div className="mt-8 grid gap-3 sm:grid-cols-3">
-              {[
-                ['01', '导入文本', '识别编码、净化噪音，把原稿变成可处理的项目。'],
-                ['02', '校验切分', '把异常章节和风险位置提前暴露，避免错误一路带到后面。'],
-                ['03', '生成 DNA', '当结构可靠后，再交给模型提取骨架、题材与风格。'],
-              ].map(([idx, title, desc]) => (
-                <div key={idx} className="rounded-2xl border border-default bg-[color:var(--ink-raise)] p-4">
-                  <div className="font-mono text-[10px] tracking-[0.24em] text-muted">{idx}</div>
-                  <div className="mt-2 text-sm text-primary">{title}</div>
-                  <p className="mt-1 text-xs leading-6 text-secondary">{desc}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-5">
-            <div className="text-[11px] uppercase tracking-[0.28em] text-[color:var(--faint)]" style={{ fontFamily: 'var(--font-mono)' }}>文件投入口</div>
-            <p className="mt-2 text-sm leading-6 text-secondary">支持拖拽导入，也可以点按选择文件。导入完成后会直接进入切分校验台，不需要你再猜下一步该去哪。</p>
-            <div
-              onClick={() => fileInputRef.current?.click()}
-              className={`relative mt-5 cursor-pointer overflow-hidden rounded-[12px] border border-dashed px-8 py-14 text-center transition-all duration-150 ${
-                dragActive
-                  ? 'border-[color:var(--signal)] bg-[color:var(--signal-soft)]'
-                  : 'border-[color:var(--hair)] bg-transparent hover:border-[color:var(--muted)]'
-              }`}
-            >
-              <div className="relative space-y-4">
-                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-[color:var(--hair)] bg-[color:var(--surface)] text-2xl text-[color:var(--muted)]">
-                  文
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-primary" style={{ color: dragActive ? 'var(--signal)' : undefined }}>
-                    {dragActive ? '松开鼠标，开始导入这本书' : '点击选择或拖拽 TXT 到这里'}
-                  </p>
-                  <p className="mt-2 text-xs leading-6 text-secondary">
-                    支持 UTF-8 / GB18030 / BIG5 自适应识别，单文件 50MB 以内
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2 text-[11px] text-secondary">
-              <span className="rounded-full border border-default px-2.5 py-1">本地处理</span>
-              <span className="rounded-full border border-default px-2.5 py-1">自动进入切分校验</span>
-              <span className="rounded-full border border-default px-2.5 py-1">DNA 状态持续可见</span>
-            </div>
-          </div>
-        </div>
-
-        {uploading && (
-          <div className="mt-6 rounded-[12px] border border-default bg-[color:var(--surface)] p-6">
-            <div className="flex items-center gap-5">
-              <div className="relative h-16 w-16 will-change-transform">
-                <svg className="h-full w-full animate-[spin_6s_linear_infinite]" viewBox="0 0 100 100">
-                  <circle cx="50" cy="50" r="40" stroke="var(--signal)" strokeWidth="3" strokeDasharray="180 60" fill="none" className="opacity-90" />
-                  <circle cx="50" cy="50" r="29" stroke="var(--faint)" strokeWidth="2.5" strokeDasharray="120 42" fill="none" className="opacity-80 origin-center animate-[spin_4s_linear_infinite_reverse]" />
-                  <circle cx="50" cy="50" r="6" fill="var(--signal)" className="animate-pulse motion-reduce:animate-none" />
-                </svg>
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm font-medium text-primary">{stageLabelMap[uploadStage]}</p>
-                <p className="text-xs leading-6 text-secondary">导入完成后会自动带你进入切分校验台，避免“已经进来了但不知道接下来去哪”的断层感。</p>
-                {uploadStageText && <p className="text-xs font-mono tracking-wider text-[color:var(--signal)]">{uploadStageText}</p>}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {errorMsg && (
-          <AppNotice tone="error" title="导入失败" className="mt-6 text-center">
-            {errorMsg}
-          </AppNotice>
-        )}
-      </div>
-    );
-  }
-
-  // Chapter Review View
+  // ============================ 章节校验台 ============================
   return (
-    <div className="flex h-[calc(100vh-8rem)] w-full overflow-hidden rounded-[12px] border border-default bg-[var(--ink-raise)]">
-      {/* Left panel: outline tree */}
-      <div className="flex h-full w-[360px] shrink-0 flex-col border-r border-default bg-[color:var(--paper-2)]">
-        {/* Left header: info and settings */}
-        <div className="shrink-0 space-y-4 border-b border-default p-5">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0 flex-1">
-              <div className="text-[10px] uppercase tracking-[0.22em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>切分校验 · 章节工作台</div>
-              <h2 className="truncate text-sm font-semibold text-primary" title={activeNovel?.name || ''}>
-              {activeNovel?.name}
-              </h2>
-            </div>
-            <button
-              onClick={() => setSelectedNovelId(null)}
-              className="rounded-full border border-default px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted transition-colors hover:text-primary"
-            >
-              关闭
-            </button>
-          </div>
-          <div className="rounded-2xl border border-default bg-[color:var(--surface)] p-3 text-[11px] font-mono leading-relaxed text-secondary">
-            <div>{formatWordCount(activeNovel?.wordCount || 0)}字 · {chapters.length}章</div>
-            <div>均字：{Math.round(derivedStats?.avgChapterChars ?? 0)}字/章</div>
+    <div className="flex h-full w-full overflow-hidden rounded-lg border border-line bg-canvas">
+      {/* 左栏：大纲树 + 工具 */}
+      <div className="flex h-full w-[320px] shrink-0 flex-col border-r border-line bg-panel">
+        <div className="shrink-0 space-y-3 border-b border-line p-4">
+          <div className="eyebrow">切分校验 · 章节工作台</div>
+
+          <div className="rounded-md border border-line bg-surface p-3 font-mono text-[11px] leading-relaxed text-fg-muted">
+            <div>{formatWordCount(activeNovel?.wordCount || 0)} 字 · {chapters.length} 章</div>
+            <div>均字 {Math.round(derivedStats?.avgChapterChars ?? 0)} 字/章</div>
             {!!activeNovel?.purifiedCount && activeNovel.purifiedCount > 0 && (
-              <div className="text-[color:var(--add)]">已净化 {activeNovel.purifiedCount.toLocaleString()} 字噪点</div>
+              <div className="text-success">已净化 {activeNovel.purifiedCount.toLocaleString()} 字噪点</div>
             )}
             {splitMeta && (
-              <div className="mt-1.5">
-                <span
-                  className={`inline-block rounded-full px-2 py-1 text-[10px] font-medium ${
-                    splitMeta.confidenceLevel === 'high'
-                      ? 'bg-[color:var(--signal-soft)] text-[color:var(--signal)]'
-                      : splitMeta.confidenceLevel === 'medium'
-                      ? 'bg-[color:var(--surface)] text-[color:var(--muted)]'
-                      : 'bg-[color:var(--danger-soft)] text-[color:var(--danger)]'
-                  }`}
-                >
-                  切分置信度 {splitMeta.confidenceLevel === 'high' ? '高' : splitMeta.confidenceLevel === 'medium' ? '中' : '低'} · {Math.round(splitMeta.confidence * 100)}%
-                </span>
+              <div className={`mt-1.5 ${confidenceTone}`}>
+                切分置信度 {splitMeta.confidenceLevel === 'high' ? '高' : splitMeta.confidenceLevel === 'medium' ? '中' : '低'} · {Math.round(splitMeta.confidence * 100)}%
               </div>
             )}
           </div>
 
-          {/* AC1: 分章置信度极低时滑入的智能语义拆分入口 */}
+          {/* 智能语义拆分入口 */}
           {canSmartSplit && (
-            <button
-              onClick={handleSmartSplitClick}
-              disabled={smartSplitLoading || processing}
-              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-[color:var(--hair)] bg-[color:var(--surface)] px-2 py-2.5 text-xs font-semibold text-[color:var(--ink)] transition-all hover:border-[color:var(--muted)] disabled:opacity-50"
-              title="当切分质量过低时，借助模型推荐更合理的切开点"
-            >
-              {smartSplitLoading ? '✨ 正在智能分析…' : '✨ AI 辅助拆分'}
+            <button onClick={handleSmartSplitClick} disabled={smartSplitLoading || processing} className="btn btn-secondary w-full gap-1.5" title="当切分质量过低时，借助模型推荐更合理的切开点">
+              <Sparkles size={14} /> {smartSplitLoading ? '正在智能分析…' : 'AI 辅助拆分'}
             </button>
           )}
 
-          {/* Actions */}
+          {/* 动作行 */}
           <div className="flex gap-2">
             {needsSmartRepair ? (
-              <button
-                onClick={() => void runResplit('auto_v2')}
-                disabled={repairing}
-                className="flex-1 rounded-xl border border-[color:var(--hair)] bg-[color:var(--surface)] px-2 py-2 text-xs font-medium text-[color:var(--ink)] transition-all hover:border-[color:var(--muted)] disabled:opacity-50"
-              >
-                {repairing ? '修复中...' : '先修风险章节'}
+              <button onClick={() => void runResplit('auto_v2')} disabled={repairing} className="btn btn-secondary flex-1">
+                {repairing ? '修复中…' : '先修风险章节'}
               </button>
             ) : (
-              <button
-                onClick={() => setManageMode(false)}
-                className="flex-1 rounded-xl border border-default bg-secondary px-2 py-2 text-xs font-medium text-primary transition-all hover:border-[color:var(--muted)]"
-              >
-                返回 DNA 页面 →
-              </button>
+              <button onClick={() => setManageMode(false)} className="btn btn-secondary flex-1 gap-1.5"><Dna size={14} /> 查看 DNA</button>
             )}
             <button
               onClick={() => setShowAdvanced(!showAdvanced)}
-              className={`px-2 py-1.5 rounded text-xs font-medium border transition-all ${
-                showAdvanced
-                  ? 'bg-secondary border-default text-primary'
-                  : 'bg-transparent border-default text-secondary hover:text-primary'
-              }`}
+              className={`btn btn-sm ${showAdvanced ? 'btn-secondary' : 'btn-ghost'}`}
             >
               分章规则
             </button>
           </div>
 
-          {/* Foldable Resplit settings */}
+          {/* 折叠的重切设置 */}
           {showAdvanced && (
-            <div className="space-y-3 border-t border-default pt-2 animate-[fadeIn_150ms_ease-out]">
+            <div className="space-y-2.5 border-t border-line pt-3">
               <div className="flex items-center gap-2">
-                <select
-                  value={repairStrategy}
-                  onChange={(e) => setRepairStrategy(e.target.value as SplitStrategyId)}
-                  className="workspace-input flex-1 px-2 py-1 text-xs"
-                >
+                <select value={repairStrategy} onChange={(e) => setRepairStrategy(e.target.value as SplitStrategyId)} className="input flex-1 text-xs">
                   <option value="auto_v2">智能自动采信</option>
                   <option value="zh_strict">中文严格</option>
                   <option value="zh_extended">中文扩展</option>
@@ -1063,102 +797,61 @@ export default function NovelUploader() {
                   <option value="en_basic">英文</option>
                   <option value="custom">自定义</option>
                 </select>
-                <button
-                  onClick={() => void runResplit(repairStrategy)}
-                  disabled={repairing || uploading}
-                  className="workspace-button px-3 py-1.5 text-xs disabled:opacity-30"
-                >
-                  执行
-                </button>
+                <button onClick={() => void runResplit(repairStrategy)} disabled={repairing} className="btn btn-primary btn-sm">执行</button>
               </div>
               {repairStrategy === 'custom' && (
                 <div className="space-y-1">
-                  <label className="font-mono text-[10px] text-muted">正则表达式</label>
-                  <input
-                    type="text"
-                    value={repairRegex}
-                    onChange={(e) => setRepairRegex(e.target.value)}
-                    className="workspace-input p-1.5 text-xs font-mono"
-                  />
+                  <label className="font-mono text-[10px] text-fg-subtle">正则表达式</label>
+                  <input type="text" value={repairRegex} onChange={(e) => setRepairRegex(e.target.value)} className="input text-xs font-mono" />
                 </div>
               )}
             </div>
           )}
         </div>
 
-        {/* Diagnostic info or progress bar */}
-        {(uploading || repairing || errorMsg || needsSmartRepair) && (
-          <div className="shrink-0 space-y-1 border-b border-default bg-[color:var(--surface)] p-3 text-xs">
+        {/* 诊断 / 进度 */}
+        {(repairing || errorMsg || needsSmartRepair) && (
+          <div className="shrink-0 space-y-1 border-b border-line bg-surface p-3 text-xs">
             {needsSmartRepair && (
-              <div className="flex items-center gap-1.5 font-mono text-[color:var(--muted)]">
+              <div className="flex items-center gap-1.5 font-mono text-fg-muted">
                 <span>● 先修风险章节再继续</span>
-                {splitMeta && <span className="text-muted">({Math.round(splitMeta.confidence * 100)}% 置信度)</span>}
+                {splitMeta && <span className="text-fg-subtle">({Math.round(splitMeta.confidence * 100)}% 置信度)</span>}
               </div>
             )}
             {reviewReasons.length > 0 && (
-              <div className="truncate font-mono text-[10px] text-muted">
-                原因: {reviewReasons.join(' · ')}
-              </div>
+              <div className="truncate font-mono text-[10px] text-fg-subtle">原因：{reviewReasons.join(' · ')}</div>
             )}
-            {(uploading || repairing) && (
-              <div className="flex items-center gap-2 text-[color:var(--signal)]">
-                <div className="relative w-3.5 h-3.5">
-                  <svg className="w-full h-full animate-spin" viewBox="0 0 100 100">
-                    <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="12" strokeDasharray="160 80" fill="none" />
-                  </svg>
-                </div>
+            {repairing && (
+              <div className="flex items-center gap-2 text-accent">
+                <Loader2 size={13} className="animate-spin motion-reduce:animate-none" />
                 <span className="font-mono">{stageLabelMap[uploadStage]} {uploadStageText}</span>
               </div>
             )}
             {errorMsg && (
-              <div className="text-[color:var(--del)] font-mono leading-relaxed truncate" title={errorMsg}>
-                ⚠️ {errorMsg}
+              <div className="flex items-start gap-1.5 font-mono leading-relaxed text-danger" title={errorMsg}>
+                <AlertCircle size={13} className="mt-px shrink-0" /> <span className="truncate">{errorMsg}</span>
               </div>
             )}
           </div>
         )}
 
-        {/* Chapter Search Filter */}
-        <div className="p-3 border-b border-default shrink-0">
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索章节标题..."
-            className="w-full rounded-xl border border-default bg-[color:var(--surface)] px-3 py-2 text-xs text-primary transition-colors focus:border-[color:var(--signal)] focus:outline-none"
-          />
+        {/* 搜索 */}
+        <div className="shrink-0 border-b border-line p-3">
+          <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="搜索章节标题…" className="input text-xs" />
         </div>
 
-        {/* Outline Tree nodes */}
-        <div 
-          className={`flex-1 overflow-y-auto p-2 space-y-1 ${processing ? 'pointer-events-none opacity-60' : ''}`} 
-          role="tree" 
-          aria-label="章节大纲树"
-        >
+        {/* 大纲树 */}
+        <div className={`flex-1 space-y-0.5 overflow-y-auto p-2 ${processing ? 'pointer-events-none opacity-60' : ''}`} role="tree" aria-label="章节大纲树">
           {filteredChapters.length === 0 ? (
-            <p className="p-6 text-center text-xs text-[color:var(--ink-faint)] font-mono">未找到匹配的章节</p>
+            <p className="p-6 text-center font-mono text-xs text-fg-subtle">未找到匹配的章节</p>
           ) : (
             filteredChapters.map((chapter) => {
               const isSelected = activeChapterId === chapter.id;
               const wordCount = chapter.wordCount;
-              
               let warningType: 'short' | 'long' | 'normal' = 'normal';
               if (wordCount < 120) warningType = 'short';
               else if (wordCount > 12000) warningType = 'long';
-              
-              let textClass = 'text-secondary hover:text-primary';
-              let bgClass = 'hover:bg-[color:var(--surface)]';
-              let borderClass = 'border-l-2 border-transparent';
-              
-              if (isSelected) {
-                bgClass = 'bg-[color:var(--surface)]';
-                borderClass = 'border-l-2 border-[color:var(--ink)]';
-                textClass = 'text-primary font-medium';
-              } else {
-                if (warningType === 'short' || warningType === 'long') {
-                  textClass = 'text-[color:var(--muted)] hover:text-[color:var(--ink)]';
-                }
-              }
-              
+
               return (
                 <div
                   key={chapter.id}
@@ -1166,20 +859,13 @@ export default function NovelUploader() {
                   aria-selected={isSelected}
                   aria-label={`第${chapter.chapterIndex}章：${chapter.name}，字数${chapter.wordCount}字`}
                   tabIndex={0}
-                  onClick={() => {
-                    if (processing) return;
-                    setActiveChapterId(chapter.id);
-                  }}
-                  onKeyDown={(e) => {
-                    if (processing) return;
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      setActiveChapterId(chapter.id);
-                    }
-                  }}
-                  className={`group flex items-center justify-between rounded px-3 py-2 text-xs transition-all duration-150 cursor-pointer ${bgClass} ${borderClass} focus:outline-none focus:ring-1 focus:ring-[color:var(--signal)]`}
+                  onClick={() => { if (!processing) setActiveChapterId(chapter.id); }}
+                  onKeyDown={(e) => { if (!processing && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setActiveChapterId(chapter.id); } }}
+                  className={`group flex cursor-pointer items-center justify-between rounded-md border-l-2 px-3 py-2 text-xs transition-colors ${
+                    isSelected ? 'border-accent bg-raised' : 'border-transparent hover:bg-raised'
+                  }`}
                 >
-                  <div className="flex items-center min-w-0 gap-2 flex-1">
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
                     <input
                       type="checkbox"
                       checked={selectedChapterIds.has(chapter.id)}
@@ -1189,83 +875,47 @@ export default function NovelUploader() {
                         if (processing) return;
                         setSelectedChapterIds((prev) => {
                           const next = new Set(prev);
-                          if (next.has(chapter.id)) {
-                            next.delete(chapter.id);
-                          } else {
-                            next.add(chapter.id);
-                          }
+                          if (next.has(chapter.id)) next.delete(chapter.id); else next.add(chapter.id);
                           return next;
                         });
                       }}
                       onClick={(e) => e.stopPropagation()}
-                      className="mr-2 h-3.5 w-3.5 shrink-0 cursor-pointer rounded border-default bg-[color:var(--surface)] text-[color:var(--ink)] focus:ring-[color:var(--signal)] disabled:cursor-not-allowed"
+                      className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[color:var(--accent)] disabled:cursor-not-allowed"
                       aria-label={`选择第${chapter.chapterIndex}章`}
                     />
-                    <span className="text-[color:var(--ink-dim)] font-mono shrink-0 w-8">{chapter.chapterIndex}</span>
-                    <span className={`truncate ${textClass}`}>{chapter.name}</span>
+                    <span className="w-7 shrink-0 font-mono text-fg-subtle">{chapter.chapterIndex}</span>
+                    <span className={`truncate ${isSelected ? 'font-medium text-fg' : 'text-fg-muted group-hover:text-fg'}`}>{chapter.name}</span>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0 pl-2">
-                    {/* DNA Sequencing State Badge or Hover Action */}
+                  <div className="flex shrink-0 items-center gap-1.5 pl-2">
                     {chapter.mapStatus === 'mapping' ? (
-                      <div className="flex items-center gap-1 text-[color:var(--signal)] font-mono text-[10px]">
-                        <svg className="w-3 h-3 animate-spin text-[color:var(--signal)]" viewBox="0 0 100 100">
-                          <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="12" strokeDasharray="160 80" fill="none" />
-                        </svg>
-                        <span>[分析中...]</span>
-                      </div>
+                      <Loader2 size={12} className="animate-spin text-accent motion-reduce:animate-none" />
                     ) : chapter.mapStatus === 'done' ? (
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-[color:var(--add-soft)] text-[color:var(--add)] border border-[color:var(--add)]/25" title="已完成 DNA 提取">
-                        🧬
-                      </span>
+                      <Dna size={13} className="text-success" />
                     ) : chapter.mapStatus === 'error' ? (
-                      <div className="relative group/error shrink-0">
-                        <span className="text-[color:var(--del)] cursor-help" title={chapter.errorMsg || '解析失败'}>⚠️</span>
-                        {chapter.errorMsg && (
-                      <div className="absolute bottom-full right-0 z-50 mb-1 hidden w-48 break-all rounded-lg border border-[color:var(--danger)]/30 bg-[color:var(--surface)] p-2 text-[10px] text-[color:var(--danger)] shadow-[0_6px_20px_-8px_rgba(50,38,18,.25)] group-hover/error:block whitespace-normal">
-                            {chapter.errorMsg}
-                          </div>
-                        )}
-                      </div>
+                      <span title={chapter.errorMsg || '解析失败'}><AlertCircle size={13} className="text-danger" /></span>
                     ) : null}
 
                     {warningType === 'short' && (
                       <button
                         disabled={chapter.id === chapters[0]?.id || processing}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleStitch(chapter.id);
-                        }}
-                        className="rounded border border-[color:var(--hair)] bg-[color:var(--surface)] px-1.5 py-0.5 text-[10px] text-[color:var(--muted)] opacity-0 transition-opacity hover:border-[color:var(--muted)] hover:text-[color:var(--ink)] group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        onClick={(e) => { e.stopPropagation(); handleStitch(chapter.id); }}
+                        className="flex items-center gap-0.5 rounded border border-line bg-surface px-1.5 py-0.5 text-[10px] text-fg-muted opacity-0 transition hover:border-fg-subtle hover:text-fg group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
                         title={chapter.id === chapters[0]?.id ? '第一章无法向前缝合' : '将本章物理缝合至上一章'}
-                        aria-label="一键缝合"
-                      >
-                        🔗 缝合
-                      </button>
+                        aria-label="缝合至上一章"
+                      ><Link2 size={11} /> 缝合</button>
                     )}
-                    <span className={`font-mono text-[10px] ${isSelected ? 'opacity-90' : 'opacity-60'}`}>
-                      {wordCount}
-                    </span>
-                    {warningType === 'short' && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-[color:var(--danger)] shrink-0" title="字数极少警告" />
-                    )}
+                    <span className={`font-mono text-[10px] tabular-nums ${isSelected ? 'text-fg-muted' : 'text-fg-subtle'}`}>{wordCount}</span>
+                    {warningType === 'short' && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" title="字数极少警告" />}
                     {warningType === 'long' && (
                       <button
                         disabled={processing}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setActiveChapterId(chapter.id);
-                          setIsSplitMode(true);
-                        }}
-                        className="rounded border border-[color:var(--hair)] bg-[color:var(--surface)] px-1.5 py-0.5 text-[10px] text-[color:var(--muted)] opacity-0 transition-opacity hover:border-[color:var(--muted)] hover:text-[color:var(--ink)] group-hover:opacity-100 disabled:opacity-40"
+                        onClick={(e) => { e.stopPropagation(); setActiveChapterId(chapter.id); setIsSplitMode(true); }}
+                        className="flex items-center gap-0.5 rounded border border-line bg-surface px-1.5 py-0.5 text-[10px] text-fg-muted opacity-0 transition hover:border-fg-subtle hover:text-fg group-hover:opacity-100 disabled:opacity-40"
                         title="帮我裁切本章"
-                        aria-label="一键裁切"
-                      >
-                        ✂️ 裁切
-                      </button>
+                        aria-label="裁切本章"
+                      ><Scissors size={11} /> 裁切</button>
                     )}
-                    {warningType === 'long' && (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[color:var(--danger)]" title="字数极长警告" />
-                    )}
+                    {warningType === 'long' && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" title="字数极长警告" />}
                   </div>
                 </div>
               );
@@ -1274,260 +924,148 @@ export default function NovelUploader() {
         </div>
       </div>
 
-      {/* Right panel: golden reader / empty state */}
-      <div className="relative flex h-full flex-1 flex-col overflow-hidden bg-[color:var(--paper)]">
+      {/* 右栏：阅读 / 裁切 / 空态 */}
+      <div className="relative flex h-full flex-1 flex-col overflow-hidden bg-canvas">
         {!activeChapter ? (
-          <div className="flex flex-1 flex-col items-center justify-center space-y-6 p-8 text-center select-none">
-            <div className="grid h-28 w-28 place-items-center rounded-full border border-[color:var(--hair)] bg-[color:var(--surface)] text-3xl text-[color:var(--muted)]">
-              章
+          <div className="flex flex-1 select-none flex-col items-center justify-center gap-5 p-8 text-center">
+            <div className="grid h-20 w-20 place-items-center rounded-full border border-line bg-panel text-fg-subtle">
+              <Scissors size={26} />
             </div>
-
             <div className="max-w-sm space-y-2">
-              <p className="text-sm font-medium text-primary">选择一章，开始校验它是否适合进入 DNA 提取</p>
-              <p className="text-xs leading-relaxed text-secondary">
-                左侧列表会持续显示字数异常、切分风险和 DNA 状态。你不需要来回切页确认系统在做什么。
-              </p>
+              <p className="text-sm font-medium text-fg">选择一章，校验它是否适合进入 DNA 提取</p>
+              <p className="text-xs leading-relaxed text-fg-muted">左侧列表持续显示字数异常、切分风险和 DNA 状态。你不需要来回切页确认系统在做什么。</p>
             </div>
           </div>
         ) : isSplitMode || splitRecommendations.length > 0 ? (
-          /* Double-Column Split Dashboard (manual scissors OR AI 智能语义拆分建议) */
-          <div key={`split-${activeChapter.id}`} className="flex-1 flex flex-col h-full overflow-hidden animate-[fadeIn_150ms_ease-out]">
+          /* 双栏裁切面板（手动剪刀 或 AI 智能语义拆分建议） */
+          <div key={`split-${activeChapter.id}`} className="flex h-full flex-1 flex-col overflow-hidden view-enter">
             <style>{`
-              @keyframes fadeIn {
-                from { opacity: 0; transform: translateY(4px); }
-                to { opacity: 1; transform: translateY(0); }
-              }
-              @keyframes tearUp {
-                0% { transform: translateY(0); opacity: 1; }
-                100% { transform: translateY(-4px); opacity: 0.5; }
-              }
-              @keyframes tearDown {
-                0% { transform: translateY(0); opacity: 1; }
-                100% { transform: translateY(4px); opacity: 0.5; }
-              }
-              @keyframes glowFade {
-                0% { height: 1px; opacity: 1; }
-                100% { height: 8px; opacity: 0; }
-              }
-              .animate-tear-up {
-                animation: tearUp 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-              }
-              .animate-tear-down {
-                animation: tearDown 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-              }
-              .animate-glow-fade {
-                animation: glowFade 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-              }
+              @keyframes tearUp { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-4px); opacity: 0.5; } }
+              @keyframes tearDown { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(4px); opacity: 0.5; } }
+              @keyframes glowFade { 0% { height: 1px; opacity: 1; } 100% { height: 8px; opacity: 0; } }
+              .animate-tear-up { animation: tearUp 300ms cubic-bezier(0.16,1,0.3,1) forwards; }
+              .animate-tear-down { animation: tearDown 300ms cubic-bezier(0.16,1,0.3,1) forwards; }
+              .animate-glow-fade { animation: glowFade 300ms cubic-bezier(0.16,1,0.3,1) forwards; }
               @media (prefers-reduced-motion: reduce) {
-                @keyframes fadeTear {
-                  0% { opacity: 1; }
-                  100% { opacity: 0.8; }
-                }
-                .animate-tear-up, .animate-tear-down {
-                  animation: fadeTear 100ms ease-out forwards;
-                }
-                .animate-glow-fade {
-                  animation: none;
-                  opacity: 0;
-                }
+                .animate-tear-up, .animate-tear-down { animation: none; opacity: 0.85; }
+                .animate-glow-fade { animation: none; opacity: 0; }
               }
             `}</style>
 
-            {/* Split Mode Header */}
-            <div className="flex items-center justify-between border-b border-default bg-[color:var(--surface)] px-8 py-4 shrink-0">
+            <div className="flex shrink-0 items-center justify-between border-b border-line bg-surface px-6 py-3.5">
               <div className="min-w-0">
-                <div className="font-mono text-[10px] uppercase tracking-widest text-[color:var(--faint)]">
-                  {splitRecommendations.length > 0 ? '✨ AI 智能语义拆分建议' : '✂️ 游标剪刀交互裁切舱'}
+                <div className="eyebrow flex items-center gap-1.5">
+                  {splitRecommendations.length > 0 ? <><Sparkles size={12} /> AI 智能语义拆分建议</> : <><Scissors size={12} /> 交互裁切舱</>}
                 </div>
-                <h3 className="mt-0.5 truncate text-sm font-semibold text-primary">
-                  {splitRecommendations.length > 0
-                    ? `已推荐 ${splitRecommendations.length} 处切开点：${activeChapter.name}`
-                    : `正在裁切：${activeChapter.name}`}
+                <h3 className="mt-0.5 truncate text-sm font-semibold text-fg">
+                  {splitRecommendations.length > 0 ? `已推荐 ${splitRecommendations.length} 处切开点：${activeChapter.name}` : `正在裁切：${activeChapter.name}`}
                 </h3>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 {canSmartSplit && (
-                  <button
-                    onClick={handleSmartSplitClick}
-                    disabled={smartSplitLoading || processing}
-                    className="workspace-button-secondary workspace-button px-3 py-1.5 text-xs disabled:opacity-50"
-                  >
-                    {smartSplitLoading ? '分析中…' : splitRecommendations.length > 0 ? '↻ 重新推荐' : '✨ 智能语义拆分'}
+                  <button onClick={handleSmartSplitClick} disabled={smartSplitLoading || processing} className="btn btn-secondary btn-sm gap-1.5">
+                    <Sparkles size={13} /> {smartSplitLoading ? '分析中…' : splitRecommendations.length > 0 ? '重新推荐' : '智能语义拆分'}
                   </button>
                 )}
                 <button
-                  onClick={() => {
-                    setIsSplitMode(false);
-                    setHoveredGapIndex(null);
-                    setSelectedMobileGapIndex(null);
-                    setSplitRecommendations([]);
-                  }}
-                  className="workspace-button-secondary workspace-button px-3 py-1.5 text-xs"
-                >
-                  返回阅读模式
-                </button>
+                  onClick={() => { setIsSplitMode(false); setHoveredGapIndex(null); setSelectedMobileGapIndex(null); setSplitRecommendations([]); }}
+                  className="btn btn-ghost btn-sm"
+                >返回阅读</button>
               </div>
             </div>
 
-            <div className="flex-1 flex h-full overflow-hidden relative">
-              {/* Left Column: 裁剪仪表盘 (Split Control Dashboard) */}
-              <div 
-                className="flex h-full w-[260px] shrink-0 flex-col justify-between border-r border-default bg-[color:var(--surface)] p-5 text-xs"
-              >
+            <div className="relative flex h-full flex-1 overflow-hidden">
+              {/* 裁切仪表盘 */}
+              <div className="flex h-full w-[240px] shrink-0 flex-col justify-between border-r border-line bg-panel p-5 text-xs">
                 <div className="space-y-6">
                   <div>
-                    <h4 className="mb-2 font-mono text-[10px] uppercase tracking-wider text-muted">当前章节数据</h4>
-                    <div className="space-y-1.5 font-mono text-secondary">
-                      <div>总字数：{activeChapter.wordCount} 字</div>
-                      <div>段落数：{paragraphs.length} 段</div>
+                    <h4 className="eyebrow mb-2">当前章节数据</h4>
+                    <div className="space-y-1.5 font-mono text-fg-muted">
+                      <div>总字数 {activeChapter.wordCount} 字</div>
+                      <div>段落数 {paragraphs.length} 段</div>
                     </div>
                   </div>
-
                   <div>
-                    <h4 className="mb-2 font-mono text-[10px] uppercase tracking-wider text-muted">裁切字数预测</h4>
+                    <h4 className="eyebrow mb-2">裁切字数预测</h4>
                     {(hoveredGapIndex !== null || selectedMobileGapIndex !== null) ? (
-                      <div className="space-y-3 rounded-lg border border-default bg-[color:var(--surface)] p-3 animate-[fadeIn_150ms_ease-out]">
+                      <div className="card space-y-3 p-3">
                         <div className="space-y-1">
-                          <div className="text-secondary">前半章 ({activeChapter.name}):</div>
-                          <div className="font-mono font-semibold text-[color:var(--ink)]">{predictedWordsA} 字 ({percentageA}%)</div>
+                          <div className="text-fg-muted">前半章：</div>
+                          <div className="font-mono font-semibold text-fg">{predictedWordsA} 字 ({percentageA}%)</div>
                         </div>
                         <div className="space-y-1">
-                          <div className="text-secondary">后半章 ({activeChapter.name} (下)):</div>
-                          <div className="font-mono font-semibold text-[color:var(--ink)]">{predictedWordsB} 字 ({percentageB}%)</div>
+                          <div className="text-fg-muted">后半章：</div>
+                          <div className="font-mono font-semibold text-fg">{predictedWordsB} 字 ({percentageB}%)</div>
                         </div>
-                        <div className="mt-2 border-t border-default pt-2 text-[10px]">
-                          {(predictedWordsA < 2000 || predictedWordsB < 2000) ? (
-                            <span className="text-[color:var(--danger)]">⚠️ 分割后章节偏短</span>
-                          ) : (
-                            <span className="text-[color:var(--add)]">✅ 比例非常协调</span>
-                          )}
+                        <div className="border-t border-line pt-2 text-[10px]">
+                          {(predictedWordsA < 2000 || predictedWordsB < 2000)
+                            ? <span className="flex items-center gap-1 text-danger"><AlertTriangle size={11} /> 分割后章节偏短</span>
+                            : <span className="flex items-center gap-1 text-success"><Check size={11} /> 比例协调</span>}
                         </div>
                       </div>
                     ) : (
-                      <div className="rounded-lg border border-default bg-[color:var(--surface)] p-3 italic text-muted">
-                        请将鼠标悬浮在右侧段落之间的缝隙上以预览裁切比例
-                      </div>
+                      <div className="rounded-md border border-line bg-surface p-3 italic text-fg-subtle">悬浮在右侧段落之间的缝隙上预览裁切比例</div>
                     )}
                   </div>
-
                   <div className="space-y-2">
-                    <h4 className="font-mono text-[10px] uppercase tracking-wider text-muted">操作指南</h4>
-                    <ul className="list-disc space-y-1 pl-4 leading-relaxed text-secondary">
+                    <h4 className="eyebrow">操作指南</h4>
+                    <ul className="list-disc space-y-1 pl-4 leading-relaxed text-fg-muted">
                       <li>鼠标悬浮于段落行间缝隙</li>
-                      <li>点击出现的 <span className="text-[color:var(--ink)]">“在此剪开”</span> 气泡</li>
-                      <li>♿ 移动端：双击缝隙，或点击段落左侧的行号 `¶` 即可触发</li>
+                      <li>点击出现的「在此剪开」气泡</li>
+                      <li>移动端：双击缝隙，或点段落左侧行号</li>
                       <li>裁切后支持 6 秒撤销</li>
                     </ul>
                   </div>
                 </div>
-
-                <div className="border-t border-default pt-4">
-                  <div className="font-mono text-[10px] leading-relaxed text-muted">
-                    ⚡ IndexedDB 本地原子事务保护
-                  </div>
-                </div>
+                <div className="border-t border-line pt-4 font-mono text-[10px] leading-relaxed text-fg-subtle">IndexedDB 本地原子事务保护</div>
               </div>
 
-              {/* Right Column: Paragraphs List */}
-              <div className="flex-1 overflow-y-auto px-8 py-6 relative">
-                <div className="max-w-2xl mx-auto space-y-2 py-4">
+              {/* 段落列表 */}
+              <div className="relative flex-1 overflow-y-auto px-8 py-6">
+                <div className="mx-auto max-w-2xl space-y-2 py-4">
                   {paragraphs.map((pText, pIdx) => {
                     const isTearingUp = isTearing && splittingIndex !== null && pIdx <= splittingIndex;
                     const isTearingDown = isTearing && splittingIndex !== null && pIdx > splittingIndex;
                     const isGlowFade = isTearing && splittingIndex === pIdx;
                     const rec = recByIndex[pIdx];
-
                     return (
                       <React.Fragment key={pIdx}>
-                        {/* Paragraph node */}
-                        <div 
-                          className={`group/paragraph flex items-start gap-4 py-2 relative transition-all duration-300 ${
-                            isTearingUp ? 'animate-tear-up' : ''
-                          } ${
-                            isTearingDown ? 'animate-tear-down' : ''
-                          }`}
-                        >
-                          {/* Paragraph line number for accessibility */}
+                        <div className={`group/paragraph relative flex items-start gap-4 py-2 transition-all duration-300 ${isTearingUp ? 'animate-tear-up' : ''} ${isTearingDown ? 'animate-tear-down' : ''}`}>
                           <button
-                            onClick={() => {
-                              if (processing) return;
-                              setSelectedMobileGapIndex(pIdx);
-                            }}
-                            className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] text-muted opacity-50 transition-all select-none hover:bg-[color:var(--surface)] hover:text-[color:var(--ink)] group-hover/paragraph:opacity-100"
+                            onClick={() => { if (!processing) setSelectedMobileGapIndex(pIdx); }}
+                            className="shrink-0 select-none rounded px-1.5 py-0.5 font-mono text-[10px] text-fg-subtle opacity-50 transition hover:bg-raised hover:text-fg group-hover/paragraph:opacity-100"
                             title="激活本段落后的剪开气泡"
-                          >
-                            ¶ {(pIdx + 1).toString().padStart(2, '0')}
-                          </button>
-                          <p className="font-sans text-sm leading-[1.8] text-[color:var(--ink)] whitespace-pre-wrap tracking-wide flex-1 select-text">
-                            {pText}
-                          </p>
+                          >¶ {(pIdx + 1).toString().padStart(2, '0')}</button>
+                          <p className="flex-1 select-text whitespace-pre-wrap text-sm leading-[1.8] text-fg">{pText}</p>
                         </div>
 
-                        {/* Inter-paragraph gap hotzone */}
                         {pIdx < paragraphs.length - 1 && (
                           <div
-                            onMouseEnter={() => {
-                              if (processing) return;
-                              setHoveredGapIndex(pIdx);
-                            }}
-                            onMouseLeave={() => {
-                              if (processing) return;
-                              setHoveredGapIndex(null);
-                            }}
-                            onDoubleClick={() => {
-                              if (processing) return;
-                              handleSplitAtParagraph(pIdx);
-                            }}
-                            className={`relative w-full flex items-center justify-center group/split-gap z-10 ${rec ? '' : 'h-6 cursor-pointer'}`}
+                            onMouseEnter={() => { if (!processing) setHoveredGapIndex(pIdx); }}
+                            onMouseLeave={() => { if (!processing) setHoveredGapIndex(null); }}
+                            onDoubleClick={() => { if (!processing) handleSplitAtParagraph(pIdx); }}
+                            className={`group/split-gap relative z-10 flex w-full items-center justify-center ${rec ? '' : 'h-6 cursor-pointer'}`}
                           >
                             {rec ? (
-                              /* AC5: AI 推荐裁切点“预涂色”高亮 + 复用 Story 1.5 原子切分事务 */
-                              <div className="my-1.5 w-full rounded-lg border border-[color:var(--hair)] bg-[color:var(--surface)] p-2 animate-[fadeIn_200ms_ease-out]">
+                              <div className="my-1.5 w-full rounded-md border border-line bg-surface p-2.5 view-enter">
                                 <div className="flex items-start justify-between gap-3">
                                   <div className="min-w-0 flex-1">
-                                    <div className="text-[11px] font-medium text-[color:var(--ink)]">💡 AI 推荐在此拆分</div>
-                                    <div className="mt-0.5 text-[11px] leading-relaxed text-secondary">{rec.reason}</div>
-                                    {rec.suggestedTitle && (
-                                      <div className="mt-1 truncate font-mono text-[10px] text-muted">
-                                        下半章建议标题：{rec.suggestedTitle}
-                                      </div>
-                                    )}
+                                    <div className="flex items-center gap-1 text-[11px] font-medium text-fg"><Sparkles size={12} className="text-accent" /> AI 推荐在此拆分</div>
+                                    <div className="mt-0.5 text-[11px] leading-relaxed text-fg-muted">{rec.reason}</div>
+                                    {rec.suggestedTitle && <div className="mt-1 truncate font-mono text-[10px] text-fg-subtle">下半章建议标题：{rec.suggestedTitle}</div>}
                                   </div>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (processing) return;
-                                      handleSplitAtParagraph(pIdx);
-                                    }}
-                                    disabled={processing}
-                                    className="workspace-button shrink-0 self-center rounded-full px-3 py-1.5 text-[11px] disabled:opacity-40"
-                                  >
-                                    确认在此拆分 ✂️
-                                  </button>
+                                  <button onClick={(e) => { e.stopPropagation(); if (!processing) handleSplitAtParagraph(pIdx); }} disabled={processing} className="btn btn-primary btn-sm shrink-0 gap-1"><Scissors size={12} /> 在此拆分</button>
                                 </div>
                               </div>
                             ) : (
                               <>
-                                {/* Fluorescent blue gradient dashed cut line */}
-                                <div className={`w-full h-0.5 border-t border-dashed transition-all duration-150 ${
-                                  isGlowFade
-                                    ? 'animate-glow-fade border-[color:var(--signal)]'
-                                    : 'border-[color:var(--hair)] opacity-30 group-hover/split-gap:animate-pulse group-hover/split-gap:border-[color:var(--signal)] group-hover/split-gap:opacity-100'
-                                }`} />
-
-                                {/* Glassmorphic split button */}
+                                <div className={`h-px w-full border-t border-dashed transition-all duration-150 ${isGlowFade ? 'animate-glow-fade border-accent' : 'border-line opacity-40 group-hover/split-gap:border-accent group-hover/split-gap:opacity-100'}`} />
                                 {(!isTearing && (hoveredGapIndex === pIdx || selectedMobileGapIndex === pIdx)) && (
                                   <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (processing) return;
-                                      handleSplitAtParagraph(pIdx);
-                                    }}
+                                    onClick={(e) => { e.stopPropagation(); if (!processing) handleSplitAtParagraph(pIdx); }}
                                     disabled={processing}
-                                    className="absolute z-20 flex items-center gap-1 rounded-full border border-[color:var(--hair)] bg-[color:var(--surface)] px-3 py-1 text-[10px] font-semibold text-[color:var(--ink)] transition-all duration-200 cursor-pointer pointer-events-auto"
-                                  >
-                                    ✂️ 在此剪开
-                                  </button>
+                                    className="absolute z-20 flex items-center gap-1 rounded-full border border-accent bg-accent px-3 py-1 text-[10px] font-semibold text-accent-fg"
+                                  ><Scissors size={11} /> 在此剪开</button>
                                 )}
                               </>
                             )}
@@ -1541,252 +1079,129 @@ export default function NovelUploader() {
             </div>
           </div>
         ) : (
-          /* Reader mode with distraction-free layout */
-          <div key={activeChapter.id} className="flex-1 flex flex-col h-full overflow-hidden animate-[fadeIn_150ms_ease-out]">
-            <style>{`
-              @keyframes fadeIn {
-                from { opacity: 0; transform: translateY(4px); }
-                to { opacity: 1; transform: translateY(0); }
-              }
-            `}</style>
-            
-            {/* Reader header */}
-            <div className="flex items-center justify-between border-b border-default bg-[color:var(--surface)] px-8 py-4 shrink-0">
+          /* 阅读模式 */
+          <div key={activeChapter.id} className="flex h-full flex-1 flex-col overflow-hidden view-enter">
+            <div className="flex shrink-0 items-center justify-between border-b border-line bg-surface px-6 py-3.5">
               <div className="min-w-0">
-                <div className="font-mono text-[10px] uppercase tracking-widest text-muted">
-                  Chapter {activeChapter.chapterIndex}
-                </div>
-                <h3 className="mt-0.5 truncate text-sm font-semibold text-primary">
-                  {activeChapter.name}
-                </h3>
+                <div className="eyebrow">Chapter {activeChapter.chapterIndex}</div>
+                <h3 className="mt-0.5 truncate text-sm font-semibold text-fg">{activeChapter.name}</h3>
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
                 {activeChapter.wordCount > 12000 && (
-                  <button
-                    onClick={() => setIsSplitMode(true)}
-                    disabled={processing}
-                    className="workspace-button-secondary workspace-button gap-1 px-3 py-1.5 text-xs"
-                  >
-                    ✂️ 帮我裁切
-                  </button>
+                  <button onClick={() => setIsSplitMode(true)} disabled={processing} className="btn btn-secondary btn-sm gap-1.5"><Scissors size={13} /> 帮我裁切</button>
                 )}
-                <div className="shrink-0 font-mono text-xs text-secondary">
-                  {activeChapter.wordCount} 字
-                </div>
+                <div className="shrink-0 font-mono text-xs tabular-nums text-fg-muted">{activeChapter.wordCount} 字</div>
               </div>
             </div>
-            
-            {/* Scrollable text container with absolute notifications */}
-            <div className="flex-1 overflow-y-auto px-8 py-6 space-y-6 relative select-text">
-              {/* Warnings panel */}
+
+            <div className="relative flex-1 select-text space-y-5 overflow-y-auto px-8 py-6">
               {activeChapter.wordCount < 120 && (
-                <div className="p-3.5 rounded-xl border border-[color:var(--danger)]/30 bg-[color:var(--danger-soft)] text-[color:var(--danger)] text-xs leading-relaxed flex items-start gap-2.5 animate-[fadeIn_150ms_ease-out]">
-                  <span className="text-base shrink-0">⚠️</span>
-                  <div>
-                    <span className="font-semibold">本章字数极低（只有 {activeChapter.wordCount} 字）。</span>
-                    似乎是请假条或闲聊，建议在后续微操中将其进行一键合并 🔗。
-                  </div>
+                <div className="flex items-start gap-2.5 rounded-lg border border-danger/40 bg-danger-subtle p-3.5 text-xs leading-relaxed text-danger">
+                  <AlertTriangle size={16} className="mt-px shrink-0" />
+                  <div><span className="font-semibold">本章字数极低（只有 {activeChapter.wordCount} 字）。</span>似乎是请假条或闲聊，建议将其一键缝合至上一章。</div>
                 </div>
               )}
-              
               {activeChapter.wordCount > 12000 && (
-                <div className="flex items-start gap-2.5 rounded-xl border border-default bg-[color:var(--surface)] p-3.5 text-xs leading-relaxed text-primary animate-[fadeIn_150ms_ease-out]">
-                  <span className="text-base shrink-0">✂️</span>
-                  <div className="flex-1 flex justify-between items-center gap-4">
-                    <div>
-                      <span className="font-semibold">本章字数过长（含有 {activeChapter.wordCount} 字）。</span>
-                      建议先手动裁切本章，再继续做 DNA 提取与后续创作。
-                    </div>
-                    <button
-                      onClick={() => setIsSplitMode(true)}
-                      disabled={processing}
-                      className="workspace-button px-3 py-1.5 text-xs"
-                    >
-                      ✂️ 帮我裁切
-                    </button>
+                <div className="flex items-start gap-2.5 rounded-lg border border-line bg-surface p-3.5 text-xs leading-relaxed text-fg">
+                  <Scissors size={16} className="mt-px shrink-0 text-fg-muted" />
+                  <div className="flex flex-1 items-center justify-between gap-4">
+                    <div><span className="font-semibold">本章字数过长（含有 {activeChapter.wordCount} 字）。</span>建议先手动裁切，再继续 DNA 提取。</div>
+                    <button onClick={() => setIsSplitMode(true)} disabled={processing} className="btn btn-primary btn-sm shrink-0 gap-1"><Scissors size={13} /> 帮我裁切</button>
                   </div>
                 </div>
               )}
-              
-              {/* Chapter Text body */}
-              <article className="font-sans text-base leading-[1.8] text-[color:var(--ink)] whitespace-pre-wrap tracking-wide max-w-2xl mx-auto py-4">
-                {activeChapter.content}
-              </article>
+              <article className="prose-reader mx-auto max-w-2xl text-[15px] leading-[1.85]" style={{ fontFamily: 'var(--sans)' }}>{activeChapter.content}</article>
             </div>
           </div>
         )}
 
-        {/* AC1: 模型配置卡 — 右侧滑入式 */}
+        {/* 模型配置卡 — 右侧滑入 */}
         <div
-          className={`absolute right-0 top-0 z-30 h-full w-[400px] transition-transform duration-[400ms] ${
-            isCrystalOpen ? 'translate-x-0' : 'translate-x-full pointer-events-none'
-          }`}
-          style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}
+          className={`absolute right-0 top-0 z-30 h-full w-[380px] transition-transform duration-[400ms] ${isCrystalOpen ? 'translate-x-0' : 'pointer-events-none translate-x-full'}`}
+          style={{ transitionTimingFunction: 'cubic-bezier(0.16,1,0.3,1)' }}
           aria-hidden={!isCrystalOpen}
         >
-          <div className="flex h-full flex-col border-l border-default bg-[color:var(--surface)] shadow-[-12px_0_40px_-16px_rgba(50,38,18,0.30)]">
-            {/* Totem header */}
-            <div className="relative shrink-0 overflow-hidden border-b border-default p-5">
-              <svg className="pointer-events-none absolute -right-6 -top-6 h-40 w-40 opacity-20" viewBox="0 0 100 100" fill="none">
-                <polygon points="50,8 86,30 86,70 50,92 14,70 14,30" stroke="var(--faint)" strokeWidth="0.6" />
-                <polygon points="50,24 72,37 72,63 50,76 28,63 28,37" stroke="var(--faint)" strokeWidth="0.5" />
-                <line x1="50" y1="8" x2="50" y2="92" stroke="var(--faint)" strokeWidth="0.3" />
-                <line x1="14" y1="30" x2="86" y2="70" stroke="var(--faint)" strokeWidth="0.3" />
-                <line x1="86" y1="30" x2="14" y2="70" stroke="var(--faint)" strokeWidth="0.3" />
-              </svg>
-              <div className="relative flex items-start justify-between gap-2">
-                <div>
-                  <div className="font-mono text-[10px] uppercase tracking-widest text-[color:var(--faint)]">Model Config</div>
-                  <h3 className="mt-0.5 text-sm font-semibold text-primary">模型配置</h3>
-                  <p className="mt-1 text-[11px] leading-relaxed text-secondary">配置云端 API Key，或确认本地 Ollama 已就绪，然后再执行 AI 辅助拆分。</p>
-                </div>
-                <button
-                  onClick={() => setIsCrystalOpen(false)}
-                  className="shrink-0 rounded border border-default px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted hover:text-primary"
-                >
-                  关闭
-                </button>
+          <div className="flex h-full flex-col border-l border-line bg-canvas shadow-pop">
+            <div className="flex shrink-0 items-start justify-between gap-2 border-b border-line p-5">
+              <div>
+                <div className="eyebrow">Model Config</div>
+                <h3 className="mt-0.5 text-sm font-semibold text-fg">模型配置</h3>
+                <p className="mt-1 text-[11px] leading-relaxed text-fg-muted">配置云端 API Key，或确认本地 Ollama 已就绪，再执行 AI 辅助拆分。</p>
               </div>
+              <button onClick={() => setIsCrystalOpen(false)} className="btn btn-ghost btn-sm btn-icon" aria-label="关闭"><X size={16} /></button>
             </div>
-
-            {/* Body */}
             <div className="flex-1 space-y-4 overflow-y-auto p-5">
               <ProviderCredentialsEditor
                 variant="crystal"
                 providerSelector="tabs"
                 collapsibleAdvanced
                 apiKeyLabel="云端模型 API Key"
-                keyHelpText="🔒 密钥仅以混淆形式存储于本地浏览器，绝不上传服务器。"
+                keyHelpText="密钥仅以混淆形式存储于本地浏览器，绝不上传服务器。"
                 ollamaSlot={
-                  /* AC3/AC4: 本地 Ollama 心跳在线状态点 + 模型审计引导 */
-                  <div className="space-y-2 rounded-lg border border-default bg-[color:var(--surface)] p-3">
+                  <div className="space-y-2 rounded-md border border-line bg-surface p-3">
                     <div className="flex items-center gap-2">
-                      <span
-                        className={`h-2 w-2 rounded-full transition-colors duration-100 ${
-                          ollamaStatus === 'online'
-                            ? 'bg-[color:var(--add)]'
-                            : ollamaStatus === 'checking' || ollamaStatus === 'unknown'
-                            ? 'animate-pulse bg-[color:var(--ink-dim)]'
-                            : 'bg-[color:var(--danger)]'
-                        }`}
-                      />
-                      <span className="text-xs font-medium text-primary">
-                        {ollamaStatus === 'online'
-                          ? 'Ollama 已连接'
-                          : ollamaStatus === 'checking'
-                          ? '正在检查 Ollama…'
-                          : ollamaStatus === 'unknown'
-                          ? '待检查'
+                      <span className={`h-2 w-2 rounded-full ${
+                        ollamaStatus === 'online' ? 'bg-success'
+                          : ollamaStatus === 'checking' || ollamaStatus === 'unknown' ? 'animate-pulse bg-fg-subtle motion-reduce:animate-none'
+                          : 'bg-danger'
+                      }`} />
+                      <span className="text-xs font-medium text-fg">
+                        {ollamaStatus === 'online' ? 'Ollama 已连接'
+                          : ollamaStatus === 'checking' ? '正在检查 Ollama…'
+                          : ollamaStatus === 'unknown' ? '待检查'
                           : 'Ollama 未就绪'}
                       </span>
                     </div>
-                    {ollamaMessage && <p className="text-[11px] leading-relaxed text-secondary">{ollamaMessage}</p>}
+                    {ollamaMessage && <p className="text-[11px] leading-relaxed text-fg-muted">{ollamaMessage}</p>}
                   </div>
                 }
               />
             </div>
-
-            {/* Footer action */}
-            <div className="shrink-0 border-t border-default p-4">
-              <button
-                onClick={() => void runSmartSplit()}
-                disabled={smartSplitLoading || !crystalReady}
-                className="workspace-button w-full py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {smartSplitLoading ? '✨ 正在智能分析…' : '✨ 开始 AI 辅助拆分'}
+            <div className="shrink-0 border-t border-line p-4">
+              <button onClick={() => void runSmartSplit()} disabled={smartSplitLoading || !crystalReady} className="btn btn-primary w-full gap-1.5">
+                <Sparkles size={14} /> {smartSplitLoading ? '正在智能分析…' : '开始 AI 辅助拆分'}
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Undo/Success Toast component (AC4, AC5) */}
+      {/* 撤销 / 成功 Toast */}
       {toast && toast.show && (
-        <div className={`fixed bottom-8 left-1/2 z-50 flex min-w-[320px] max-w-md -translate-x-1/2 flex-col rounded-xl p-4 text-xs shadow-[0_12px_32px_-12px_rgba(50,38,18,0.30)] animate-[fadeIn_150ms_ease-out] ${
-          toast.type === 'success'
-            ? 'border border-[color:var(--signal)]/30 bg-[color:var(--surface)] text-[color:var(--signal)]'
-            : 'border border-default bg-[color:var(--surface)] text-secondary'
+        <div className={`fixed bottom-6 left-1/2 z-50 flex min-w-[320px] max-w-md -translate-x-1/2 flex-col rounded-lg border p-4 text-xs shadow-pop view-enter ${
+          toast.type === 'success' ? 'border-success/40 bg-surface text-success' : 'border-line bg-surface text-fg-muted'
         }`}>
           <div className="flex items-center justify-between gap-4">
-            <span className={`font-medium ${toast.type === 'success' ? 'text-[color:var(--add)]' : 'text-[color:var(--ink-dim)]'}`}>
-              {toast.message}
-            </span>
+            <span className={`font-medium ${toast.type === 'success' ? 'text-success' : 'text-fg'}`}>{toast.message}</span>
             {toast.type === 'stitch' && canUndo && (
-              <button
-                onClick={handleUndo}
-                className="flex shrink-0 items-center gap-1 rounded px-2 py-1 font-semibold text-[color:var(--ink)] transition-colors hover:bg-[color:var(--surface)] hover:text-primary"
-                aria-label="撤销操作"
-              >
-                撤销 ↩️
-              </button>
+              <button onClick={handleUndo} className="flex shrink-0 items-center gap-1 rounded px-2 py-1 font-semibold text-fg transition-colors hover:bg-raised" aria-label="撤销操作"><Undo2 size={13} /> 撤销</button>
             )}
           </div>
-          <div className="mt-2.5 h-1 w-full overflow-hidden rounded-full bg-[color:var(--hair)]">
-            <div
-              className={`h-full transition-all duration-100 ease-linear ${
-                toast.type === 'success' ? 'bg-[color:var(--signal)]' : 'bg-[color:var(--muted)]'
-              }`}
-              style={{ width: `${(toast.countdown / 6000) * 100}%` }}
-            />
+          <div className="mt-2.5 h-1 w-full overflow-hidden rounded-full bg-line">
+            <div className={`h-full transition-all duration-100 ease-linear ${toast.type === 'success' ? 'bg-success' : 'bg-fg-subtle'}`} style={{ width: `${(toast.countdown / 6000) * 100}%` }} />
           </div>
         </div>
       )}
 
-      {/* Float Toolbar component (AC6) */}
-      <div
-        className={`fixed bottom-8 left-1/2 z-40 flex -translate-x-1/2 transform items-center gap-4 rounded-full border border-default bg-[color:var(--surface)] px-6 py-3.5 shadow-[0_12px_32px_-12px_rgba(50,38,18,0.30)] transition-all duration-300 ${
-          selectedChapterIds.size >= 2 ? 'translate-y-0 opacity-100 font-sans' : 'translate-y-20 opacity-0 pointer-events-none'
-        }`}
-      >
-        <span className="text-xs font-semibold text-primary">
-          已选中 <span className="font-mono text-[color:var(--ink)]">{selectedChapterIds.size}</span> 个章节
-        </span>
-        <div className="h-4 w-px bg-[color:var(--hair)]" />
-        <button
-          onClick={() => setShowBulkModal(true)}
-          className="workspace-button flex items-center gap-1 rounded-full px-3.5 py-1.5 text-xs"
-          aria-label="批量合并章节"
-        >
-          🔗 批量合并
-        </button>
-        <button
-          onClick={() => setSelectedChapterIds(new Set())}
-          className="rounded-full px-3 py-1.5 text-xs text-secondary transition-all hover:bg-[color:var(--surface)] hover:text-primary"
-          aria-label="取消选择"
-        >
-          取消选择
-        </button>
+      {/* 批量操作浮条 */}
+      <div className={`fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-4 rounded-full border border-line bg-surface px-5 py-3 shadow-pop transition-all duration-300 ${
+        selectedChapterIds.size >= 2 ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-20 opacity-0'
+      }`}>
+        <span className="text-xs font-semibold text-fg">已选中 <span className="font-mono tabular-nums">{selectedChapterIds.size}</span> 个章节</span>
+        <div className="h-4 w-px bg-line" />
+        <button onClick={() => setShowBulkModal(true)} className="btn btn-primary btn-sm gap-1.5" aria-label="批量合并章节"><Link2 size={13} /> 批量合并</button>
+        <button onClick={() => setSelectedChapterIds(new Set())} className="btn btn-ghost btn-sm" aria-label="取消选择">取消</button>
       </div>
 
-      {/* Bulk Confirmation Modal (AC7) */}
+      {/* 批量确认弹窗 */}
       {showBulkModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[color:var(--ink)]/40 animate-[fadeIn_150ms_ease-out]">
-          <div className="w-full max-w-md space-y-5 rounded-2xl border border-default bg-[color:var(--surface)] p-6 shadow-[0_24px_60px_-24px_rgba(50,38,18,0.4)]">
-            <div className="flex items-center gap-2">
-              <span className="text-base">🔗</span>
-              <h3 className="text-sm font-semibold text-primary">批量物理合并确认</h3>
-            </div>
-            <p className="font-sans text-xs leading-relaxed text-secondary">
-              确认合并选中的 <span className="font-semibold text-[color:var(--ink)]">{selectedChapterIds.size}</span> 个章节？此操作将按目录顺序物理拼接文本，且第一章无法被并入。
-            </p>
-            <div className="flex justify-end gap-3 text-xs pt-2">
-              <button
-                onClick={() => setShowBulkModal(false)}
-                className="workspace-button workspace-button-secondary px-4 py-2 text-xs"
-                aria-label="取消合并"
-              >
-                取消
-              </button>
-              <button
-                onClick={() => {
-                  setShowBulkModal(false);
-                  handleBulkStitch();
-                }}
-                className="workspace-button px-4 py-2 text-xs"
-                aria-label="确认批量合并"
-              >
-                确认合并
-              </button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-fg/45 px-4">
+          <div className="card w-full max-w-md space-y-5 p-6 shadow-pop view-enter">
+            <div className="flex items-center gap-2 text-fg"><Link2 size={16} /><h3 className="text-sm font-semibold">批量物理合并确认</h3></div>
+            <p className="text-xs leading-relaxed text-fg-muted">确认合并选中的 <span className="font-semibold text-fg">{selectedChapterIds.size}</span> 个章节？此操作将按目录顺序物理拼接文本，且第一章无法被并入。</p>
+            <div className="flex justify-end gap-2.5 pt-1">
+              <button onClick={() => setShowBulkModal(false)} className="btn btn-ghost" aria-label="取消合并">取消</button>
+              <button onClick={() => { setShowBulkModal(false); handleBulkStitch(); }} className="btn btn-primary" aria-label="确认批量合并">确认合并</button>
             </div>
           </div>
         </div>

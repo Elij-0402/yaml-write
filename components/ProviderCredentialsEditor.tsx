@@ -1,17 +1,17 @@
 'use client';
 
 import React, { useState } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import { useAppStore } from '../app/store';
 import { getProviderMeta, listProviderMetas } from '../app/llmProviders';
 
 // 「选服务商 → API Key(显隐) → Base URL → 模型(datalist)」凭据表单的共享核心。
-// 此前 SettingsPanel（抽屉，select 下拉，极简主题）与 NovelUploader 水晶卡（tabs，深色主题，含 Ollama 心跳）
-// 各复制一份绑定逻辑。现收成单一组件：store 接线（activeProvider/profile/setActiveProvider/updateActiveProviderProfile）
-// 与字段渲染只此一处；宿主只提供外壳（抽屉 / 水晶卡）、主题变体、选择器样式与可选 Ollama 心跳槽。
-// 组件返回 fragment（无外层 spacing 容器），由宿主既有的 space-y 容器排布，零额外布局节点。
+// SettingsPanel（抽屉，select 下拉）与 NovelUploader 滑入卡（tabs，含 Ollama 心跳）共用此组件：
+// store 接线（activeProvider/profile/setActiveProvider/updateActiveProviderProfile）与字段渲染只此一处。
+// 组件返回 fragment（无外层 spacing 容器），由宿主既有的 space-y 容器排布。
 //
 // collapsibleAdvanced：BYOK 无感模式。默认只露「当前模型(只读) + API Key」，把换服务商 / 自定义接口与模型
-// 收进默认折叠的 <details>。绝大多数用户只需贴一把 key（默认 DeepSeek 已预填接口与模型），高级用户再展开。
+// 收进默认折叠的 <details>。绝大多数用户只需贴一把 key（默认 DeepSeek 已预填接口与模型）。
 
 type Variant = 'minimal' | 'crystal';
 
@@ -37,47 +37,59 @@ interface EditorTheme {
   advancedBody: string;
 }
 
+// 冷调系统极简下两变体趋同（统一亮色），crystal 仅更紧凑些。
+const SHARED = {
+  chip: 'rounded-md border px-2.5 py-1 transition-colors',
+  chipActive: 'border-accent bg-accent-subtle text-accent',
+  chipMuted: 'border-line bg-surface text-fg-muted hover:text-fg hover:border-fg-subtle',
+  keyRow: 'flex items-center gap-2',
+  toggleBtn: 'btn btn-ghost btn-sm btn-icon shrink-0',
+  tabBase: 'rounded-md border px-2.5 py-1 transition-colors',
+  tabActive: 'border-accent bg-accent-subtle text-accent',
+  tabInactive: 'border-line bg-surface text-fg-muted hover:text-fg',
+};
+
 const THEME: Record<Variant, EditorTheme> = {
   minimal: {
-    fieldWrap: 'space-y-2',
-    label: 'text-xs text-secondary',
-    select: 'workspace-input text-sm',
-    hintCard: 'rounded-[12px] border border-default bg-[color:var(--surface)] px-3 py-2.5 text-xs text-secondary',
-    chipRow: 'flex flex-wrap gap-2',
-    chip: 'rounded-full border px-2.5 py-1 text-xs transition-colors',
-    chipActive: 'border-[color:var(--ink)] bg-[color:var(--surface)] text-primary',
-    chipMuted: 'border-default bg-transparent text-secondary hover:text-primary',
-    keyRow: 'flex items-center gap-2',
-    keyInput: 'workspace-input flex-1 text-sm font-mono',
-    toggleBtn: 'text-xs text-muted hover:text-primary',
-    input: 'workspace-input text-sm font-mono',
-    keyHelp: 'text-xs text-muted',
+    fieldWrap: 'space-y-1.5',
+    label: 'field-label',
+    select: 'input text-sm',
+    hintCard: 'rounded-lg border border-line bg-panel px-3 py-2.5 text-xs text-fg-muted',
+    chipRow: 'flex flex-wrap gap-1.5',
+    chip: `${SHARED.chip} text-xs`,
+    chipActive: SHARED.chipActive,
+    chipMuted: SHARED.chipMuted,
+    keyRow: SHARED.keyRow,
+    keyInput: 'input flex-1 text-sm font-mono',
+    toggleBtn: SHARED.toggleBtn,
+    input: 'input text-sm font-mono',
+    keyHelp: 'text-xs text-fg-subtle',
     tabsWrap: 'flex flex-wrap gap-1.5',
-    tabBase: 'rounded-full border px-2.5 py-1 text-sm transition-colors',
-    tabActive: 'border-[color:var(--ink)] bg-[color:var(--surface)] text-primary',
-    tabInactive: 'border-default bg-transparent text-muted hover:text-primary',
-    advancedSummary: 'cursor-pointer select-none text-xs text-muted hover:text-primary',
-    advancedBody: 'mt-3 space-y-4',
+    tabBase: `${SHARED.tabBase} text-sm`,
+    tabActive: SHARED.tabActive,
+    tabInactive: SHARED.tabInactive,
+    advancedSummary: 'cursor-pointer select-none text-xs text-fg-muted hover:text-fg',
+    advancedBody: 'mt-3 space-y-3',
   },
   crystal: {
     fieldWrap: 'space-y-1.5',
-    label: 'text-[11px] text-[color:var(--ink-dim)]',
-    select: 'w-full border border-default bg-[color:var(--paper)] px-2.5 py-1.5 text-xs text-[color:var(--ink)] focus:border-[color:var(--signal)] focus:outline-none',
-    hintCard: 'border border-default bg-[color:var(--paper)] px-2.5 py-2 text-[11px] text-[color:var(--ink-dim)]',
+    label: 'field-label',
+    select: 'input text-xs',
+    hintCard: 'rounded-md border border-line bg-panel px-2.5 py-2 text-[11px] text-fg-muted',
     chipRow: 'flex flex-wrap gap-1.5',
-    chip: 'rounded-[7px] border px-2 py-1 text-[11px] transition-colors',
-    chipActive: 'border-[color:var(--ink)] bg-[color:var(--surface)] text-[color:var(--ink)]',
-    chipMuted: 'border-[color:var(--hair)] bg-transparent text-[color:var(--ink-dim)] hover:text-[color:var(--ink)]',
-    keyRow: 'flex items-center gap-2',
-    keyInput: 'flex-1 border border-default bg-[color:var(--paper)] px-2.5 py-1.5 font-mono text-xs text-[color:var(--ink)] focus:border-[color:var(--signal)] focus:outline-none',
-    toggleBtn: 'shrink-0 text-[11px] text-[color:var(--ink-faint)] hover:text-[color:var(--ink)]',
-    input: 'w-full border border-default bg-[color:var(--paper)] px-2.5 py-1.5 font-mono text-xs text-[color:var(--ink)] focus:border-[color:var(--signal)] focus:outline-none',
-    keyHelp: 'text-[10px] text-[color:var(--ink-faint)]',
+    chip: `${SHARED.chip} text-[11px]`,
+    chipActive: SHARED.chipActive,
+    chipMuted: SHARED.chipMuted,
+    keyRow: SHARED.keyRow,
+    keyInput: 'input flex-1 text-xs font-mono',
+    toggleBtn: SHARED.toggleBtn,
+    input: 'input text-xs font-mono',
+    keyHelp: 'text-[10px] text-fg-subtle',
     tabsWrap: 'flex flex-wrap gap-1.5',
-    tabBase: 'rounded-[7px] border px-2.5 py-1 text-[11px] transition-all',
-    tabActive: 'border-[color:var(--ink)] bg-[color:var(--surface)] text-[color:var(--ink)]',
-    tabInactive: 'border-[color:var(--hair)] bg-transparent text-[color:var(--ink-dim)] hover:text-[color:var(--ink)]',
-    advancedSummary: 'cursor-pointer select-none text-[11px] text-[color:var(--ink-faint)] hover:text-[color:var(--ink)]',
+    tabBase: `${SHARED.tabBase} text-[11px]`,
+    tabActive: SHARED.tabActive,
+    tabInactive: SHARED.tabInactive,
+    advancedSummary: 'cursor-pointer select-none text-[11px] text-fg-subtle hover:text-fg',
     advancedBody: 'mt-2.5 space-y-3',
   },
 };
@@ -85,10 +97,10 @@ const THEME: Record<Variant, EditorTheme> = {
 interface ProviderCredentialsEditorProps {
   variant: Variant;
   providerSelector: 'select' | 'tabs';
-  apiKeyLabel?: string;   // 覆盖 API Key 标签；缺省按 requiresApiKey 显示「API Key」/「API Key（可选）」
-  keyHelpText?: string;   // 渲染在 API Key 输入下方的小字说明（如水晶卡的「🔒 …」）；缺省不渲染
-  ollamaSlot?: React.ReactNode; // 选用「无需 Key」的本地 provider 时替换 API Key 输入（如 Ollama 心跳卡）
-  collapsibleAdvanced?: boolean; // BYOK 无感：默认只露「当前模型 + Key」，换服务商/接口/模型收进折叠的高级区
+  apiKeyLabel?: string;
+  keyHelpText?: string;
+  ollamaSlot?: React.ReactNode;
+  collapsibleAdvanced?: boolean;
 }
 
 export default function ProviderCredentialsEditor({
@@ -164,8 +176,13 @@ export default function ProviderCredentialsEditor({
             placeholder="sk-..."
             className={t.keyInput}
           />
-          <button type="button" onClick={() => setShowKey((v) => !v)} className={t.toggleBtn}>
-            {showKey ? '隐藏' : '显示'}
+          <button
+            type="button"
+            onClick={() => setShowKey((v) => !v)}
+            className={t.toggleBtn}
+            aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}
+          >
+            {showKey ? <EyeOff size={15} /> : <Eye size={15} />}
           </button>
         </div>
         {keyHelpText && <p className={t.keyHelp}>{keyHelpText}</p>}
@@ -223,7 +240,6 @@ export default function ProviderCredentialsEditor({
     </div>
   );
 
-  // 无感模式：默认只露「当前模型(只读) + API Key」，其余收进折叠的高级区。
   if (collapsibleAdvanced) {
     return (
       <>

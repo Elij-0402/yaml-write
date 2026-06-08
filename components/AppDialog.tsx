@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 interface AppDialogProps {
   open: boolean;
@@ -30,10 +30,19 @@ export default function AppDialog({
   onClose,
 }: AppDialogProps) {
   const [value, setValue] = useState(initialValue);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (open) setValue(initialValue);
   }, [open, initialValue]);
+
+  // 打开后把焦点移到首个可操作元素（输入框优先，否则主行动），满足键盘可达。
+  useEffect(() => {
+    if (!open) return;
+    const t = setTimeout(() => (inputRef.current ?? confirmRef.current)?.focus(), 0);
+    return () => clearTimeout(t);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -47,31 +56,32 @@ export default function AppDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[color:var(--ink)]/40 px-4">
-      <button type="button" className="absolute inset-0" onClick={onClose} aria-label="关闭对话框" />
-      <div className="relative w-full max-w-md rounded-[12px] border border-default bg-[color:var(--surface)] p-6 shadow-[0_24px_60px_-24px_rgba(50,38,18,0.4)]">
-        <div className="eyebrow !mb-2">Confirm · 应用内确认</div>
-        <h3 className="text-[22px] text-primary" style={{ fontFamily: 'var(--serif)', fontWeight: 600, lineHeight: 1.2 }}>{title}</h3>
-        <p className="mt-2 text-sm leading-6 text-secondary">{description}</p>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-fg/45 px-4" role="dialog" aria-modal="true" aria-label={title}>
+      <button type="button" className="absolute inset-0" onClick={onClose} aria-label="关闭对话框" tabIndex={-1} />
+      <div className="card relative w-full max-w-md p-6 shadow-pop view-enter">
+        <h3 className="text-base font-semibold text-fg">{title}</h3>
+        {description && <p className="mt-2 text-sm leading-6 text-fg-muted">{description}</p>}
 
         {inputLabel && (
-          <div className="mt-4 space-y-2">
-            <label className="text-xs text-secondary">{inputLabel}</label>
+          <div className="mt-4 space-y-1.5">
+            <label className="field-label">{inputLabel}</label>
             <input
+              ref={inputRef}
               value={value}
               onChange={(event) => setValue(event.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') onConfirm(value); }}
               placeholder={placeholder}
-              className="workspace-input text-sm"
+              className="input text-sm"
             />
           </div>
         )}
 
-        <div className="mt-6 flex justify-end gap-3">
-          <button onClick={onClose} className="workspace-button workspace-button-secondary">{cancelLabel}</button>
+        <div className="mt-6 flex justify-end gap-2.5">
+          <button onClick={onClose} className="btn btn-ghost">{cancelLabel}</button>
           <button
+            ref={confirmRef}
             onClick={() => onConfirm(inputLabel ? value : undefined)}
-            className={`workspace-button ${confirmTone === 'danger' ? 'workspace-button-secondary' : ''}`}
-            style={confirmTone === 'danger' ? { borderColor: 'var(--del)', color: 'var(--del)', background: 'var(--del-soft)' } : undefined}
+            className={`btn ${confirmTone === 'danger' ? 'btn-danger' : 'btn-primary'}`}
           >
             {confirmLabel}
           </button>

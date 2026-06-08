@@ -2,32 +2,20 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { Menu, X } from 'lucide-react';
 import { db, type Novel, type FusionSession } from './db';
 import { isDnaReady, isExtracting, canAutoStart } from './dnaState';
 import { useAppStore, type LLMConfig } from './store';
 import { runDnaExtraction } from './dnaEngine';
 import { ensureLlmConfigReady } from './llmClient';
-import NovelUploader from '../components/NovelUploader';
-import NovelDetail from '../components/NovelDetail';
+import { getLlmReadinessSummary } from './workflow';
+import AppRail from '../components/AppRail';
+import LibraryView from '../components/LibraryView';
+import CreationsView from '../components/CreationsView';
+import NovelWorkspace from '../components/NovelWorkspace';
 import FusionWorkshop from '../components/FusionWorkshop';
 import SettingsPanel from '../components/SettingsPanel';
-import WorkflowStepper from '../components/WorkflowStepper';
 import AppDialog from '../components/AppDialog';
-import { getLlmReadinessSummary, getNovelWorkflowSummary, type WorkflowStage } from './workflow';
-
-function getStatus(novel: Novel): string {
-  if (isDnaReady(novel)) return 'ready';
-  if (isExtracting(novel)) return 'extracting';
-  if (novel.splitStatus === 'needs_review') return 'review';
-  return 'pending';
-}
-
-function getStatusLabel(status: string): string {
-  if (status === 'ready') return '就绪';
-  if (status === 'extracting') return '提取中';
-  if (status === 'review') return '待校验';
-  return '待处理';
-}
 
 // 后台自适应提取（NFR1）：导入/选中一部 idle 且无 DNA 的作品时，自动在后台起提取——
 // 用户可离开（page.tsx 常驻，run 不随面板切换中止），跑完弹「DNA 就绪」通知。单飞 + 完成后再评估（队列推进）。
@@ -50,8 +38,8 @@ function useBackgroundExtraction(selectedNovelId: string | null, llmConfig: LLMC
     if (runningRef.current) return; // 单飞：一次只跑一部
     if (!selectedNovelId || !novel) return;
     if (!ensureLlmConfigReady(llmConfig).ok) return; // 未配密钥不自动跑（配好后本 effect 因 llmConfig 变化重评）
-    if (!canAutoStart(novel)) return; // 状态层门：仅全新 idle（无卡、非进行中、非 error）自启；已有结果走手动重提，error 不自动重启
-    if (chapterCount === 0) return; // 仅「尚无章节（还在解析）」时不跑；切分质量不再设门——超长 blob 已在导入时预切，整本/弧窗提取不依赖精确分章
+    if (!canAutoStart(novel)) return; // 状态层门：仅全新 idle 自启；已有结果走手动重提，error 不自动重启
+    if (chapterCount === 0) return; // 仅「尚无章节（还在解析）」时不跑
 
     const id = selectedNovelId;
     const name = novel.name;
@@ -86,6 +74,8 @@ function useBackgroundExtraction(selectedNovelId: string | null, llmConfig: LLMC
   return { doneToast, dismissToast: () => setDoneToast(null) };
 }
 
+type Section = 'library' | 'creations';
+
 export default function Home() {
   const {
     selectedNovelId,
@@ -94,9 +84,6 @@ export default function Home() {
     setWorkshopOpen,
     activeCreationId,
     setActiveCreationId,
-    workshopBusy,
-    manageMode,
-    setManageMode,
     llmConfig,
     persistError,
   } = useAppStore();
@@ -104,6 +91,7 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsIntent, setSettingsIntent] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [homeSection, setHomeSection] = useState<Section>('library');
   const [dialogState, setDialogState] = useState<
     | { kind: 'deleteNovel'; novel: Novel }
     | { kind: 'deleteCreation'; creation: FusionSession }
@@ -111,6 +99,7 @@ export default function Home() {
     | null
   >(null);
 
+  // ⌘/Ctrl + , 打开设置
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === ',') {
@@ -122,6 +111,7 @@ export default function Home() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // 组件内 dispatch 的 open-settings-panel 事件（带 intent 提示）
   useEffect(() => {
     const handler = (event: Event) => {
       const custom = event as CustomEvent<{ intent?: string }>;
@@ -133,77 +123,43 @@ export default function Home() {
   }, []);
 
   const novelsRaw = useLiveQuery<Novel[]>(() => db.novels.orderBy('createdAt').reverse().toArray(), []);
-  const novels = novelsRaw || [];
+  const novels = useMemo(() => novelsRaw || [], [novelsRaw]);
   const selectedNovel = novels.find((novel) => novel.id === selectedNovelId) || null;
 
-  // 创作库：仅展示已进入创作台或已有正文的创作（过滤掉未成形的空白/方向期会话）。
-  const creationsRaw = useLiveQuery<FusionSession[]>(
-    () => db.fusionSessions.orderBy('createdAt').reverse().toArray(),
-    []
-  );
-  const creations = (creationsRaw || []).filter(
+  const creationsRaw = useLiveQuery<FusionSession[]>(() => db.fusionSessions.toArray(), []);
+  const creationCount = (creationsRaw || []).filter(
     (c) => c.step === 'creator' || c.step === 'manuscript' || Object.keys(c.sceneTexts || {}).length > 0
-  );
+  ).length;
 
-  const readyCount = novels.filter((novel) => isDnaReady(novel)).length;
+  const extractingCount = novels.filter((n) => isExtracting(n)).length;
   const llmReadiness = useMemo(() => getLlmReadinessSummary(llmConfig), [llmConfig]);
   const { doneToast, dismissToast } = useBackgroundExtraction(selectedNovelId, llmConfig);
-  const workflowSummary = useMemo(
-    () => getNovelWorkflowSummary(selectedNovel, llmConfig, readyCount),
-    [selectedNovel, llmConfig, readyCount]
-  );
 
-  // 清理幽灵选中：持久化的 selectedNovelId 指向已删除作品时复位（仅在 live 查询解析完成后判断，避免误清加载中的有效选择）。
+  // 清理幽灵选中：持久化的 selectedNovelId 指向已删除作品时复位（仅在 live 查询解析完成后判断）。
   useEffect(() => {
     if (novelsRaw && selectedNovelId && !novelsRaw.some((n) => n.id === selectedNovelId)) {
       setSelectedNovelId(null);
     }
   }, [novelsRaw, selectedNovelId, setSelectedNovelId]);
 
-  const currentStageId: WorkflowStage['id'] = workshopOpen
-    ? 'fusion'
+  // 进入实体即记住所属段，使「从该实体返回」落回正确的库 home（离开 studio→创作库、离开作品→作品库）。
+  useEffect(() => { if (workshopOpen) setHomeSection('creations'); }, [workshopOpen]);
+  useEffect(() => { if (selectedNovelId) setHomeSection('library'); }, [selectedNovelId]);
+
+  // 当前视图与导航段由 store flags + homeSection 派生（无需改 store 形状）。
+  const view = workshopOpen
+    ? 'studio'
     : selectedNovel
-    ? manageMode
-      ? 'split'
-      : 'dna'
-    : 'import';
+    ? 'novel'
+    : homeSection === 'creations'
+    ? 'creations'
+    : 'library';
+  const activeSection: Section = workshopOpen ? 'creations' : selectedNovelId ? 'library' : homeSection;
 
-  const currentPath = workshopOpen
-    ? '融合工坊'
-    : selectedNovel
-    ? manageMode
-      ? '章节校验'
-      : '作品详情'
-    : '总览';
-
-  const goImport = () => {
-    setSelectedNovelId(null);
-    setWorkshopOpen(false);
-    setManageMode(false);
+  const selectSection = (section: Section) => {
     setMobileNavOpen(false);
-  };
-
-  // 阶段门导航：语义层由 stepper 驱动，用户不再直面三标志拼凑。
-  const handleStageClick = (id: WorkflowStage['id']) => {
-    setMobileNavOpen(false);
-    switch (id) {
-      case 'import':
-        setSelectedNovelId(null);
-        break;
-      case 'split':
-        if (selectedNovel) {
-          setWorkshopOpen(false);
-          setManageMode(true);
-        }
-        break;
-      case 'dna':
-        if (selectedNovel) setSelectedNovelId(selectedNovel.id);
-        else if (!llmReadiness.ok) setSettingsOpen(true);
-        break;
-      case 'fusion':
-        if (readyCount >= 1) setActiveCreationId(crypto.randomUUID());
-        break;
-    }
+    setSelectedNovelId(null); // 清掉 workshopOpen / activeCreationId / manageMode，回到该段 home
+    setHomeSection(section);
   };
 
   const deleteNovel = async (id: string) => {
@@ -211,9 +167,7 @@ export default function Home() {
       await db.chapters.where('novelId').equals(id).delete();
       await db.novels.delete(id);
     });
-    if (selectedNovelId === id) {
-      setSelectedNovelId(null);
-    }
+    if (selectedNovelId === id) setSelectedNovelId(null);
   };
 
   const deleteCreation = async (id: string) => {
@@ -230,265 +184,55 @@ export default function Home() {
     }
   };
 
-  const extractingCount = novels.filter((novel) => getStatus(novel) === 'extracting').length;
-  const activeCreation = creations.find((creation) => creation.id === activeCreationId) || null;
-  const currentWorkspaceLabel = workshopOpen
-    ? activeCreation?.name || activeCreation?.directionTitle || '创作工坊'
-    : selectedNovel?.name || '总览';
-  // 单一「下一步」多路复用（IF-8/IF-10）：工坊忙 / 后台提取 / 常态推荐。前两者是「正在发生」→ value 着信号青。
-  const activeTaskLive = workshopBusy || extractingCount > 0;
-  const activeTaskLabel = workshopBusy
-    ? '创作工坊正在处理生成任务，建议保持当前会话。'
-    : extractingCount > 0
-    ? `有 ${extractingCount} 本作品正在后台提取 DNA · 可离开，提取在后台继续。`
-    : workflowSummary.recommendedNextStep;
-  const readinessTone = llmReadiness.ok ? 'text-[color:var(--signal)] border-[color:var(--signal)]/30 bg-[color:var(--signal-soft)]' : 'text-[color:var(--muted)] border-[color:var(--hair)] bg-[color:var(--surface)]';
+  const sectionTitle =
+    view === 'studio' ? '创作' : view === 'novel' ? selectedNovel?.name || '作品' : view === 'creations' ? '创作库' : '作品库';
 
   return (
-    <main className="workspace-shell flex min-h-screen">
-      {/* Mobile nav scrim */}
-      {mobileNavOpen && (
-        <button
-          type="button"
-          aria-label="关闭导航"
-          onClick={() => setMobileNavOpen(false)}
-          className="fixed inset-0 z-30 bg-[color:var(--ink)]/40 lg:hidden"
-        />
-      )}
+    <div className="flex h-screen overflow-hidden bg-canvas">
+      <AppRail
+        activeSection={activeSection}
+        onSelectSection={selectSection}
+        onOpenSettings={() => { setSettingsOpen(true); setMobileNavOpen(false); }}
+        readinessOk={llmReadiness.ok}
+        novelCount={novels.length}
+        creationCount={creationCount}
+        mobileOpen={mobileNavOpen}
+        onCloseMobile={() => setMobileNavOpen(false)}
+      />
 
-      {/* Sidebar — static on lg, slide-in drawer below lg */}
-      <aside
-        className={`${
-          mobileNavOpen ? 'fixed inset-y-0 left-0 z-40 flex' : 'hidden'
-        } w-[296px] flex-col border-r border-default bg-[color:var(--well)] lg:static lg:z-auto lg:flex`}
-      >
-        <div className="border-b border-default px-5 py-5">
-          <div className="flex items-center gap-3">
-            <span
-              className="grid h-10 w-10 place-items-center rounded-[7px] border border-default text-[20px]"
-              style={{ color: 'var(--ink)', fontFamily: 'var(--serif)' }}
-            >墨</span>
-            <div className="leading-tight">
-              <div className="text-[16px] text-primary" style={{ fontFamily: 'var(--serif)', fontWeight: 600 }}>创作 DNA 工坊</div>
-              <div className="text-[10px] tracking-[0.22em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>VARIATION ATELIER</div>
-            </div>
+      <main className="flex min-w-0 flex-1 flex-col">
+        {/* 移动端顶栏 */}
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-4 lg:hidden">
+          <button onClick={() => setMobileNavOpen(true)} className="btn btn-ghost btn-sm btn-icon" aria-label="打开导航">
+            <Menu size={18} />
+          </button>
+          <span className="truncate text-sm font-medium text-fg">{sectionTitle}</span>
+        </div>
+
+        <div
+          className={`min-h-0 flex-1 ${view === 'library' || view === 'creations' ? 'overflow-y-auto' : 'overflow-hidden'}`}
+        >
+          <div className={`p-5 sm:p-6 lg:p-8 ${view === 'novel' || view === 'studio' ? 'h-full' : ''}`}>
+            {view === 'studio' ? (
+              <FusionWorkshop />
+            ) : view === 'novel' && selectedNovel ? (
+              <NovelWorkspace novelId={selectedNovel.id} />
+            ) : view === 'creations' ? (
+              <CreationsView
+                onRequestDelete={(creation) => setDialogState({ kind: 'deleteCreation', creation })}
+                onRequestRename={(creation) => setDialogState({ kind: 'renameCreation', creation })}
+              />
+            ) : (
+              <LibraryView onRequestDelete={(novel) => setDialogState({ kind: 'deleteNovel', novel })} />
+            )}
           </div>
         </div>
-
-        <div className="flex-1 overflow-y-auto px-4 py-4">
-          <button onClick={goImport} className="workspace-button w-full justify-between">
-            <span>导入新作品</span>
-            <span className="font-mono text-xs">+</span>
-          </button>
-
-          {novels.length > 0 && (
-            <div className="mt-5">
-              <div className="mb-2 px-1 text-[11px] uppercase tracking-[0.18em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>作品库 · {novels.length}</div>
-              {novels.map((novel) => {
-                const active = !workshopOpen && selectedNovelId === novel.id;
-                const status = getStatus(novel);
-                return (
-                  <div
-                    key={novel.id}
-                    className={`group relative mb-2 rounded-[12px] border px-4 py-3 transition-all ${
-                      active
-                        ? 'border-[color:var(--muted)] bg-[color:var(--surface)]'
-                        : 'border-default bg-transparent hover:border-[color:var(--muted)] hover:bg-[color:var(--surface)]'
-                    }`}
-                  >
-                    <div
-                      onClick={() => {
-                        setSelectedNovelId(novel.id);
-                        setWorkshopOpen(false);
-                        setMobileNavOpen(false);
-                      }}
-                      className="flex items-center gap-2.5"
-                    >
-                      {/* 状态点（IF-5/IF-10/R1）：仅「提取中」着信号青并呼吸；就绪/待校验/待处理一律 faint，绝不着青 */}
-                      <span
-                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                          status === 'extracting'
-                            ? 'animate-pulse bg-[color:var(--signal)] motion-reduce:animate-none'
-                            : 'bg-[color:var(--faint)]'
-                        }`}
-                      />
-                      <span className={`min-w-0 flex-1 truncate text-sm ${active ? 'text-primary' : 'text-secondary'}`}>
-                        {novel.name}
-                      </span>
-                      {/* 行尾 mono 状态词：提取中=青 / 就绪=muted / 待校验·待处理=faint */}
-                      <span
-                        className={`shrink-0 font-mono text-[10px] tracking-[0.04em] ${
-                          status === 'extracting'
-                            ? 'text-[color:var(--signal)]'
-                            : status === 'ready'
-                            ? 'text-[color:var(--muted)]'
-                            : 'text-[color:var(--faint)]'
-                        }`}
-                      >
-                        {getStatusLabel(status)}
-                      </span>
-                    </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDialogState({ kind: 'deleteNovel', novel });
-                      }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-[color:var(--danger)] group-hover:opacity-100"
-                    >
-                      ×
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {creations.length > 0 && (
-            <div className="mt-5 border-t border-default pt-5">
-              <div className="mb-2 px-1 text-[11px] uppercase tracking-[0.18em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>创作库 · {creations.length}</div>
-              {creations.map((creation) => {
-                const active = workshopOpen && activeCreationId === creation.id;
-                return (
-                  <div
-                    key={creation.id}
-                    title={workshopBusy && !active ? '生成中，暂不可切换创作' : undefined}
-                    className={`group relative mb-2 rounded-[12px] border px-4 py-3 ${
-                      active
-                        ? 'border-[color:var(--muted)] bg-[color:var(--surface)]'
-                        : workshopBusy
-                        ? 'cursor-not-allowed border-default bg-transparent opacity-50'
-                        : 'cursor-pointer border-default bg-transparent hover:border-[color:var(--muted)] hover:bg-[color:var(--surface)]'
-                    }`}
-                  >
-                    <div
-                      onClick={() => {
-                        if (workshopBusy) return;
-                        setActiveCreationId(creation.id);
-                        setMobileNavOpen(false);
-                      }}
-                      className="flex items-center justify-between"
-                    >
-                      <span className={`truncate text-sm ${active ? 'text-primary' : 'text-secondary'}`}>
-                        {creation.name || creation.directionTitle || '未命名创作'}
-                      </span>
-                    </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDialogState({ kind: 'renameCreation', creation });
-                      }}
-                      className="absolute right-7 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-primary group-hover:opacity-100"
-                    >
-                      ✎
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDialogState({ kind: 'deleteCreation', creation });
-                      }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted opacity-0 hover:text-[color:var(--danger)] group-hover:opacity-100"
-                    >
-                      ×
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="border-t border-default px-4 py-4">
-          <button
-            onClick={() => {
-              if (workshopBusy || readyCount < 1) return;
-              setActiveCreationId(crypto.randomUUID());
-              setMobileNavOpen(false);
-            }}
-            className={`workspace-button w-full justify-between ${workshopBusy || readyCount < 1 ? 'opacity-50' : ''}`}
-            disabled={workshopBusy || readyCount < 1}
-          >
-            <span>新建创作</span>
-            <span className="font-mono text-xs">{readyCount >= 1 ? readyCount : '0'}</span>
-          </button>
-          <button
-            onClick={() => {
-              setSettingsOpen(true);
-              setMobileNavOpen(false);
-            }}
-            className="mt-3 flex w-full items-center justify-between rounded-[12px] border border-default bg-[color:var(--surface)] px-4 py-3 text-left text-sm text-secondary hover:text-primary"
-          >
-            <div>
-              <span className="block text-primary">模型与偏好设置</span>
-              <span className="text-[11px] text-muted">管理 API Key、模型地址和当前工作流阻塞项</span>
-            </div>
-            <span className={`status-pill ${readinessTone}`}>
-              {llmReadiness.ok ? '已连接' : '待配置'}
-            </span>
-          </button>
-        </div>
-      </aside>
-
-      {/* Main */}
-      <section className="relative z-[1] flex min-w-0 flex-1 flex-col">
-        <header className="border-b border-default px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 items-center gap-2 text-sm" style={{ fontFamily: 'var(--font-mono)' }}>
-            <button
-              onClick={() => setMobileNavOpen(true)}
-              className="text-secondary hover:text-primary lg:hidden"
-              aria-label="打开导航"
-            >
-              ☰
-            </button>
-            <span className="truncate text-muted">{currentWorkspaceLabel}</span>
-            <span className="text-muted">/</span>
-            <span className="truncate text-primary">{currentPath}</span>
-              </div>
-              <h1 className="mt-2 text-[26px] text-primary sm:text-[30px]" style={{ fontFamily: 'var(--serif)', fontWeight: 600, lineHeight: 1.1 }}>
-                把读过的书，拆成可换皮的引擎与皮。
-              </h1>
-              {/* 下一步红左栏单行（决策5：外壳留「下一步」一行） */}
-              <div className="mt-3 flex max-w-3xl items-center gap-2.5 border-l-2 border-[color:var(--hair)] py-0.5 pl-3 text-sm">
-                <span className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-[color:var(--faint)]" style={{ fontFamily: 'var(--font-mono)' }}>下一步</span>
-                <span className={activeTaskLive ? 'text-[color:var(--signal)]' : 'text-secondary'}>{activeTaskLabel}</span>
-              </div>
-            </div>
-            {/* 角落状态 chip */}
-            <div className="flex shrink-0 flex-col items-end gap-2">
-              <span className={`status-pill ${readinessTone}`}>
-                {llmReadiness.ok ? '模型已连接' : '模型待配置'}
-              </span>
-              {persistError && (
-                <span className="status-pill border-[color:var(--danger)] text-[color:var(--danger)]">⚠ 存储不可用</span>
-              )}
-            </div>
-          </div>
-        </header>
-
-        {/* 主线进度 Stepper（决策9：工坊态淡化为细带，主视觉让位给工坊） */}
-        <div className={`border-b border-default px-4 sm:px-6 lg:px-8 ${workshopOpen ? 'py-2 opacity-55' : 'py-5'}`}>
-          <WorkflowStepper summary={workflowSummary} currentStageId={currentStageId} onStageClick={handleStageClick} />
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
-          {workshopOpen ? (
-            <FusionWorkshop />
-          ) : selectedNovel && !manageMode ? (
-            <NovelDetail novelId={selectedNovel.id} />
-          ) : (
-            <NovelUploader />
-          )}
-        </div>
-      </section>
+      </main>
 
       <SettingsPanel
         isOpen={settingsOpen}
         returnHint={settingsIntent}
-        onClose={() => {
-          setSettingsOpen(false);
-          setSettingsIntent(null);
-        }}
+        onClose={() => { setSettingsOpen(false); setSettingsIntent(null); }}
       />
 
       <AppDialog
@@ -537,14 +281,26 @@ export default function Home() {
         <div
           role="status"
           aria-live="polite"
-          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-[9px] border border-[color:var(--signal)]/30 bg-[color:var(--surface)] px-4 py-2.5 text-sm text-[color:var(--signal)]"
-          style={{ boxShadow: '0 12px 32px -12px rgba(50,38,18,.30)' }}
+          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-accent/30 bg-surface px-4 py-2.5 text-sm text-accent shadow-pop"
         >
-          <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--signal)]" />
+          <span className="h-1.5 w-1.5 rounded-full bg-accent" />
           {doneToast}
-          <button onClick={dismissToast} className="text-muted hover:text-primary" aria-label="关闭通知">×</button>
+          <button onClick={dismissToast} className="text-fg-subtle hover:text-fg" aria-label="关闭通知"><X size={14} /></button>
         </div>
       )}
-    </main>
+
+      {persistError && (
+        <div className="fixed bottom-6 left-6 z-50 flex items-center gap-2 rounded-lg border border-danger/40 bg-danger-subtle px-3 py-2 text-xs text-danger shadow-pop">
+          <span className="h-1.5 w-1.5 rounded-full bg-danger" /> 存储不可用，改动可能未保存
+        </div>
+      )}
+
+      {extractingCount > 0 && view !== 'novel' && (
+        <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-xs text-fg-muted shadow-pop">
+          <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse motion-reduce:animate-none" />
+          {extractingCount} 本作品正在后台提取 DNA
+        </div>
+      )}
+    </div>
   );
 }

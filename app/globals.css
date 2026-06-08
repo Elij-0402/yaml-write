@@ -2,301 +2,148 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   冷调系统极简设计系统（亮色优先）— zinc 冷中性 + 单一蓝强调。
+   纯白画布、发丝线建层级、几乎无阴影、全 sans。
+   视觉铁律：强调蓝只标「主行动 / 聚焦 / 正在发生」，绝不装饰；
+   每屏一个主行动 = 蓝实心；层级来自字号/字重/留白/发丝线；
+   danger 红仅真错误；idle/就绪用中性灰、不抢蓝。
+   ============================================================ */
 @layer base {
-  /* 活字 · Living Type 设计系统。暖纸上的墨字 + 一束只在「活着」时亮起的信号青。
-     锚定 _bmad-output/.../ux-designs/.../DESIGN.md。能简单就不复杂、几乎全平、发丝线建层级。
-     旧的 RISO 视觉的 token 名保留为「兼容别名」指向活字 token，让既有内联引用自动跟随；
-     无法干净映射的旧强调色 token 已删除（逐用法按语义重映射，并以 grep 清零）。 */
   :root {
-    /* —— 活字 base token（四层暖灰只靠明度分深浅，不靠边框）—— */
-    --shell:#EDE8DD;          /* 应用最外层 / 页面底 */
-    --well:#F1ECE1;           /* 凹槽 / 顶栏 chrome / 侧栏 */
-    --paper:#F8F5EF;          /* 主画布（暖纸） */
-    --surface:#FCFAF6;        /* 抬起的面 / 卡片 */
-    --ink:#1A1916;            /* 主文字 & 全系统唯一实心填充（主行动） */
-    --muted:#6F6B61;          /* 次要文字 */
-    --faint:#A8A294;          /* 三级 / 标签 / 占位 */
-    --hair:#EAE4D8;           /* 主分隔线 / 边框 */
-    --hair2:#F0EBE0;          /* 内部次级分隔 */
-    --signal:#206B63;         /* 活信号（青）— 只标记「活着 / 正在发生」 */
-    --signal-soft:#E6EFEC;    /* 活信号弱底（激活态背景） */
-    --on-ink:#F8F5EF;         /* 墨黑实心块上的文字 */
-    --danger:#A23B2C;         /* 功能色，仅错误态 */
-    --danger-soft:rgba(162,59,44,.08);
+    /* —— 面（白 + 冷灰，靠明度与发丝线分层）—— */
+    --bg:        #FFFFFF; /* 应用底 / 画布 */
+    --bg-subtle: #FAFAFA; /* 轨 / 凹槽 / 次级面 (zinc-50) */
+    --surface:   #FFFFFF; /* 卡片（白 + 发丝线，不靠灰底） */
+    --surface-2: #F4F4F5; /* hover / 选中底 (zinc-100) */
 
-    /* 唯一实心 keyline 现为发丝线（单点重定义，让所有 border:var(--key) 自动变细） */
-    --key:1px solid var(--hair);
+    /* —— 文字三级 —— */
+    --fg:   #18181B; /* 主文字 (zinc-900) */
+    --fg-2: #52525B; /* 次要 (zinc-600) */
+    --fg-3: #A1A1AA; /* 三级 / 占位 (zinc-400) */
 
-    /* —— 三种声音的字体栈 —— */
-    --serif:'Iowan Old Style','Palatino Linotype','Source Han Serif SC','Noto Serif SC','Songti SC',Georgia,serif;
-    --sans:'Inter','Segoe UI',system-ui,'PingFang SC','Microsoft YaHei','Noto Sans SC',-apple-system,BlinkMacSystemFont,sans-serif;
-    --mono:ui-monospace,'Cascadia Code','SF Mono','Consolas','Segoe UI Mono',monospace;
+    /* —— 发丝线 —— */
+    --border:   #E4E4E7; /* 主分隔线 / 边框 (zinc-200) */
+    --border-2: #F4F4F5; /* 内部次级线 (zinc-100) */
 
-    /* —— 兼容别名：旧 token 名 → 活字 token（干净 1:1 映射的自动跟随）—— */
-    --ink-text:var(--ink); --ink-2:var(--muted); --ink-dim:var(--muted); --ink-faint:var(--faint);
-    --paper-text:var(--ink); --paper-dim:var(--muted);
-    --ink-raise:var(--surface);
-    --paper-2:var(--well); --paper-edge:var(--hair); --paper-line:var(--hair);
-    --line:var(--hair); --line-strong:var(--hair);
-    --add:var(--signal); --add-soft:var(--signal-soft);
-    --del:var(--danger); --del-soft:var(--danger-soft);
-    --near-white:var(--on-ink);
-    --font-serif:var(--serif); --font-sans:var(--sans); --font-mono:var(--mono);
+    /* —— 单一强调（蓝）—— 主行动 / 聚焦 / 正在发生 —— */
+    --accent:        #2563EB; /* blue-600 */
+    --accent-hover:  #1D4ED8; /* blue-700 */
+    --accent-fg:     #FFFFFF;
+    --accent-subtle: #EFF6FF; /* blue-50：激活态弱底 */
 
-    /* 语义别名：text-primary/secondary/muted、bg-secondary、border-default 跟随 */
-    --bg:var(--paper);
-    --bg-secondary:var(--surface);
-    --border:var(--hair);
-    --text:var(--ink);
-    --text-secondary:var(--muted);
-    --text-muted:var(--faint);
+    /* —— 功能色 —— */
+    --danger:        #DC2626;
+    --danger-subtle: #FEF2F2;
+    --success:       #16A34A; /* 仅完成态点缀，克制使用 */
+
+    --radius-sm: 6px;
+    --radius:    8px;
+    --radius-lg: 12px;
+
+    /* 唯一浮层柔阴影（卡片几乎全平，仅弹窗 / 抽屉 / 浮层用）*/
+    --shadow-pop: 0 10px 32px -12px rgba(24,24,27,.18), 0 2px 6px -3px rgba(24,24,27,.10);
+
+    /* —— 字体：sans 操作 · mono 计量 · serif 仅成稿正文阅读 —— */
+    --sans:  'Inter','system-ui',-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif;
+    --mono:  ui-monospace,'SF Mono','Cascadia Code','Consolas','Segoe UI Mono',monospace;
+    --serif: 'Source Han Serif SC','Noto Serif SC','Songti SC',Georgia,serif;
   }
 
-  * {
-    border-color: var(--hair);
-  }
+  * { border-color: var(--border); }
 
-  html {
-    color-scheme: light;
-  }
+  html { color-scheme: light; }
 
   body {
-    background: var(--paper);
-    color: var(--ink);
+    background: var(--bg);
+    color: var(--fg);
     font-family: var(--sans);
     font-size: 14px;
-    line-height: 1.6;
+    line-height: 1.55;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
     min-height: 100vh;
   }
 
-  ::selection {
-    background: var(--signal-soft);
-    color: var(--ink);
-  }
+  ::selection { background: var(--accent-subtle); color: var(--fg); }
 
-  ::-webkit-scrollbar { width: 11px; height: 11px; }
-  ::-webkit-scrollbar-track { background: var(--well); }
-  ::-webkit-scrollbar-thumb { background: var(--faint); border: 3px solid var(--well); border-radius: 9999px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+  /* 细滚动条 */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border: 3px solid var(--bg); border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--fg-3); }
 
-  input, textarea, select { background: transparent; }
-  input::placeholder, textarea::placeholder { color: var(--faint); }
-}
+  input, textarea, select { background: transparent; font: inherit; color: inherit; }
+  input::placeholder, textarea::placeholder { color: var(--fg-3); }
 
-@layer utilities {
-  .text-primary { color: var(--ink); }
-  .text-secondary { color: var(--muted); }
-  .text-muted { color: var(--faint); }
-  .bg-secondary { background: var(--surface); }
-  .border-default { border-color: var(--hair); }
-  .font-serif-zh { font-family: var(--serif); }
-  .font-mono-zh { font-family: var(--mono); }
+  /* 可见聚焦环（键盘可达）—— 仅 focus-visible，不污染鼠标点击 */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
 }
 
 @layer components {
-  .workspace-shell {
-    position: relative;
+  /* —— 按钮 —— 一屏一个主行动 = 蓝实心；次级 = 描边；ghost = 透明 —— */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    height: 36px; padding: 0 14px;
+    font-size: 13px; font-weight: 500; line-height: 1; white-space: nowrap;
+    border: 1px solid transparent; border-radius: var(--radius); cursor: pointer;
+    transition: background-color .15s ease, border-color .15s ease, color .15s ease, opacity .15s ease;
   }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-primary   { background: var(--accent); color: var(--accent-fg); }
+  .btn-primary:hover:not(:disabled)   { background: var(--accent-hover); }
+  .btn-secondary { background: var(--surface); color: var(--fg); border-color: var(--border); }
+  .btn-secondary:hover:not(:disabled) { background: var(--surface-2); }
+  .btn-ghost     { background: transparent; color: var(--fg-2); }
+  .btn-ghost:hover:not(:disabled)     { background: var(--surface-2); color: var(--fg); }
+  .btn-danger    { background: transparent; color: var(--danger); border-color: var(--border); }
+  .btn-danger:hover:not(:disabled)    { background: var(--danger-subtle); border-color: var(--danger); }
+  .btn-sm { height: 30px; padding: 0 10px; font-size: 12px; border-radius: var(--radius-sm); }
+  .btn-lg { height: 42px; padding: 0 20px; font-size: 14px; }
+  .btn-icon { width: 36px; padding: 0; }
+  .btn-icon.btn-sm { width: 30px; }
 
-  .panel {
-    border: var(--key);
-    background: var(--surface);
-    border-radius: 9px;
+  /* —— 输入 —— */
+  .input {
+    width: 100%; height: 36px; padding: 0 12px; font-size: 13px;
+    background: var(--surface); color: var(--fg);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    transition: border-color .15s ease, box-shadow .15s ease;
   }
+  textarea.input { height: auto; min-height: 80px; padding: 9px 12px; line-height: 1.55; resize: vertical; }
+  .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
+  select.input { cursor: pointer; }
 
-  .panel-soft {
-    border: 1px solid var(--hair);
-    background: var(--well);
-    border-radius: 9px;
+  /* —— 卡片 —— 白 + 发丝线，几乎无阴影 —— */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+
+  /* —— chip / mono 计量小标 / eyebrow —— */
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px;
+    font-family: var(--mono); font-size: 11px; line-height: 1; color: var(--fg-2);
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
   }
+  .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-3); }
 
-  .workspace-input {
-    width: 100%;
-    border: var(--key);
-    background: var(--paper);
-    color: var(--ink);
-    padding: 10px 12px;
-    border-radius: 7px;
-    outline: none;
-    transition: border-color .15s ease;
+  /* —— 成稿正文阅读体（全系统唯一用 serif 处）—— */
+  .prose-reader { font-family: var(--serif); font-size: 17px; line-height: 1.9; color: var(--fg); white-space: pre-wrap; }
+
+  /* —— 流式光标 —— 唯一持续「正在发生」的活信号 —— */
+  .caret { display: inline-block; width: 2px; height: 1.05em; background: var(--accent); vertical-align: -2px; margin-left: 1px; animation: caret-blink 1.05s step-end infinite; }
+  @keyframes caret-blink { 50% { opacity: 0; } }
+
+  /* —— 视图进入（克制）—— */
+  .view-enter { animation: view-rise .24s cubic-bezier(.16,1,.3,1); }
+  @keyframes view-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  /* —— 加载骨架 —— >1s 用 skeleton 而非空白 —— */
+  .skeleton {
+    background: linear-gradient(90deg, var(--surface-2) 25%, var(--border-2) 37%, var(--surface-2) 63%);
+    background-size: 400% 100%; animation: skeleton-pan 1.4s ease infinite; border-radius: var(--radius-sm);
   }
+  @keyframes skeleton-pan { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
 
-  .workspace-input:focus {
-    border-color: var(--signal);
-  }
-
-  /* 唯一实心块 = 你的决定：墨黑实心，无位移、无投影 */
-  .workspace-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    border: 1px solid var(--ink);
-    background: var(--ink);
-    color: var(--on-ink);
-    padding: 10px 18px;
-    font-size: 13px;
-    font-weight: 600;
-    border-radius: 7px;
-    transition: opacity .15s ease;
-  }
-
-  .workspace-button:hover {
-    opacity: .88;
-  }
-
-  .workspace-button:disabled {
-    opacity: .4;
-    cursor: not-allowed;
-  }
-
-  /* 次级动作 = ghost：透明 + muted，hover 转 ink */
-  .workspace-button-secondary {
-    border: 1px solid var(--hair);
-    background: transparent;
-    color: var(--muted);
-  }
-
-  .workspace-button-secondary:hover {
-    background: transparent;
-    border-color: var(--muted);
-    color: var(--ink);
-    opacity: 1;
-  }
-
-  .status-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    border: 1px solid var(--hair);
-    padding: 4px 10px;
-    border-radius: 7px;
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--muted);
-    background: var(--surface);
+  @media (prefers-reduced-motion: reduce) {
+    .caret, .view-enter, .skeleton { animation: none; }
   }
 }
-
-/* ============================================================
-   活字 · 创作工坊漏斗组件类（配方台 / 三方向 / 创世台 / 成稿）
-   全部 class-based。发丝线建层级、几乎全平、衬线读 / sans 用 / mono 测、
-   信号青仅标「活着」、墨黑实心仅主行动。引擎/皮以 label-caps 分组 + 发丝线区分，不靠颜色。
-   ============================================================ */
-.atelier { max-width: 1080px; margin: 0 auto; animation: type-rise .3s cubic-bezier(.16,1,.3,1); }
-@keyframes type-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .atelier { animation: none; } }
-
-.eyebrow { font-family: var(--mono); font-size: 10px; letter-spacing: .2em; text-transform: uppercase; color: var(--faint); margin-bottom: 14px; }
-.atelier-h1 { font-family: var(--serif); font-weight: 600; font-size: 30px; line-height: 1.18; letter-spacing: .005em; margin-bottom: 10px; color: var(--ink); }
-.atelier-h1 .it { font-style: italic; font-weight: 600; color: var(--ink); }
-.lede { color: var(--muted); font-size: 15px; max-width: 600px; margin-bottom: 30px; font-family: var(--serif); line-height: 1.65; }
-
-/* 配方台：引擎 / 皮 二元 —— 同色发丝线卡，区分靠 label-caps 角色帽与 .role 文本 */
-.recipe { display: grid; grid-template-columns: 1fr 64px 1fr; gap: 0; align-items: stretch; margin-bottom: 24px; }
-@media (max-width: 720px) { .recipe { grid-template-columns: 1fr; gap: 14px; } }
-.slab { border: var(--key); padding: 22px; border-radius: 9px; background: var(--surface); position: relative; cursor: pointer; transition: border-color .15s ease; }
-.slab:hover { border-color: var(--muted); }
-.slab.engine { background: var(--surface); }
-.slab.skin { background: var(--surface); }
-.slab .role { font-family: var(--mono); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; display: flex; align-items: center; gap: 8px; margin-bottom: 4px; color: var(--faint); }
-.slab.engine .role { color: var(--faint); }
-.slab.skin .role { color: var(--faint); }
-.slab .bk { font-family: var(--serif); font-weight: 600; font-size: 20px; margin-bottom: 16px; color: var(--ink); }
-.slab.engine .bk { color: var(--ink); }
-.slab.skin .bk { color: var(--ink); }
-.layerline { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0; border-top: 1px solid var(--hair2); font-size: 13px; }
-.slab.engine .layerline { font-family: var(--mono); color: var(--muted); font-size: 12px; line-height: 1.5; }
-.slab.skin .layerline { font-family: var(--serif); color: var(--ink); line-height: 1.5; }
-.layerline .k { color: var(--faint); font-size: 11px; min-width: 64px; flex-shrink: 0; }
-.swap { display: grid; place-items: center; }
-.swap button { width: 44px; height: 44px; border: var(--key); border-radius: 7px; background: var(--surface); color: var(--muted); font-size: 18px; cursor: pointer; transition: border-color .15s ease, color .15s ease; }
-.swap button:hover { border-color: var(--muted); color: var(--ink); }
-
-.wishbar { display: flex; gap: 12px; align-items: center; border: var(--key); border-radius: 7px; padding: 8px 14px 8px 18px; margin-bottom: 22px; background: var(--surface); }
-.wishbar input { flex: 1; background: transparent; border: none; color: var(--ink); font-family: var(--serif); font-size: 14px; outline: none; }
-.wishbar .opt { font-family: var(--mono); font-size: 10px; color: var(--faint); letter-spacing: .1em; }
-
-/* CTA = 主行动墨黑实心；ghost = 次级 */
-.cta { background: var(--ink); color: var(--on-ink); border: 1px solid var(--ink); border-radius: 7px; padding: 12px 26px; font-family: var(--sans); font-weight: 600; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 10px; transition: opacity .15s ease; }
-.cta:hover { opacity: .88; }
-.cta:disabled { opacity: .4; cursor: not-allowed; }
-.cta.ghost { background: transparent; color: var(--muted); border: 1px solid var(--hair); }
-.cta.ghost:hover { background: transparent; border-color: var(--muted); color: var(--ink); opacity: 1; }
-
-/* 三方向 */
-.dirs { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
-@media (max-width: 860px) { .dirs { grid-template-columns: 1fr; } }
-.dir { border: var(--key); border-radius: 9px; padding: 22px; cursor: pointer; transition: border-color .15s ease; display: flex; flex-direction: column; gap: 12px; background: var(--surface); position: relative; text-align: left; }
-.dir:hover { border-color: var(--muted); }
-.dir .idx { font-family: var(--mono); font-weight: 500; font-size: 13px; letter-spacing: .12em; color: var(--faint); }
-.dir h4 { font-family: var(--serif); font-size: 19px; font-weight: 600; line-height: 1.25; color: var(--ink); }
-.dir .concept { font-family: var(--serif); font-size: 13.5px; color: var(--muted); flex: 1; line-height: 1.6; }
-.dir .recipe-tag { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
-.chip { font-family: var(--mono); font-size: 10px; padding: 3px 8px; border: 1px solid var(--hair); border-radius: 7px; color: var(--muted); letter-spacing: .04em; }
-.chip.eng { border-color: var(--hair); color: var(--muted); }
-.chip.skn { border-color: var(--hair); color: var(--muted); }
-.dir .pick { font-family: var(--sans); font-weight: 600; font-size: 12.5px; color: var(--ink); opacity: 0; transition: opacity .2s; }
-.dir:hover .pick { opacity: 1; }
-
-/* 创世台 */
-.studio { display: grid; grid-template-columns: 1fr 320px; gap: 24px; align-items: start; }
-@media (max-width: 900px) { .studio { grid-template-columns: 1fr; } }
-.setcards { display: flex; flex-direction: column; gap: 14px; }
-.setcard { border: var(--key); border-radius: 9px; padding: 18px 20px; position: relative; background: var(--surface); }
-.setcard.eng { background: var(--surface); }
-.setcard.skn { background: var(--surface); }
-.setcard .lab { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
-.setcard .lab .l { font-family: var(--mono); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--faint); }
-.setcard.eng .lab .l { color: var(--faint); }
-.setcard.skn .lab .l { color: var(--faint); }
-.setcard .src { font-family: var(--mono); font-size: 9.5px; color: var(--faint); margin-left: auto; }
-.setcard .body { font-size: 13.5px; color: var(--ink); white-space: pre-wrap; }
-.setcard.skn .body { font-family: var(--serif); line-height: 1.7; }
-.setcard.eng .body { font-family: var(--mono); font-size: 12px; color: var(--muted); line-height: 1.65; }
-.setcard .editbtn { background: none; border: none; font-size: 11px; color: var(--faint); cursor: pointer; }
-.setcard .editbtn:hover { color: var(--ink); }
-.setcard textarea { width: 100%; background: var(--paper); border: var(--key); border-radius: 7px; padding: 10px; color: var(--ink); font-family: var(--serif); font-size: 13.5px; line-height: 1.7; outline: none; resize: vertical; min-height: 90px; }
-.setcard textarea:focus { border-color: var(--signal); }
-/* 手改 / 成稿片段改写的操作栏与按钮 */
-.diffbar { display: flex; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--hair); align-items: center; }
-.diffbar .why { font-family: var(--mono); font-size: 10px; color: var(--faint); flex: 1; }
-.mini { border: 1px solid var(--hair); background: transparent; color: var(--muted); padding: 5px 12px; border-radius: 7px; font-size: 12px; cursor: pointer; font-family: var(--sans); font-weight: 600; transition: border-color .15s ease, color .15s ease; }
-.mini:hover { border-color: var(--muted); color: var(--ink); }
-.mini.accept { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
-.mini.accept:hover { opacity: .88; }
-.mini:disabled { opacity: .5; cursor: not-allowed; }
-
-/* AI 共创侧栏 */
-.copilot { border: var(--key); border-radius: 9px; padding: 18px; position: sticky; top: 0; background: var(--surface); }
-.copilot h5 { font-family: var(--serif); font-size: 16px; font-weight: 600; margin-bottom: 4px; color: var(--ink); }
-.copilot .sub { font-size: 11.5px; color: var(--faint); margin-bottom: 16px; line-height: 1.5; }
-.aibox { border: 1px solid var(--hair); border-radius: 7px; padding: 10px; display: flex; flex-direction: column; gap: 9px; background: var(--paper); }
-.aibox textarea { background: transparent; border: none; resize: none; color: var(--ink); font-family: var(--serif); font-size: 13.5px; outline: none; min-height: 52px; }
-.aibox .ar { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
-.send { width: 30px; height: 30px; border: 1px solid var(--ink); border-radius: 7px; background: var(--ink); color: var(--on-ink); cursor: pointer; font-size: 14px; flex-shrink: 0; transition: opacity .15s ease; }
-.send:hover { opacity: .88; }
-.send:disabled { opacity: .4; cursor: not-allowed; }
-
-/* 成稿（墨落纸）——身份高潮：纯净衬线正文 ≤60ch、两端对齐，无投影、无朱印、信号青光标是唯一「活着」处 */
-.manuscript { display: grid; grid-template-columns: 1fr 220px; gap: 28px; align-items: start; }
-@media (max-width: 900px) { .manuscript { grid-template-columns: 1fr; } }
-.sheet { background: var(--paper); color: var(--ink); border: none; padding: 8px 0; position: relative; }
-.sheet .stamp { display: none; }
-.sheet .m-title { font-family: var(--serif); font-size: 30px; font-weight: 600; line-height: 1.18; margin-bottom: 6px; color: var(--ink); }
-.sheet .by { font-family: var(--mono); font-size: 10.5px; color: var(--faint); letter-spacing: .1em; margin-bottom: 24px; }
-.sheet .prose { font-family: var(--serif); font-size: 17.5px; line-height: 1.9; color: var(--ink); white-space: pre-wrap; text-align: justify; max-width: 60ch; }
-.sheet .caret { display: inline-block; width: 2px; height: 1.05em; background: var(--signal); vertical-align: -2px; margin-left: 1px; animation: type-blink 1.05s step-end infinite; }
-@keyframes type-blink { 50% { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .sheet .caret { animation: none; } }
-.sheet .hl { background: var(--signal-soft); border-bottom: 1px solid var(--signal); cursor: pointer; }
-.tools { display: flex; flex-direction: column; gap: 8px; position: sticky; top: 0; }
-.tools .th { font-family: var(--mono); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--faint); margin-bottom: 4px; }
-.tool { border: var(--key); border-radius: 7px; background: var(--surface); padding: 11px 14px; display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px; color: var(--ink); transition: border-color .15s ease; text-align: left; width: 100%; }
-.tool:hover { border-color: var(--muted); }
-.tool:disabled { opacity: .45; cursor: not-allowed; }
-.tool b { font-weight: 600; }
-.tool.primary { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
-.tool.primary:hover { opacity: .88; border-color: var(--ink); }
-.selnote { font-family: var(--mono); font-size: 10px; color: var(--faint); margin-top: 10px; line-height: 1.6; border-top: 1px solid var(--hair); padding-top: 12px; }

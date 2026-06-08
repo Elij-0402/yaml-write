@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { useAppStore } from '../app/store';
+import { X } from 'lucide-react';
 import ProviderCredentialsEditor from './ProviderCredentialsEditor';
 import AppNotice from './AppNotice';
 
@@ -25,40 +25,40 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <button type="button" className="absolute inset-0 bg-[color:var(--ink)]/40" onClick={onClose} aria-label="关闭" />
+    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="设置">
+      <button type="button" className="absolute inset-0 bg-fg/45" onClick={onClose} aria-label="关闭" />
 
-      <aside className="relative flex h-full w-full max-w-md flex-col border-l border-default bg-[color:var(--well)] shadow-[-12px_0_40px_-16px_rgba(50,38,18,0.30)]">
-        <header className="flex h-16 items-center justify-between border-b border-default px-6">
+      <aside className="relative flex h-full w-full max-w-md flex-col border-l border-line bg-canvas shadow-pop view-enter">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-line px-5">
           <div>
-            <div className="eyebrow !mb-0">模型设置</div>
-            <span className="text-base text-primary">设置中心</span>
+            <div className="eyebrow">Settings</div>
+            <span className="text-sm font-semibold text-fg">模型与偏好</span>
           </div>
-          <button onClick={onClose} className="text-secondary hover:text-primary">×</button>
+          <button onClick={onClose} className="btn btn-ghost btn-sm btn-icon" aria-label="关闭设置">
+            <X size={16} />
+          </button>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div className="flex-1 space-y-4 overflow-y-auto p-5">
           {returnHint && (
-            <AppNotice tone="warning" title="你是从这里跳转过来的">
-              待执行：{returnHint}。配置完后关闭抽屉，就可以回到刚才那一步继续，不需要重走流程。
+            <AppNotice tone="info" title="从这里跳转过来">
+              待执行：{returnHint}。配置完后关闭面板，即可回到刚才那一步继续，无需重走流程。
             </AppNotice>
           )}
 
-          <div className="space-y-3 rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
-            <div className="rounded-[12px] border border-default bg-[color:var(--paper)] px-4 py-3">
-              <div className="text-sm text-primary">默认用 DeepSeek，贴上 API Key 即可解锁全流程</div>
-              <p className="mt-1 text-xs leading-6 text-secondary">按量计费，起一本书的开篇通常只要几毛钱。接口与模型已预填好；想换别的模型提供方，展开下方「高级」即可。</p>
+          <div className="card space-y-3 p-4">
+            <div className="rounded-lg border border-line bg-panel px-4 py-3">
+              <div className="text-sm font-medium text-fg">默认用 DeepSeek，贴上 API Key 即可解锁全流程</div>
+              <p className="mt-1 text-xs leading-6 text-fg-muted">按量计费，起一本书的开篇通常只要几毛钱。接口与模型已预填；想换别的服务商，展开下方「更换模型提供方」。</p>
             </div>
             <ProviderCredentialsEditor variant="minimal" providerSelector="select" collapsibleAdvanced />
           </div>
 
-          <p className="text-xs text-muted">密钥仅存储在浏览器本地，不会上传服务器。</p>
+          <p className="text-xs text-fg-subtle">密钥仅以混淆形式存储在浏览器本地，不会上传服务器。</p>
         </div>
 
-        <footer className="border-t border-default p-6">
-          <button onClick={onClose} className="w-full rounded-xl border border-default bg-secondary py-2 text-sm text-primary hover:border-[color:var(--muted)]">
-            返回刚才的流程
-          </button>
+        <footer className="shrink-0 border-t border-line p-5">
+          <button onClick={onClose} className="btn btn-secondary w-full">返回刚才的流程</button>
         </footer>
       </aside>
     </div>

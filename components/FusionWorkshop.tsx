@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import {
+  ChevronLeft, Wrench, Palette, ArrowUpDown, ArrowRight, ArrowUp, Sparkles, Shuffle,
+  X, Square, Copy, Download, RotateCcw, PenLine, ArrowDownToLine, Check, Wand2, Dna,
+} from 'lucide-react';
 import { db, isFourLayerDnaCard, type FusionSession } from '../app/db';
 import { isDnaReady } from '../app/dnaState';
 import { type BlockKey, type FusionDirection, type SettingBlocks, type StructureBeat, parseFusionDirections } from '../app/dnaSchema';
@@ -44,60 +48,64 @@ const OPENING_SCENE_NUM = 1; // 成稿为单一连续开篇，复用 sceneTexts[
 
 interface FragmentDraft { original: string; rewritten: string; }
 
-const WORKSHOP_STEPS: Array<{ id: WorkshopStep; label: string; kicker: string }> = [
-  { id: 'material', label: '配方设定', kicker: '选择骨架与题材' },
-  { id: 'directions', label: '方向筛选', kicker: '挑一条，可随时再来一批' },
-  { id: 'creator', label: '设定定稿', kicker: '确认世界观与人物关系' },
-  { id: 'manuscript', label: '开篇成稿', kicker: '流式生成并微调正文' },
+const WORKSHOP_STEPS: Array<{ id: WorkshopStep; label: string }> = [
+  { id: 'material', label: '配方' },
+  { id: 'directions', label: '方向' },
+  { id: 'creator', label: '设定' },
+  { id: 'manuscript', label: '成稿' },
 ];
 
-function WorkshopProgress({
+// Studio 外壳：breadcrumb + 本地步骤条 + 单一「下一步」行 + 返回创作库。每个步骤共用此头部。
+function StudioShell({
   current,
+  subtitle,
   nextLabel,
+  onBack,
+  children,
 }: {
   current: WorkshopStep;
+  subtitle: string;
   nextLabel: string;
+  onBack: () => void;
+  children: React.ReactNode;
 }) {
+  const currentIdx = WORKSHOP_STEPS.findIndex((s) => s.id === current);
   return (
-    <div className="mb-8 rounded-[12px] border border-default bg-[var(--ink-raise)] p-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="eyebrow !mb-1">Creation Workflow · 创作后半程</div>
-          <p className="text-sm leading-6 text-secondary">这里承接前面已经完成的 DNA 结果，继续完成题材选择、设定定稿和开篇生成。每一步都会明确告诉你系统在做什么、你现在要做什么。</p>
+    <div className="flex h-full min-h-0 flex-col view-enter">
+      <div className="mb-5 shrink-0 space-y-3">
+        <div className="flex items-center gap-1.5 text-xs text-fg-muted">
+          <button onClick={onBack} className="flex items-center gap-1 hover:text-fg"><ChevronLeft size={14} /> 创作库</button>
+          <span className="text-fg-subtle">/</span>
+          <span className="truncate text-fg">{subtitle}</span>
         </div>
-        <div className="rounded-full border border-default bg-[color:var(--surface)] px-3 py-1 text-[11px] text-secondary">
-          下一步 · <span className="text-primary">{nextLabel}</span>
-        </div>
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        {WORKSHOP_STEPS.map((step, idx) => {
-          const active = step.id === current;
-          const complete = WORKSHOP_STEPS.findIndex((item) => item.id === current) > idx;
-          return (
-            <div
-              key={step.id}
-              className={`min-w-[148px] rounded-2xl border px-3 py-3 text-left ${
-                active
-                  ? 'border-[color:var(--signal)]/40 bg-[color:var(--signal-soft)]'
-                  : complete
-                  ? 'border-default bg-[color:var(--surface)]'
-                  : 'border-default bg-transparent'
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-[10px] tracking-[0.18em] text-muted">0{idx + 1}</span>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          {WORKSHOP_STEPS.map((s, i) => {
+            const state = i < currentIdx ? 'done' : i === currentIdx ? 'current' : 'todo';
+            return (
+              <span key={s.id} className="flex items-center gap-1.5">
                 <span
-                  className={`h-1.5 w-1.5 rounded-full ${
-                    active ? 'bg-[color:var(--signal)]' : complete ? 'bg-[color:var(--ink)]' : 'bg-[color:var(--faint)]'
+                  className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs ${
+                    state === 'current' ? 'border-accent bg-accent-subtle text-accent'
+                      : state === 'done' ? 'border-line bg-surface text-fg-muted'
+                      : 'border-line bg-surface text-fg-subtle'
                   }`}
-                />
-              </div>
-              <div className="mt-2 text-sm text-primary">{step.label}</div>
-              <div className="mt-1 text-[11px] leading-5 text-secondary">{step.kicker}</div>
-            </div>
-          );
-        })}
+                >
+                  <span className="font-mono text-[10px]">{i + 1}</span> {s.label}
+                </span>
+                {i < WORKSHOP_STEPS.length - 1 && <span className="h-px w-3 bg-line" />}
+              </span>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center gap-2.5 border-l-2 border-line pl-3 text-sm">
+          <span className="eyebrow shrink-0">下一步</span>
+          <span className="text-fg-muted">{nextLabel}</span>
+        </div>
       </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">{children}</div>
     </div>
   );
 }
@@ -621,22 +629,25 @@ export default function FusionWorkshop() {
   };
   const rejectFragment = () => { setFragmentDraft(null); setSelectedFragment(''); };
 
+  const backToCreations = () => setWorkshopOpen(false);
+  const errorRow = error && <p className="mt-3 text-sm text-danger">{error}</p>;
+  const rateRow = rateLimited && <p className="mt-2 text-xs text-accent">云端有些拥挤，已自动放缓退避重试，请稍候…</p>;
+
   // ============================ 渲染 ============================
   if (readyNovels.length < 1) {
     return (
-      <div className="atelier max-w-3xl">
-        <WorkshopProgress current="material" nextLabel="先完成至少一本作品的 DNA 提取" />
-        <div className="rounded-[12px] border border-default bg-[var(--ink-raise)] p-8">
+      <StudioShell current="material" subtitle="新创作" nextLabel="先完成至少一本作品的 DNA 提取" onBack={backToCreations}>
+        <div className="card max-w-2xl p-8">
           <div className="eyebrow">工坊入口 · 启动条件</div>
-          <h2 className="atelier-h1">先让至少一本书<span className="it">准备好</span>。</h2>
-          <p className="lede !mb-0">这里吃的是已经提炼完成的 DNA。没有就绪作品时，我们不会把你扔进半残的创作页，而是明确把你送回上一段流程。</p>
+          <h2 className="mt-2 text-lg font-semibold text-fg">先让至少一本书准备好。</h2>
+          <p className="mt-2 text-sm leading-7 text-fg-muted">创作工坊吃的是已经提炼完成的 DNA。没有就绪作品时，我们不会把你扔进半残的创作页，而是明确把你送回上一段流程。</p>
+          {firstIncompleteNovel && (
+            <button className="btn btn-secondary mt-5 gap-1.5" onClick={() => { setWorkshopOpen(false); setSelectedNovelId(firstIncompleteNovel.id); }}>
+              <ChevronLeft size={14} /> 去看《{firstIncompleteNovel.name}》的提取进度
+            </button>
+          )}
         </div>
-        {firstIncompleteNovel && (
-          <button className="cta ghost mt-6" onClick={() => { setWorkshopOpen(false); setSelectedNovelId(firstIncompleteNovel.id); }}>
-            ← 去看《{firstIncompleteNovel.name}》的提取进度
-          </button>
-        )}
-      </div>
+      </StudioShell>
     );
   }
 
@@ -647,218 +658,186 @@ export default function FusionWorkshop() {
     const engineDna = engineNovel && isFourLayerDnaCard(engineNovel.dnaCard) ? engineNovel.dnaCard : null;
     const skinDna = skinNovel && isFourLayerDnaCard(skinNovel.dnaCard) ? skinNovel.dnaCard : null;
     return (
-      <div className="atelier">
-        <WorkshopProgress current="material" nextLabel={nextActionLabel} />
-        <div className="mb-6 grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
-            <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>当前素材来源</div>
-            <div className="mt-2 text-sm text-primary">{sourceSummary}</div>
-            <p className="mt-1 text-xs leading-6 text-secondary">先决定哪本书提供叙事引擎，哪本书提供题材和表皮。后面所有方向、设定和正文都会围绕这组输入展开。</p>
+      <StudioShell current="material" subtitle="配方设定" nextLabel={nextActionLabel} onBack={backToCreations}>
+        <div className="mx-auto max-w-4xl space-y-6">
+          <div>
+            <h2 className="text-lg font-semibold text-fg">谁当骨架，谁换皮？</h2>
+            <p className="mt-1 text-sm text-fg-muted">{sourceSummary}。只需决定两件事：哪本书提供结构骨架，哪本书提供题材与风格，其余交给系统。</p>
           </div>
-          <div className="rounded-[12px] border p-4" style={{ borderColor: modelReady ? 'var(--signal)' : 'var(--hair)', background: modelReady ? 'var(--signal-soft)' : 'var(--surface)' }}>
-            <div className="text-[11px] uppercase tracking-[0.24em]" style={{ fontFamily: 'var(--font-mono)', color: modelReady ? 'var(--signal)' : 'var(--muted)' }}>系统状态</div>
-            <div className="mt-2 text-sm" style={{ color: 'var(--ink-text)' }}>{modelReady ? '模型已就绪，可直接生成方向。' : '模型还没配置，点击生成时会直接带你去设置。'}</div>
-            <p className="mt-1 text-xs leading-6 text-secondary">{backendStatus}</p>
-          </div>
-        </div>
-        <div className="eyebrow">创作配方 · 素材拼装</div>
-        <h2 className="atelier-h1">谁当<span className="it">骨架</span>，谁换<span className="it">皮</span>?</h2>
-        <p className="lede">这一步只需要决定两件事：哪本书提供结构骨架，哪本书提供题材与风格。没有复杂参数，其余交给系统完成。</p>
 
-        <div className="mb-7 flex flex-wrap items-center gap-3">
-          <span className="text-[11px] uppercase tracking-[0.24em]" style={{ fontFamily: 'var(--mono)', color: 'var(--muted)' }}>生成模式</span>
-          <div className="inline-flex gap-1 rounded-[8px] p-1" style={{ border: '1px solid var(--hair)', background: 'var(--surface)' }} role="group" aria-label="生成模式">
-            {([{ v: false, label: '换皮变题' }, { v: true, label: '0→1 原创' }] as const).map((opt) => {
-              const active = freedom === opt.v;
-              return (
+          {/* 生成模式 */}
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="eyebrow">生成模式</span>
+            <div className="inline-flex rounded-md border border-line bg-panel p-0.5" role="group" aria-label="生成模式">
+              {([{ v: false, label: '换皮变题' }, { v: true, label: '0→1 原创' }] as const).map((opt) => (
                 <button
                   key={String(opt.v)}
                   type="button"
                   onClick={() => setFreedom(opt.v)}
-                  aria-pressed={active}
-                  className="rounded-[6px] px-3 py-1.5 text-[13px] font-semibold transition-colors"
-                  style={{
-                    fontFamily: 'var(--sans)',
-                    background: active ? 'var(--ink)' : 'transparent',
-                    color: active ? 'var(--on-ink)' : 'var(--muted)',
-                    border: active ? '1px solid var(--ink)' : '1px solid transparent',
-                    cursor: 'pointer',
-                  }}
+                  aria-pressed={freedom === opt.v}
+                  className={`rounded-[5px] px-3 py-1.5 text-[13px] font-medium transition-colors ${
+                    freedom === opt.v ? 'bg-surface text-fg shadow-pop' : 'text-fg-muted hover:text-fg'
+                  }`}
                 >{opt.label}</button>
-              );
-            })}
-          </div>
-          <span className="text-xs" style={{ color: 'var(--muted)', fontFamily: 'var(--serif)' }}>
-            {freedom ? 'DNA 当灵感调色板，以你的意图为主轴自由重组结构' : '保持源书结构骨架，只换题材与文风'}
-          </span>
-        </div>
-
-        <div className="recipe">
-          <div className="slab engine">
-            <div className="role">🔧 骨架</div>
-            <select
-              className="bk"
-              style={{ background: 'transparent', border: 'none', outline: 'none', cursor: 'pointer', maxWidth: '100%' }}
-              value={selectedIds[0] || ''}
-              onChange={(e) => pickEngine(e.target.value)}
-            >
-              <option value="" disabled>选择骨架书…</option>
-              {readyNovels.map((n) => (
-                <option key={n.id} value={n.id}>{n.name}{isFourLayerDnaCard(n.dnaCard) ? '' : '（旧版DNA）'}</option>
               ))}
-            </select>
-            {engineDna ? (
-              <>
-                <div className="layerline"><span className="k">结构骨架</span>{engineDna.structureSkeleton.map((b) => b.function).filter(Boolean).slice(0, 6).join(' → ') || '—'}</div>
-                <div className="layerline"><span className="k">编排节奏</span>{engineDna.pacingSyuzhet || '—'}</div>
-              </>
-            ) : (
-              <div className="layerline"><span className="k">提示</span>{engineNovel ? '此书还是旧版 DNA，请先重新提取升级为 4 层' : '从上方选一本已就绪的书作骨架'}</div>
-            )}
+            </div>
+            <span className="text-xs text-fg-muted">{freedom ? 'DNA 当灵感调色板，以你的意图为主轴自由重组结构' : '保持源书结构骨架，只换题材与文风'}</span>
           </div>
 
-          <div className="swap"><button title="对调骨架 / 题材" onClick={swapRoles} disabled={selectedIds.length !== 2}>⇅</button></div>
+          {/* 配方：骨架 × 皮 */}
+          <div className="grid items-stretch gap-3 md:grid-cols-[1fr_auto_1fr]">
+            <div className="card p-5">
+              <div className="eyebrow flex items-center gap-1.5"><Wrench size={12} /> 骨架（引擎）</div>
+              <select
+                className="input mt-2 font-semibold"
+                value={selectedIds[0] || ''}
+                onChange={(e) => pickEngine(e.target.value)}
+              >
+                <option value="" disabled>选择骨架书…</option>
+                {readyNovels.map((n) => (
+                  <option key={n.id} value={n.id}>{n.name}{isFourLayerDnaCard(n.dnaCard) ? '' : '（旧版DNA）'}</option>
+                ))}
+              </select>
+              {engineDna ? (
+                <div className="mt-3 space-y-2 text-xs">
+                  <div><span className="text-fg-subtle">结构骨架　</span><span className="font-mono text-fg-muted">{engineDna.structureSkeleton.map((b) => b.function).filter(Boolean).slice(0, 6).join(' → ') || '—'}</span></div>
+                  <div><span className="text-fg-subtle">编排节奏　</span><span className="text-fg-muted">{engineDna.pacingSyuzhet || '—'}</span></div>
+                </div>
+              ) : (
+                <p className="mt-3 text-xs text-fg-subtle">{engineNovel ? '此书还是旧版 DNA，请先重新提取升级为 4 层' : '从上方选一本已就绪的书作骨架'}</p>
+              )}
+            </div>
 
-          <div className="slab skin">
-            <div className="role">🎨 题材</div>
-            <select
-              className="bk"
-              style={{ background: 'transparent', border: 'none', outline: 'none', cursor: 'pointer', maxWidth: '100%', color: 'var(--paper-text)' }}
-              value={selectedIds[1] || ''}
-              onChange={(e) => pickSkin(e.target.value)}
-              disabled={!engineNovel}
-            >
-              <option value="">（不选题材书，直接口述新方向）</option>
-              {readyNovels.filter((n) => n.id !== selectedIds[0]).map((n) => (
-                <option key={n.id} value={n.id}>{n.name}</option>
-              ))}
-            </select>
-            {skinNovel && skinDna ? (
-              <>
-                <div className="layerline"><span className="k">题材皮</span>{skinDna.themeSkin || '—'}</div>
-                <div className="layerline"><span className="k">文笔</span>{skinDna.proseStyle || '—'}</div>
-              </>
-            ) : (
-              <div className="layerline"><span className="k">口述方向</span>如果不选题材书，就在下方直接说明你想写成什么题材，系统会基于这本书的骨架继续生成。</div>
-            )}
+            <div className="flex items-center justify-center">
+              <button title="对调骨架 / 题材" onClick={swapRoles} disabled={selectedIds.length !== 2} className="btn btn-secondary btn-icon" aria-label="对调骨架与题材">
+                <ArrowUpDown size={16} />
+              </button>
+            </div>
+
+            <div className="card p-5">
+              <div className="eyebrow flex items-center gap-1.5"><Palette size={12} /> 题材（皮）</div>
+              <select
+                className="input mt-2 font-semibold"
+                value={selectedIds[1] || ''}
+                onChange={(e) => pickSkin(e.target.value)}
+                disabled={!engineNovel}
+              >
+                <option value="">（不选题材书，直接口述新方向）</option>
+                {readyNovels.filter((n) => n.id !== selectedIds[0]).map((n) => (
+                  <option key={n.id} value={n.id}>{n.name}</option>
+                ))}
+              </select>
+              {skinNovel && skinDna ? (
+                <div className="mt-3 space-y-2 text-xs">
+                  <div><span className="text-fg-subtle">题材皮　</span><span className="text-fg-muted">{skinDna.themeSkin || '—'}</span></div>
+                  <div><span className="text-fg-subtle">文笔　　</span><span className="text-fg-muted">{skinDna.proseStyle || '—'}</span></div>
+                </div>
+              ) : (
+                <p className="mt-3 text-xs text-fg-subtle">不选题材书时，在下方直接说明想写成什么题材，系统会基于这本书的骨架继续生成。</p>
+              )}
+            </div>
           </div>
-        </div>
 
-        <div className="wishbar">
+          {/* 想往哪写 */}
           <input
             value={customPrompt}
             onChange={(e) => setCustomPrompt(e.target.value)}
             placeholder={skinNovel ? '想往哪写？想避开什么套路？（可留空，留空时完全依赖两本书的 DNA）' : '描述你想要的新题材或方向（不选题材书时建议填写）'}
+            className="input"
           />
-          <span className="opt">{skinNovel ? '可选' : '建议填写'}</span>
-        </div>
-
-        <div className="space-y-2">
           <textarea
             value={adversarialRules}
             onChange={(e) => setAdversarialRules(e.target.value)}
             rows={2}
             placeholder="反套路约束（可选）：例如 禁止王子救公主、禁止开局废柴龙傲天、对手必须有合理动机…"
-            className="w-full rounded-[11px] border border-default bg-secondary p-3 text-sm text-secondary focus:outline-none focus:border-[color:var(--signal)]"
-            style={{ fontFamily: 'var(--font-serif)' }}
+            className="input"
           />
-        </div>
 
-        {recipeErr && <p className="mt-3 text-sm" style={{ color: 'var(--del)' }}>{recipeErr}</p>}
-        {error && <p className="mt-2 text-sm" style={{ color: 'var(--del)' }}>{error}</p>}
-        {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--signal)' }}>云端有些拥挤，已自动放缓退避重试，请稍候…</p>}
+          {recipeErr && <p className="text-sm text-danger">{recipeErr}</p>}
+          {errorRow}
+          {rateRow}
 
-        <div className="mt-6">
-          <button className="cta" onClick={collide} disabled={colliding || !engineNovel}>
-            {colliding ? '生成中…' : '生成 3 个方向'} <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>→</span>
-          </button>
+          <div>
+            <button className="btn btn-primary btn-lg gap-2" onClick={collide} disabled={colliding || !engineNovel}>
+              <Sparkles size={16} /> {colliding ? '生成中…' : '生成 3 个方向'} <ArrowRight size={15} />
+            </button>
+          </div>
         </div>
-      </div>
+      </StudioShell>
     );
   }
 
-  // ===== 候选池（原三方向）=====
+  // ===== 候选池（方向）=====
   if (step === 'directions') {
     const idxLabel = ['i.', 'ii.', 'iii.', 'iv.', 'v.', 'vi.', 'vii.', 'viii.', 'ix.', 'x.'];
     const engName = engineNovel?.name || '骨架';
     const skinLabel = skinNovel?.name || '口述题材';
     const rerollBtn = (
-      <button className="cta ghost" onClick={() => void rerollDirections()} disabled={colliding}>
-        {colliding ? '生成中…' : '🎲 再来三条'}
+      <button className="btn btn-secondary gap-1.5" onClick={() => void rerollDirections()} disabled={colliding}>
+        <Shuffle size={14} /> {colliding ? '生成中…' : '再来三条'}
       </button>
     );
     return (
-      <div className="atelier">
-        <WorkshopProgress current="directions" nextLabel={nextActionLabel} />
-        <div className="mb-6 rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+      <StudioShell current="directions" subtitle="方向筛选" nextLabel={nextActionLabel} onBack={backToCreations}>
+        <div className="mx-auto max-w-4xl space-y-5">
+          <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>方向上下文</div>
-              <div className="mt-2 text-sm text-primary">{engName} 的结构引擎 × {skinLabel} 的题材表皮</div>
-              <p className="mt-1 text-xs leading-6 text-secondary">在同一组输入上挑一条创作方向。不满意就「再来三条」往池子里追加（系统会避开已生成过的），不想要的随手扔掉。选中的那条会继续流入设定定稿与正文生成。</p>
+              <div className="eyebrow">候选池 · {directions.length} 条</div>
+              <h2 className="mt-1 text-lg font-semibold text-fg">挑一条，或再来一批。</h2>
+              <p className="mt-1 max-w-2xl text-sm text-fg-muted">{engName} 的结构引擎 × {skinLabel} 的题材表皮。喜欢的留着、选中其一往下走；都不对就再抽一批（系统会避开已生成过的）。</p>
             </div>
-            <div className="rounded-full border border-default px-3 py-1 text-[11px] text-secondary">状态 · {backendStatus}</div>
+            {directions.length > 0 && rerollBtn}
           </div>
-        </div>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <div className="eyebrow">创作方向 · 候选池（{directions.length}）</div>
-            <h2 className="atelier-h1">挑一条，或<span className="it">再来一批</span>。</h2>
-          </div>
-          {directions.length > 0 && rerollBtn}
-        </div>
-        <p className="lede">同一套「{engName} 的结构骨架 × {skinLabel} 的题材风格」能生出无数条路线。先看这几条，喜欢的留着、选中其一往下走；都不对就再抽一批。</p>
 
-        {directions.length === 0 ? (
-          <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-8 text-center">
-            <p className="text-sm text-secondary">候选池空了。再抽一批新方向，或回配方台调整骨架与题材。</p>
-            <div className="mt-4 flex flex-wrap justify-center gap-3">
-              {rerollBtn}
-              <button className="cta ghost" onClick={() => setStep('material')}>← 回配方台</button>
-            </div>
-          </div>
-        ) : (
-          <div className="dirs">
-            {directions.map((dir, idx) => (
-              <div
-                key={idx}
-                className="dir"
-                role="button"
-                tabIndex={0}
-                onClick={() => void chooseDirection(dir)}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void chooseDirection(dir); } }}
-              >
-                <button
-                  type="button"
-                  title="扔掉这条"
-                  aria-label="扔掉这条"
-                  onClick={(e) => { e.stopPropagation(); discardDirection(idx); }}
-                  style={{ position: 'absolute', top: 8, right: 8, lineHeight: 1, fontSize: 13, color: 'var(--muted)', padding: 4, background: 'transparent', border: 'none', cursor: 'pointer' }}
-                >
-                  ✕
-                </button>
-                <span className="idx">{idxLabel[idx] || `${idx + 1}.`}</span>
-                <h4>{dir.title}</h4>
-                <p className="concept">{dir.concept}</p>
-                {dir.transferNote && <p className="concept" style={{ color: 'var(--ink-faint)', fontSize: 12 }}>🧬 {dir.transferNote}</p>}
-                <div className="recipe-tag">
-                  <span className="chip eng">{engName}</span>
-                  <span className="chip skn">{skinLabel}</span>
-                </div>
-                <span className="pick">选择此方向 ↗</span>
+          {directions.length === 0 ? (
+            <div className="card flex flex-col items-center gap-4 p-10 text-center">
+              <p className="text-sm text-fg-muted">候选池空了。再抽一批新方向，或回配方台调整骨架与题材。</p>
+              <div className="flex flex-wrap justify-center gap-3">
+                {rerollBtn}
+                <button className="btn btn-ghost gap-1.5" onClick={() => setStep('material')}><ChevronLeft size={14} /> 回配方台</button>
               </div>
-            ))}
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+              {directions.map((dir, idx) => (
+                <div
+                  key={idx}
+                  className="card group relative flex cursor-pointer flex-col gap-3 p-5 transition-colors hover:border-fg-subtle"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => void chooseDirection(dir)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void chooseDirection(dir); } }}
+                >
+                  <button
+                    type="button"
+                    title="扔掉这条"
+                    aria-label="扔掉这条"
+                    onClick={(e) => { e.stopPropagation(); discardDirection(idx); }}
+                    className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-raised hover:text-danger group-hover:opacity-100"
+                  ><X size={14} /></button>
+                  <span className="font-mono text-xs text-fg-subtle">{idxLabel[idx] || `${idx + 1}.`}</span>
+                  <h4 className="pr-6 text-base font-semibold leading-snug text-fg">{dir.title}</h4>
+                  <p className="flex-1 text-[13px] leading-relaxed text-fg-muted">{dir.concept}</p>
+                  {dir.transferNote && <p className="flex items-start gap-1.5 text-xs leading-relaxed text-fg-subtle"><Dna size={12} className="mt-0.5 shrink-0" /> {dir.transferNote}</p>}
+                  <div className="flex flex-wrap gap-1.5">
+                    <span className="chip">{engName}</span>
+                    <span className="chip">{skinLabel}</span>
+                  </div>
+                  <span className="flex items-center gap-1 text-xs font-medium text-accent opacity-0 transition group-hover:opacity-100">选择此方向 <ArrowRight size={12} /></span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {errorRow}
+          {rateRow}
+
+          <div className="flex flex-wrap gap-3">
+            <button className="btn btn-ghost gap-1.5" onClick={() => setStep('material')}><ChevronLeft size={14} /> 回配方台</button>
+            {directions.length > 0 && rerollBtn}
           </div>
-        )}
-
-        {error && <p className="mt-4 text-sm" style={{ color: 'var(--del)' }}>{error}</p>}
-        {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--signal)' }}>云端有些拥挤，已自动放缓退避重试，请稍候…</p>}
-
-        <div className="mt-7 flex flex-wrap gap-3">
-          <button className="cta ghost" onClick={() => setStep('material')}>← 回配方台</button>
-          {directions.length > 0 && rerollBtn}
         </div>
-      </div>
+      </StudioShell>
     );
   }
 
@@ -871,195 +850,174 @@ export default function FusionWorkshop() {
   // ===== 创世台 =====
   if (step === 'creator') {
     return (
-      <div className="atelier">
-        <WorkshopProgress current="creator" nextLabel={nextActionLabel} />
-        <div className="mb-6 grid gap-3 lg:grid-cols-3">
-          <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
-            <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>当前方向</div>
-            <div className="mt-2 text-sm text-primary">{selectedDirectionReady ? directionTitle : '还未确认方向'}</div>
-            <p className="mt-1 text-xs leading-6 text-secondary">这里展示的是已经把骨架和题材嫁接后的新书地基，不是素材摘抄。</p>
+      <StudioShell current="creator" subtitle={selectedDirectionReady ? directionTitle : '设定定稿'} nextLabel={nextActionLabel} onBack={backToCreations}>
+        <div className="mx-auto max-w-5xl space-y-5">
+          <div>
+            <h2 className="text-lg font-semibold text-fg">定地基，想改就跟我说。</h2>
+            <p className="mt-1 text-sm text-fg-muted">系统已把题材迁移与设定补全做完。确认世界观、主角、对手与叙事语气；AI 改动会直接套用到选中的设定卡，你也可以随时手改。</p>
           </div>
-          <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
-            <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>AI 状态</div>
-            <div className="mt-2 text-sm text-primary">{backendStatus}</div>
-            <p className="mt-1 text-xs leading-6 text-secondary">AI 修改会直接套用到选中的设定卡；你也可以随时 ✎ 手改或继续追加指令。</p>
-          </div>
-          <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
-            <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>下一决策</div>
-            <div className="mt-2 text-sm text-primary">确认设定并写开篇</div>
-            <p className="mt-1 text-xs leading-6 text-secondary">把世界观、人物关系和叙事语气捋顺后，就可以进入流式成稿，不需要再跳去别的页面找入口。</p>
-          </div>
-        </div>
-        <div className="eyebrow">设定定稿 · 创作中枢</div>
-        <h2 className="atelier-h1">定<span className="it">地基</span>。想改就跟我说。</h2>
-        <p className="lede">系统已经把题材迁移和设定补全做完了。这里是你确认世界观、主角、对手和叙事语气的地方；AI 改动会直接套用到选中的设定卡，你也可以随时手改。</p>
 
-        {repairing && (
-          <div className="mb-4 flex items-center gap-2 rounded-[9px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--signal)', background: 'var(--signal-soft)', color: 'var(--signal)' }}>
-            <span className="inline-block h-1.5 w-1.5 rounded-full animate-pulse motion-reduce:animate-none" style={{ background: 'var(--signal)' }} />
-            正在补洞：核对新题材能否撑起原结构骨架，修补逻辑断裂点…
-          </div>
-        )}
-        {!repairing && repairGaps.length > 0 && (
-          <details className="mb-4 rounded-[9px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--add)', background: 'var(--add-soft)', color: 'var(--add)' }}>
-            <summary className="cursor-pointer select-none">🩹 已自动修补 {repairGaps.length} 处设定缺口，确保这条方向前后自洽（点开查看）</summary>
-            <ul className="mt-2 space-y-1.5" style={{ color: 'var(--ink-dim)' }}>
-              {repairGaps.map((g, i) => (<li key={i}><b style={{ color: 'var(--add)' }}>{g.beat}</b>：{g.issue} → {g.patch}</li>))}
-            </ul>
-          </details>
-        )}
+          {repairing && (
+            <div className="flex items-center gap-2 rounded-lg border border-accent/30 bg-accent-subtle px-3 py-2 text-xs text-accent">
+              <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse motion-reduce:animate-none" />
+              正在补洞：核对新题材能否撑起原结构骨架，修补逻辑断裂点…
+            </div>
+          )}
+          {!repairing && repairGaps.length > 0 && (
+            <details className="rounded-lg border border-success/40 bg-surface px-3 py-2 text-xs text-success">
+              <summary className="cursor-pointer select-none">已自动修补 {repairGaps.length} 处设定缺口，确保这条方向前后自洽（点开查看）</summary>
+              <ul className="mt-2 space-y-1.5 text-fg-muted">
+                {repairGaps.map((g, i) => (<li key={i}><b className="text-success">{g.beat}</b>：{g.issue} → {g.patch}</li>))}
+              </ul>
+            </details>
+          )}
 
-        <div className="studio">
-          <div className="setcards">
-            {/* 引擎来源（只读溯源）：迁移不变量 */}
-            {eng && (
-              <>
-                <div className="setcard eng">
-                  <div className="lab"><span className="l">① 结构骨架</span><span className="src">来自《{engSrc}》</span></div>
-                  <div className="body">{eng.structureSkeleton.map((b) => b.function).filter(Boolean).join(' → ') || '—'}</div>
-                </div>
-                <div className="setcard eng">
-                  <div className="lab"><span className="l">② 编排节奏</span><span className="src">来自《{engSrc}》</span></div>
-                  <div className="body">{eng.pacingSyuzhet || '—'}</div>
-                </div>
-              </>
-            )}
-
-            {/* 换皮后的具体新书设定（可编辑、走 diff）；溯源标呈现引擎/皮二元 */}
-            {BLOCKS.map(({ key, label }) => {
-              const active = tweakTarget === key;
-              const editing = editingBlock === key;
-              return (
-                <div
-                  key={key}
-                  className="setcard skn"
-                  style={active ? { borderColor: 'var(--ink)' } : undefined}
-                  onClick={() => { if (!editing) setTweakTarget(key); }}
-                >
-                  <div className="lab">
-                    <span className="l">{label}</span>
-                    <span className="src">引擎《{engSrc}》· 题材《{skinSrc}》</span>
-                    {!editing && <button className="editbtn" onClick={(e) => { e.stopPropagation(); startEdit(key); }}>✎ 改</button>}
+          <div className="grid gap-4 lg:grid-cols-[1fr_300px]">
+            <div className="space-y-3">
+              {/* 引擎来源（只读溯源） */}
+              {eng && (
+                <>
+                  <div className="card p-4">
+                    <div className="flex items-center justify-between"><span className="eyebrow">① 结构骨架</span><span className="font-mono text-[10px] text-fg-subtle">来自《{engSrc}》</span></div>
+                    <div className="mt-2 font-mono text-xs leading-relaxed text-fg-muted">{eng.structureSkeleton.map((b) => b.function).filter(Boolean).join(' → ') || '—'}</div>
                   </div>
-                  {editing ? (
-                    <div onClick={(e) => e.stopPropagation()}>
-                      <textarea value={editDraft} onChange={(e) => setEditDraft(e.target.value)} />
-                      <div className="diffbar"><span className="why">手动编辑</span>
-                        <button className="mini" onClick={cancelEdit}>取消</button>
-                        <button className="mini accept" onClick={() => saveEdit(key)}>保存</button>
+                  <div className="card p-4">
+                    <div className="flex items-center justify-between"><span className="eyebrow">② 编排节奏</span><span className="font-mono text-[10px] text-fg-subtle">来自《{engSrc}》</span></div>
+                    <div className="mt-2 text-sm leading-relaxed text-fg-muted">{eng.pacingSyuzhet || '—'}</div>
+                  </div>
+                </>
+              )}
+
+              {/* 可编辑设定卡 */}
+              {BLOCKS.map(({ key, label }) => {
+                const active = tweakTarget === key;
+                const editing = editingBlock === key;
+                return (
+                  <div
+                    key={key}
+                    className={`card cursor-pointer p-4 transition-colors ${active ? 'border-accent' : 'hover:border-fg-subtle'}`}
+                    onClick={() => { if (!editing) setTweakTarget(key); }}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="eyebrow">{label}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[10px] text-fg-subtle">引擎《{engSrc}》· 题材《{skinSrc}》</span>
+                        {!editing && <button className="btn btn-ghost btn-sm gap-1" onClick={(e) => { e.stopPropagation(); startEdit(key); }}><PenLine size={11} /> 改</button>}
                       </div>
                     </div>
-                  ) : (
-                    <div className="body">{blocks[key] || '—'}</div>
-                  )}
+                    {editing ? (
+                      <div onClick={(e) => e.stopPropagation()} className="mt-2">
+                        <textarea value={editDraft} onChange={(e) => setEditDraft(e.target.value)} className="input" />
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="flex-1 font-mono text-[11px] text-fg-subtle">手动编辑</span>
+                          <button className="btn btn-ghost btn-sm" onClick={cancelEdit}>取消</button>
+                          <button className="btn btn-primary btn-sm gap-1" onClick={() => saveEdit(key)}><Check size={13} /> 保存</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-fg">{blocks[key] || '—'}</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* AI 共创侧栏 */}
+            <aside className="card h-fit space-y-3 p-4 lg:sticky lg:top-0">
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-fg"><Wand2 size={15} className="text-accent" /> 与 AI 共创</div>
+              <p className="text-[11px] leading-relaxed text-fg-muted">点一张卡选中目标（当前：{BLOCKS.find((b) => b.key === tweakTarget)?.label}）。说一句大白话，AI 会直接改这张卡。</p>
+              <div className="rounded-lg border border-line bg-panel p-2">
+                <textarea
+                  value={command}
+                  onChange={(e) => setCommand(e.target.value)}
+                  placeholder={`对「${BLOCKS.find((b) => b.key === tweakTarget)?.label}」说：把主角换成女性 / 开篇更孤独 / 金手指更克制…`}
+                  className="w-full resize-none bg-transparent text-sm text-fg outline-none placeholder:text-fg-subtle"
+                  rows={3}
+                />
+                <div className="flex justify-end">
+                  <button className="btn btn-primary btn-sm btn-icon" onClick={() => void runTweak()} disabled={tweaking || !command.trim()} title="发送指令" aria-label="发送指令">
+                    {tweaking ? '…' : <ArrowUp size={15} />}
+                  </button>
                 </div>
-              );
-            })}
+              </div>
+            </aside>
           </div>
 
-          <aside className="copilot">
-            <h5>与 AI 共创</h5>
-            <div className="sub">点一张卡选中目标（当前：{BLOCKS.find((b) => b.key === tweakTarget)?.label}）。说一句大白话，AI 会直接改这张卡。</div>
-            <div className="aibox">
-              <textarea
-                value={command}
-                onChange={(e) => setCommand(e.target.value)}
-                placeholder={`对「${BLOCKS.find((b) => b.key === tweakTarget)?.label}」说：把主角换成女性 / 开篇更孤独 / 金手指更克制…`}
-              />
-              <div className="ar">
-                <button className="send" onClick={() => void runTweak()} disabled={tweaking || !command.trim()} title="发送指令">{tweaking ? '…' : '↑'}</button>
-              </div>
-            </div>
-          </aside>
-        </div>
+          {errorRow}
+          {rateRow}
 
-        {error && <p className="mt-4 text-sm" style={{ color: 'var(--del)' }}>{error}</p>}
-        {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--signal)' }}>云端有些拥挤，已自动退避重试，请稍候…</p>}
-
-        <div className="mt-7 flex gap-3">
-          <button className="cta" onClick={goManuscript} disabled={repairing}>确认设定 · 开始写开篇 →</button>
-          <button className="cta ghost" onClick={() => setStep('directions')}>← 换个方向</button>
+          <div className="flex gap-3">
+            <button className="btn btn-primary gap-1.5" onClick={goManuscript} disabled={repairing}>确认设定 · 开始写开篇 <ArrowRight size={15} /></button>
+            <button className="btn btn-ghost gap-1.5" onClick={() => setStep('directions')}><ChevronLeft size={14} /> 换个方向</button>
+          </div>
         </div>
-      </div>
+      </StudioShell>
     );
   }
 
   // ===== 成稿 =====
   return (
-    <div className="atelier">
-      <WorkshopProgress current="manuscript" nextLabel={nextActionLabel} />
-      <div className="mb-6 grid gap-3 lg:grid-cols-3">
-        <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
-          <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>Generation State</div>
-          <div className="mt-2 text-sm text-primary">{backendStatus}</div>
-          <p className="mt-1 text-xs leading-6 text-secondary">{streaming ? '正文正在一段一段落下，你可以随时停止，不会丢失当前已生成内容。' : '当前正文已保存在本地创作会话里，可以继续写、复制或导出。'} </p>
-        </div>
-        <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
-          <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>Source Recipe</div>
-          <div className="mt-2 text-sm text-primary">骨架《{engSrc}》 × 题材《{skinSrc}》</div>
-          <p className="mt-1 text-xs leading-6 text-secondary">这让正文来源可追溯，也让用户知道现在看到的文稿为什么会呈现这种结构与气质。</p>
-        </div>
-        <div className="rounded-[12px] border border-default bg-[color:var(--surface)] p-4">
-          <div className="text-[11px] uppercase tracking-[0.24em] text-muted" style={{ fontFamily: 'var(--font-mono)' }}>Editing Contract</div>
-          <div className="mt-2 text-sm text-primary">{fragmentDraft ? '正在预览片段改写' : '可选句微调，先预览再替换'}</div>
-          <p className="mt-1 text-xs leading-6 text-secondary">不论是整篇重写还是片段改写，都遵守“先看结果，再决定落不落”的规则，减少失控感。</p>
-        </div>
-      </div>
-      <div className="eyebrow">Manuscript · 开篇正文</div>
-      <h2 className="atelier-h1">墨，正落在<span className="it">纸</span>上。</h2>
-      <p className="lede">这里会流式生成这部作品的开篇正文。选中任意一句，都可以让 AI 就地改写；改动同样先预览、再决定是否替换。</p>
+    <StudioShell current="manuscript" subtitle={directionTitle || '开篇成稿'} nextLabel={nextActionLabel} onBack={backToCreations}>
+      <div className="mx-auto max-w-5xl">
+        <div className="grid gap-6 lg:grid-cols-[1fr_220px]">
+          {/* 正文纸 */}
+          <div>
+            <div className="prose-reader" style={{ fontSize: 30, lineHeight: 1.2, fontWeight: 600 }}>{directionTitle || '新作'} · 第一章</div>
+            <div className="mb-6 mt-1.5 font-mono text-[11px] text-fg-subtle">骨架《{engSrc}》 × 题材《{skinSrc}》 · 自动生成</div>
+            <div className="prose-reader max-w-[60ch] text-justify" onMouseUp={onProseSelect}>
+              {prose ? <>{prose}{streaming && !prefersReducedMotion && <span className="caret" />}</> : (
+                <span className="text-fg-subtle">{streaming ? '正在生成…' : '点右侧「生成开篇」开始。'}</span>
+              )}
+            </div>
+          </div>
 
-      <div className="manuscript">
-        <div className="sheet">
-          <div className="stamp">稿</div>
-          <div className="m-title">{directionTitle || '新作'} · 第一章</div>
-          <div className="by">骨架《{engSrc}》 × 题材《{skinSrc}》 · 自动生成</div>
-          <div className="prose" onMouseUp={onProseSelect}>
-            {prose ? <>{prose}{streaming && !prefersReducedMotion && <span className="caret" />}</> : (
-              <span style={{ color: 'var(--paper-dim)' }}>{streaming ? '墨正落下…' : '点右侧「生成开篇」开始。'}</span>
+          {/* 工具栏 */}
+          <div className="flex flex-col gap-2 lg:sticky lg:top-0">
+            <div className="eyebrow">本篇</div>
+            {streaming ? (
+              <button className="btn btn-primary justify-start gap-2" onClick={() => streamAbortRef.current?.abort()}><Square size={14} /> 停止生成</button>
+            ) : (
+              <button className="btn btn-primary justify-start gap-2" onClick={() => void streamOpening('fresh')}>
+                {prose ? <><RotateCcw size={14} /> 重写开篇</> : <><PenLine size={14} /> 生成开篇</>}
+              </button>
+            )}
+            {!streaming && resume === 'failed-resumable' && (
+              <button className="btn btn-secondary justify-start gap-2" onClick={() => void streamOpening('resume')}><ArrowDownToLine size={14} /> 继续接写</button>
+            )}
+            <button className="btn btn-secondary justify-start gap-2" onClick={() => void copyManuscript()} disabled={!prose.trim()}>
+              {copied ? <><Check size={14} /> 已复制</> : <><Copy size={14} /> 复制</>}
+            </button>
+            <button className="btn btn-secondary justify-start gap-2" onClick={exportMd} disabled={!prose.trim()}><Download size={14} /> 导出 .md</button>
+            <button className="btn btn-ghost justify-start gap-2" onClick={() => setStep('creator')}><ChevronLeft size={14} /> 回创世台</button>
+
+            {fragmentDraft ? (
+              <div className="mt-2 space-y-2 border-t border-line pt-3 text-xs">
+                <div className="text-fg-subtle">改写预览：</div>
+                <div className="text-danger line-through">{fragmentDraft.original}</div>
+                <div className="text-success">{fragmentDraft.rewritten}</div>
+                <div className="flex gap-2">
+                  <button className="btn btn-ghost btn-sm" onClick={rejectFragment}>拒绝</button>
+                  <button className="btn btn-primary btn-sm gap-1" onClick={acceptFragment}><Check size={13} /> 接受</button>
+                </div>
+              </div>
+            ) : selectedFragment ? (
+              <div className="mt-2 space-y-2 border-t border-line pt-3 text-xs text-fg-muted">
+                <div>选中「{selectedFragment.length > 18 ? `${selectedFragment.slice(0, 18)}…` : selectedFragment}」让 AI：</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {['更有画面感', '更短促', '改写'].map((s) => (
+                    <button key={s} className="btn btn-secondary btn-sm" disabled={rewriting} onClick={() => void rewriteFragment(s)}>{rewriting ? '…' : s}</button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-2 border-t border-line pt-3 text-xs leading-relaxed text-fg-subtle">在左侧正文里选中一句，可让 AI 就地改写（先预览、你接受才替换）。</div>
             )}
           </div>
         </div>
 
-        <div className="tools">
-          <div className="th">本篇</div>
-          {streaming ? (
-            <button className="tool primary" onClick={() => streamAbortRef.current?.abort()}><b>■ 停止生成</b></button>
-          ) : (
-            <button className="tool primary" onClick={() => void streamOpening('fresh')}><b>{prose ? '↻ 重写开篇' : '✍ 生成开篇'}</b></button>
-          )}
-          {!streaming && resume === 'failed-resumable' && (
-            <button className="tool" onClick={() => void streamOpening('resume')}><b>↧ 继续接写</b></button>
-          )}
-          <button className="tool" onClick={() => void copyManuscript()} disabled={!prose.trim()}><b>{copied ? '✓ 已复制' : '⎘ 复制'}</b></button>
-          <button className="tool" onClick={exportMd} disabled={!prose.trim()}><b>⤓ 导出 .md</b></button>
-          <button className="tool" onClick={() => setStep('creator')}><b>← 回创世台</b></button>
-
-          {fragmentDraft ? (
-            <div className="selnote" style={{ color: 'var(--ink-dim)' }}>
-              改写预览：<br /><span style={{ color: 'var(--del)' }}>{fragmentDraft.original}</span><br />→ <span style={{ color: 'var(--add)' }}>{fragmentDraft.rewritten}</span>
-              <div className="mt-2 flex gap-2">
-                <button className="mini" onClick={rejectFragment}>拒绝</button>
-                <button className="mini accept" onClick={acceptFragment}>接受</button>
-              </div>
-            </div>
-          ) : selectedFragment ? (
-            <div className="selnote">
-              选中「{selectedFragment.length > 18 ? `${selectedFragment.slice(0, 18)}…` : selectedFragment}」<br />让 AI：
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {['更有画面感', '更短促', '改写'].map((s) => (
-                  <button key={s} className="mini" disabled={rewriting} onClick={() => void rewriteFragment(s)}>{rewriting ? '…' : s}</button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="selnote">在左侧正文里选中一句，可让 AI 就地改写（先预览、你接受才替换）。</div>
-          )}
-        </div>
+        {errorRow}
+        {rateRow}
       </div>
-
-      {error && <p className="mt-4 text-sm" style={{ color: 'var(--del)' }}>{error}</p>}
-      {rateLimited && <p className="mt-2 text-xs" style={{ color: 'var(--signal)' }}>云端有些拥挤，已自动退避重试，请稍候…</p>}
 
       <AppDialog
         open={Boolean(pendingDirectionChoice)}
@@ -1073,6 +1031,6 @@ export default function FusionWorkshop() {
           if (direction) void applyDirection(direction);
         }}
       />
-    </div>
+    </StudioShell>
   );
 }
