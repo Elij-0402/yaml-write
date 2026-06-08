@@ -121,6 +121,13 @@ export interface Chapter {
 // === Fusion workshop session (v7) — persists the融合工坊 funnel so a refresh/sidebar-click never蒸发已生成的方向/积木/正文 ===
 // FusionDirection（融合方向）形状由 app/dnaSchema.ts 单一源定义并 import（与后端 FusionDirection 逐字段同步）。
 
+// 开篇历史版本（v12）：成稿「重写开篇」会先把当前正文归档为一条 draft，最多保留最近 ~5 版，可查看/恢复/对比。
+export interface OpeningDraft {
+  text: string;
+  createdAt: number;
+  label?: string;
+}
+
 export interface FusionSession {
   id: string; // v8 起为按 id 的多记录「创作库」（不再单例 'current'）；每开一轮新融合即一条新记录
   name: string; // 创作名（DB 为单一真相源，侧栏可重命名；回写前 get 既有记录以保留）
@@ -135,6 +142,9 @@ export interface FusionSession {
   sceneCount: number;
   sceneTexts: Record<number, string>;
   sceneResumeStatus: Record<number, string>;
+  openingDrafts?: OpeningDraft[]; // v12：开篇历史版本（重写前归档，可恢复/对比；缺省视为无历史）
+  freedom?: boolean; // v13：生成模式（false=换皮变题默认 / true=0→1 原创）持久化，重载不再回默认
+  tone?: string;     // v13：成稿文风寄存器预设键（cold/hot/humor/lyrical；缺省=贴题材）
   updatedAt: number;
 }
 
@@ -347,6 +357,28 @@ class NovelFusionDB extends Dexie {
         await tx.table('fusionSessions').toCollection().modify((s: Record<string, unknown>) => {
           delete s.settingHistory;
         });
+      });
+    // v12: FusionSession 新增 openingDrafts（开篇历史版本，可选、非索引）。索引串与 v11 一致。
+    // 新可选字段，存量创作留空（缺省视为无历史），首次「重写开篇」时按需归档——不回填以免阻塞启动主线程。
+    this.version(12)
+      .stores({
+        novels: 'id, name, createdAt, splitStatus, analysisStatus',
+        chapters: 'id, novelId, chapterIndex, status, mapStatus',
+        fusionSessions: 'id, updatedAt, createdAt',
+      })
+      .upgrade(async () => {
+        /* openingDrafts 为新可选字段，存量无需迁移 */
+      });
+    // v13: FusionSession 新增 freedom（生成模式）+ tone（成稿文风寄存器），均可选、非索引。索引串与 v12 一致。
+    // 新可选字段，存量留空（freedom 缺省 false=换皮 / tone 缺省=贴题材）——不回填以免阻塞启动主线程。
+    this.version(13)
+      .stores({
+        novels: 'id, name, createdAt, splitStatus, analysisStatus',
+        chapters: 'id, novelId, chapterIndex, status, mapStatus',
+        fusionSessions: 'id, updatedAt, createdAt',
+      })
+      .upgrade(async () => {
+        /* freedom / tone 为新可选字段，存量无需迁移 */
       });
   }
 }

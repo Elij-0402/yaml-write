@@ -79,8 +79,6 @@ interface AppState {
   workshopOpen: boolean; // creative fusion workshop view
   activeCreationId: string | null; // 工坊当前读写的创作库记录 id（v8 多记录创作库）
   manageMode: boolean; // show NovelUploader (chapters + re-split) for the selected novel
-  engineNovelId: string | null; // 配方台：指认为「骨架(引擎)」的书
-  skinNovelId: string | null;   // 配方台：指认为「题材(皮)」的书
   rateLimited: boolean;
   setRateLimited: (limited: boolean) => void;
   workshopBusy: boolean; // 工坊流式/生成进行中——禁止 busy 时切换/新建创作，避免跨创作 stale-write
@@ -93,8 +91,6 @@ interface AppState {
   setWorkshopOpen: (open: boolean) => void;
   setActiveCreationId: (id: string | null) => void;
   setManageMode: (on: boolean) => void;
-  setEngineNovelId: (id: string | null) => void;
-  setSkinNovelId: (id: string | null) => void;
 }
 
 function clampTemperature(value: unknown): number {
@@ -195,8 +191,6 @@ export const useAppStore = create<AppState>()(
       workshopOpen: false,
       activeCreationId: null,
       manageMode: false,
-      engineNovelId: null,
-      skinNovelId: null,
       rateLimited: false,
       workshopBusy: false,
       persistError: false,
@@ -236,8 +230,6 @@ export const useAppStore = create<AppState>()(
       setWorkshopOpen: (open) => set({ workshopOpen: open }),
       setActiveCreationId: (id) => set({ activeCreationId: id, workshopOpen: true, manageMode: false }),
       setManageMode: (on) => set({ manageMode: on }),
-      setEngineNovelId: (id) => set({ engineNovelId: id }),
-      setSkinNovelId: (id) => set({ skinNovelId: id }),
     }),
     {
       name: 'novel-fusion-store', // name of the item in the storage (must be unique)
@@ -269,8 +261,6 @@ export const useAppStore = create<AppState>()(
           workshopOpen: false,
           activeCreationId: null,
           manageMode: false,
-          engineNovelId: null,
-          skinNovelId: null,
           rateLimited: false,
           workshopBusy: false,
           persistError: false,

@@ -172,6 +172,8 @@ class RepairSettingGapsInput(BaseModel):
     narrativeTone: str = ""
     structureSkeleton: List[StructureBeatItem] = Field(default_factory=list)
     themeSkin: str = ""
+    # 与 generate-fusion-directions 的 freedom 对齐：True=0→1 原创，补洞只查方向自身自洽、不拉回源书结构骨架；False=换皮，逐节拍核对源结构能否被新题材支撑。
+    freedom: bool = Field(False, description="True 走原创补洞分支（查内部自洽）；False（默认）走换皮补洞分支（核对源结构支撑）。")
     adversarialRules: Optional[str] = Field(None, max_length=2000)
     apiKey: str = Field(..., min_length=1, max_length=512)
     baseUrl: str = Field(..., min_length=1, max_length=512)
@@ -230,6 +232,8 @@ class SceneTextInput(BaseModel):
     currentDraft: Optional[str] = Field(None, max_length=24000)
     resumeFromText: Optional[str] = Field(None, max_length=24000)
     adversarialRules: Optional[str] = Field(None, max_length=2000)
+    # 文风寄存器预设键（cold/hot/humor/lyrical）；缺省=贴题材默认。对抗 ANTI_SLOP 把各题材压成统一冷腔。
+    tone: Optional[str] = Field(None, max_length=40)
     apiKey: str = Field(..., min_length=1, max_length=512)
     baseUrl: str = Field(..., min_length=1, max_length=512)
     model: str = Field(..., min_length=1, max_length=200)

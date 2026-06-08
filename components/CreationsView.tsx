@@ -2,8 +2,8 @@
 
 import { useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Plus, Pencil, X, ArrowRight } from 'lucide-react';
-import { db, type FusionSession } from '../app/db';
+import { Plus, Pencil, X, ArrowRight, Copy } from 'lucide-react';
+import { db, type FusionSession, type Novel } from '../app/db';
 import { isDnaReady } from '../app/dnaState';
 import { useAppStore } from '../app/store';
 
@@ -35,6 +35,9 @@ export default function CreationsView({
   const { activeCreationId, setActiveCreationId, setSelectedNovelId } = useAppStore();
   const readyCount = useLiveQuery(() => db.novels.filter((n) => isDnaReady(n)).count(), []) || 0;
   const creationsRaw = useLiveQuery<FusionSession[]>(() => db.fusionSessions.orderBy('updatedAt').reverse().toArray(), []);
+  const novelsRaw = useLiveQuery<Novel[]>(() => db.novels.toArray(), []);
+  // id → 书名，用于在创作卡上回显「骨架×题材」配方溯源（书被删则标「已删除作品」）。
+  const novelById = useMemo(() => new Map((novelsRaw || []).map((n) => [n.id, n.name])), [novelsRaw]);
   // 创作库：仅展示已进入创作台或已有正文的创作（过滤未成形的空白/方向期会话）。
   const creations = useMemo(
     () => (creationsRaw || []).filter(
@@ -43,8 +46,34 @@ export default function CreationsView({
     [creationsRaw]
   );
 
+  const sourceLabel = (c: FusionSession): string => {
+    const engId = c.selectedIds?.[0];
+    const skinId = c.selectedIds?.[1];
+    if (!engId) return '未指定骨架';
+    const eng = novelById.get(engId) ?? '已删除作品';
+    const skin = skinId ? (novelById.get(skinId) ?? '已删除作品') : null;
+    return skin ? `骨架《${eng}》× 题材《${skin}》` : `骨架《${eng}》× 口述题材`;
+  };
+
   const canCreate = readyCount >= 1;
   const startNew = () => { if (canCreate) setActiveCreationId(crypto.randomUUID()); };
+
+  // 复制创作做变体：同配方/设定 fork 一条新创作，清空开篇正文与历史（重新写一版开篇），随即打开。
+  const duplicateCreation = async (c: FusionSession) => {
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    await db.fusionSessions.put({
+      ...c,
+      id,
+      name: `${c.name || c.directionTitle || '未命名创作'} 副本`,
+      createdAt: now,
+      updatedAt: now,
+      sceneTexts: {},
+      sceneResumeStatus: {},
+      openingDrafts: [],
+    });
+    setActiveCreationId(id);
+  };
 
   return (
     <div className="view-enter mx-auto w-full max-w-5xl">
@@ -87,7 +116,8 @@ export default function CreationsView({
                 onClick={() => setActiveCreationId(c.id)}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveCreationId(c.id); } }}
               >
-                <div className="truncate pr-12 text-sm font-medium text-fg" title={name}>{name}</div>
+                <div className="truncate pr-16 text-sm font-medium text-fg" title={name}>{name}</div>
+                <div className="mt-1.5 truncate text-xs text-fg-subtle" title={sourceLabel(c)}>{sourceLabel(c)}</div>
                 <div className="mt-2 flex items-center gap-2">
                   <span className="chip">{STEP_LABEL[c.step]}</span>
                   <span className="font-mono text-xs tabular-nums text-fg-subtle">{formatWhen(c.updatedAt)}</span>
@@ -96,6 +126,12 @@ export default function CreationsView({
                   继续创作 <ArrowRight size={12} />
                 </span>
                 <div className="absolute right-2 top-2 flex gap-0.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); void duplicateCreation(c); }}
+                    className="flex h-7 w-7 items-center justify-center rounded-md text-fg-subtle hover:bg-raised hover:text-fg"
+                    aria-label="复制为新创作"
+                    title="复制为新创作（同配方换条路线）"
+                  ><Copy size={13} /></button>
                   <button
                     onClick={(e) => { e.stopPropagation(); onRequestRename(c); }}
                     className="flex h-7 w-7 items-center justify-center rounded-md text-fg-subtle hover:bg-raised hover:text-fg"

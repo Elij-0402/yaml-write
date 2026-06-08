@@ -6,7 +6,7 @@ import {
   ChevronLeft, Wrench, Palette, ArrowUpDown, ArrowRight, ArrowUp, Sparkles, Shuffle,
   X, Square, Copy, Download, RotateCcw, PenLine, ArrowDownToLine, Check, Wand2, Dna,
 } from 'lucide-react';
-import { db, isFourLayerDnaCard, type FusionSession } from '../app/db';
+import { db, isFourLayerDnaCard, type FusionSession, type OpeningDraft } from '../app/db';
 import { isDnaReady } from '../app/dnaState';
 import { type BlockKey, type FusionDirection, type SettingBlocks, type StructureBeat, parseFusionDirections } from '../app/dnaSchema';
 import { withRateLimitRetry } from '../app/dnaEngine';
@@ -55,6 +55,23 @@ const WORKSHOP_STEPS: Array<{ id: WorkshopStep; label: string }> = [
   { id: 'manuscript', label: '成稿' },
 ];
 
+// 开篇历史版本时间戳（mm-dd HH:MM）。app 代码可用 Date，与 Workflow 脚本的限制无关。
+const fmtDraftTime = (ts: number): string => {
+  try {
+    const d = new Date(ts);
+    return `${`${d.getMonth() + 1}`.padStart(2, '0')}-${`${d.getDate()}`.padStart(2, '0')} ${`${d.getHours()}`.padStart(2, '0')}:${`${d.getMinutes()}`.padStart(2, '0')}`;
+  } catch { return ''; }
+};
+
+// 成稿文风寄存器预设（值与后端 TONE_GUIDE 的 key 对齐）。
+const TONE_PRESETS: { value: string; label: string }[] = [
+  { value: '', label: '默认（贴题材）' },
+  { value: 'cold', label: '冷峻克制' },
+  { value: 'hot', label: '热血爽快' },
+  { value: 'humor', label: '幽默轻快' },
+  { value: 'lyrical', label: '抒情细腻' },
+];
+
 // Studio 外壳：breadcrumb + 本地步骤条 + 单一「下一步」行 + 返回创作库。每个步骤共用此头部。
 function StudioShell({
   current,
@@ -62,12 +79,14 @@ function StudioShell({
   nextLabel,
   onBack,
   children,
+  overlay,
 }: {
   current: WorkshopStep;
   subtitle: string;
   nextLabel: string;
   onBack: () => void;
   children: React.ReactNode;
+  overlay?: React.ReactNode;
 }) {
   const currentIdx = WORKSHOP_STEPS.findIndex((s) => s.id === current);
   return (
@@ -106,6 +125,7 @@ function StudioShell({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">{children}</div>
+      {overlay}
     </div>
   );
 }
@@ -126,8 +146,10 @@ export default function FusionWorkshop() {
   // selectedIds[0] = 骨架(引擎)，selectedIds[1] = 题材(皮)；皮可缺省（自我裂变，题材取口述）。
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [customPrompt, setCustomPrompt] = useState('');
-  // 生成模式开关（ephemeral，刻意不持久化进 db.fusionSessions）：false=换皮变题（默认），true=0→1 原创。
+  // 生成模式开关：false=换皮变题（默认），true=0→1 原创。v13 起按创作持久化（重载不再回默认）。
   const [freedom, setFreedom] = useState(false);
+  // 成稿文风寄存器（v13 持久化）：''=贴题材默认 / cold / hot / humor / lyrical。
+  const [tone, setTone] = useState('');
   const [colliding, setColliding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -141,6 +163,10 @@ export default function FusionWorkshop() {
   const [sceneTexts, setSceneTexts] = useState<Record<number, string>>({});
   const [streamingScene, setStreamingScene] = useState<number | null>(null);
   const [sceneResumeStatus, setSceneResumeStatus] = useState<Record<number, SceneResumeStatus>>({});
+  // 开篇历史版本（重写前归档）+ 当前正在对比的历史版索引（null=不对比）。
+  const [openingDrafts, setOpeningDrafts] = useState<OpeningDraft[]>([]);
+  const [comparingDraftIdx, setComparingDraftIdx] = useState<number | null>(null);
+  const [nextIntent, setNextIntent] = useState(''); // 「写下一段」的可选一行意图（有界续写，不持久化）
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [adversarialRules, setAdversarialRules] = useState('');
   const [copied, setCopied] = useState(false);
@@ -206,12 +232,16 @@ export default function FusionWorkshop() {
         setDirectionTitle(saved.directionTitle || '');
         setSceneTexts(saved.sceneTexts || {});
         setSceneResumeStatus((saved.sceneResumeStatus as Record<number, SceneResumeStatus>) || {});
+        setOpeningDrafts(saved.openingDrafts || []);
+        setFreedom(saved.freedom ?? false);
+        setTone(saved.tone || '');
       } else {
         setSelectedIds([]); setCustomPrompt(''); setAdversarialRules(''); setStep('material');
         setDirections([]); setBlocks(EMPTY_BLOCKS); setDirectionTitle('');
-        setSceneTexts({}); setSceneResumeStatus({});
+        setSceneTexts({}); setSceneResumeStatus({}); setOpeningDrafts([]);
+        setFreedom(false); setTone('');
       }
-      setEditingBlock(null); setRepairGaps([]);
+      setEditingBlock(null); setRepairGaps([]); setComparingDraftIdx(null);
       setSelectedFragment(''); setFragmentDraft(null); setTweakTarget('worldviewBlock');
       if (!cancelled) hydratedRef.current = true;
     })();
@@ -238,16 +268,19 @@ export default function FusionWorkshop() {
         directions,
         blocks,
         directionTitle,
-        sceneCount: 1,
+        sceneCount: Math.max(1, Object.keys(sceneTexts).filter((k) => (sceneTexts[Number(k)] || '').trim()).length),
         sceneTexts,
         sceneResumeStatus,
+        openingDrafts,
+        freedom,
+        tone,
         updatedAt: Date.now(),
       };
       await db.fusionSessions.put(session);
     });
   }, [
     activeCreationId, step, selectedIds, customPrompt, adversarialRules, directions, blocks,
-    directionTitle, sceneTexts, sceneResumeStatus,
+    directionTitle, sceneTexts, sceneResumeStatus, openingDrafts, freedom, tone,
     streamingScene, colliding, tweaking, repairing, rewriting,
   ]);
 
@@ -279,6 +312,14 @@ export default function FusionWorkshop() {
   const prose = sceneTexts[OPENING_SCENE_NUM] || '';
   const resume = sceneResumeStatus[OPENING_SCENE_NUM];
   const streaming = streamingScene === OPENING_SCENE_NUM;
+  // 多场景（开篇之后的有界续写）：已落正文（或正在流式）的场景号升序。开篇=1，续写=2.. 。
+  const sceneNums = Object.keys(sceneTexts)
+    .map(Number)
+    .filter((n) => Number.isFinite(n) && ((sceneTexts[n] || '').trim().length > 0 || n === streamingScene))
+    .sort((a, b) => a - b);
+  const continuationNums = sceneNums.filter((n) => n !== OPENING_SCENE_NUM);
+  const lastSceneNum = sceneNums.length ? sceneNums[sceneNums.length - 1] : OPENING_SCENE_NUM;
+  const allProse = sceneNums.map((n) => sceneTexts[n] || '').filter((t) => t.trim()).join('\n\n');
   const nextActionLabel =
     step === 'material'
       ? '确认骨架与题材，生成方向'
@@ -421,6 +462,7 @@ export default function FusionWorkshop() {
           ...baseBlocks,
           structureSkeleton: recipe.engineCard.structureSkeleton,
           themeSkin: recipe.skinSource.themeSkin || recipe.skinSource.userBrief || '',
+          freedom: recipe.freedom,
           adversarialRules: adversarialRules.trim() || undefined,
         }, { signal: ac.signal }),
         { signal: ac.signal }
@@ -508,7 +550,14 @@ export default function FusionWorkshop() {
     const existingDraft = sceneTexts[num] || '';
     let received = mode === 'resume' ? existingDraft : '';
     setSceneResumeStatus((prev) => ({ ...prev, [num]: mode === 'resume' ? 'resuming' : 'idle' }));
-    if (mode === 'fresh') setSceneTexts((prev) => ({ ...prev, [num]: '' }));
+    if (mode === 'fresh') {
+      // 重写前把当前开篇归档进历史版本（最多保留最近 5 版），可对比 / 恢复。
+      if (existingDraft.trim()) {
+        setOpeningDrafts((prev) => [{ text: existingDraft, createdAt: Date.now() }, ...prev].slice(0, 5));
+      }
+      setComparingDraftIdx(null);
+      setSceneTexts((prev) => ({ ...prev, [num]: '' }));
+    }
     setStreamingScene(num);
     const ac = new AbortController();
     streamAbortRef.current = ac;
@@ -519,6 +568,7 @@ export default function FusionWorkshop() {
         precedingTexts: {},
         currentDraft: mode === 'resume' ? existingDraft : undefined,
         adversarialRules: adversarialRules.trim() || undefined,
+        tone: tone || undefined,
       }, {
         signal: ac.signal,
         onDelta: (text) => {
@@ -553,7 +603,7 @@ export default function FusionWorkshop() {
 
   const copyManuscript = async () => {
     try {
-      await navigator.clipboard.writeText(sceneTexts[OPENING_SCENE_NUM] || '');
+      await navigator.clipboard.writeText(allProse);
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
       setCopied(true);
       copyTimerRef.current = setTimeout(() => { if (mountedRef.current) setCopied(false); }, 1500);
@@ -565,9 +615,8 @@ export default function FusionWorkshop() {
   const exportMd = () => {
     const title = directionTitle || '未命名创作';
     const settingLines = BLOCKS.map(({ key, label }) => `- ${label}：${blocks[key] || ''}`).join('\n');
-    const prose = sceneTexts[OPENING_SCENE_NUM] || '';
-    if (!prose.trim()) return;
-    const md = `# ${title}\n\n## 设定\n${settingLines}\n\n---\n\n${prose}\n`;
+    if (!allProse.trim()) return;
+    const md = `# ${title}\n\n## 设定\n${settingLines}\n\n---\n\n${allProse}\n`;
     const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -629,9 +678,96 @@ export default function FusionWorkshop() {
   };
   const rejectFragment = () => { setFragmentDraft(null); setSelectedFragment(''); };
 
+  // 恢复某历史版为当前开篇：当前正文（若非空）先存回历史，再把选中版设为当前；该版从历史移除（即「当前」总不在列表里）。
+  const restoreOpeningDraft = (idx: number) => {
+    const draft = openingDrafts[idx];
+    if (!draft || streamingScene !== null) return;
+    const current = sceneTexts[OPENING_SCENE_NUM] || '';
+    setOpeningDrafts((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      if (current.trim()) next.unshift({ text: current, createdAt: Date.now() });
+      return next.slice(0, 5);
+    });
+    setSceneTexts((prev) => ({ ...prev, [OPENING_SCENE_NUM]: draft.text }));
+    setComparingDraftIdx(null);
+  };
+
+  // ---- 开篇之后的有界续写（丁）：逐次手动写下一段。复用 stream-scene-text + precedingTexts
+  // （后端按 24k 尾部截断上下文，天然有界）。硬边界＝禁自动章节循环 / 整本编排 / 大纲生成 / 一键写到结局；
+  // 每段都是一次刻意的用户点击，保持「起书副驾」而非整本工厂。----
+  const streamSceneAt = async (num: number, intent: string) => {
+    if (!guardLlm() || streamingScene !== null) return;
+    const preceding: Record<number, string> = {};
+    sceneNums.filter((n) => n < num).forEach((n) => { preceding[n] = sceneTexts[n]; });
+    setError(null);
+    setSceneTexts((prev) => ({ ...prev, [num]: '' }));
+    setSceneResumeStatus((prev) => ({ ...prev, [num]: 'idle' }));
+    setStreamingScene(num);
+    const ac = new AbortController();
+    streamAbortRef.current = ac;
+    try {
+      await streamSse('/api/py/stream-scene-text', {
+        selectedDirection: selectedDirection(),
+        currentScene: {
+          sceneNumber: num,
+          sceneTitle: `第 ${num} 段`,
+          plotOutline: intent.trim()
+            ? `承接前文，自然往下写：${intent.trim()}。不要重述前文、不写大纲、不解释设定。`
+            : '承接前文，自然往下写一个连续的场景：推进当前情节、维持设定与语气，结尾留一个让人想继续读的小钩子。不要重述前文、不写大纲、不解释设定。',
+          tensionLevel: '承接前文张力，自然推进',
+          visualCues: '与前文世界观与叙事色调保持一致',
+        },
+        precedingTexts: preceding,
+        adversarialRules: adversarialRules.trim() || undefined,
+        tone: tone || undefined,
+      }, {
+        signal: ac.signal,
+        onDelta: (text) => {
+          const sanitized = applyAntiSlopFallback(text);
+          setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
+        },
+      });
+      setSceneResumeStatus((prev) => ({ ...prev, [num]: 'done' }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(ac.signal.aborted ? '已停止。' : `续写中断：${message}`);
+    } finally {
+      setStreamingScene(null);
+      streamAbortRef.current = null;
+    }
+  };
+  const writeNextScene = () => {
+    if (!prose.trim() || streamingScene !== null) return; // 必须先有开篇才能续写
+    void streamSceneAt(lastSceneNum + 1, nextIntent);
+    setNextIntent('');
+  };
+  const rewriteLastScene = () => { if (lastSceneNum !== OPENING_SCENE_NUM) void streamSceneAt(lastSceneNum, ''); };
+  const deleteLastScene = () => {
+    if (lastSceneNum === OPENING_SCENE_NUM || streamingScene !== null) return; // 开篇用「重写开篇」，不在此删
+    setSceneTexts((prev) => { const next = { ...prev }; delete next[lastSceneNum]; return next; });
+    setSceneResumeStatus((prev) => { const next = { ...prev }; delete next[lastSceneNum]; return next; });
+  };
+
   const backToCreations = () => setWorkshopOpen(false);
   const errorRow = error && <p className="mt-3 text-sm text-danger">{error}</p>;
   const rateRow = rateLimited && <p className="mt-2 text-xs text-accent">云端有些拥挤，已自动放缓退避重试，请稍候…</p>;
+
+  // 切换方向确认弹窗：定义一次，作为 overlay 挂到方向页 StudioShell（chooseDirection 唯一触发处）。
+  // 此前只渲染在成稿页 return，而 pendingDirectionChoice 只可能从方向页置真 → 方向页点切换静默无弹窗（已修）。
+  const directionSwitchDialog = (
+    <AppDialog
+      open={Boolean(pendingDirectionChoice)}
+      title="切换这条创作方向？"
+      description="当前开篇正文会被清空，因为它和现有方向绑定。确认后，系统会把你带到新的设定定稿流程。"
+      confirmLabel="确认切换"
+      onClose={() => setPendingDirectionChoice(null)}
+      onConfirm={() => {
+        const direction = pendingDirectionChoice;
+        setPendingDirectionChoice(null);
+        if (direction) void applyDirection(direction);
+      }}
+    />
+  );
 
   // ============================ 渲染 ============================
   if (readyNovels.length < 1) {
@@ -778,7 +914,7 @@ export default function FusionWorkshop() {
       </button>
     );
     return (
-      <StudioShell current="directions" subtitle="方向筛选" nextLabel={nextActionLabel} onBack={backToCreations}>
+      <StudioShell current="directions" subtitle="方向筛选" nextLabel={nextActionLabel} onBack={backToCreations} overlay={directionSwitchDialog}>
         <div className="mx-auto max-w-4xl space-y-5">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
@@ -964,16 +1100,90 @@ export default function FusionWorkshop() {
           <div>
             <div className="prose-reader" style={{ fontSize: 30, lineHeight: 1.2, fontWeight: 600 }}>{directionTitle || '新作'} · 第一章</div>
             <div className="mb-6 mt-1.5 font-mono text-[11px] text-fg-subtle">骨架《{engSrc}》 × 题材《{skinSrc}》 · 自动生成</div>
-            <div className="prose-reader max-w-[60ch] text-justify" onMouseUp={onProseSelect}>
-              {prose ? <>{prose}{streaming && !prefersReducedMotion && <span className="caret" />}</> : (
-                <span className="text-fg-subtle">{streaming ? '正在生成…' : '点右侧「生成开篇」开始。'}</span>
-              )}
-            </div>
+            {comparingDraftIdx !== null && openingDrafts[comparingDraftIdx] ? (
+              <div className="grid gap-5 md:grid-cols-2">
+                <div>
+                  <div className="eyebrow mb-2">当前版本</div>
+                  <div className="prose-reader text-justify" style={{ fontSize: 15, lineHeight: 1.8 }}>{prose || <span className="text-fg-subtle">（空）</span>}</div>
+                </div>
+                <div>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <span className="eyebrow">历史 · {fmtDraftTime(openingDrafts[comparingDraftIdx].createdAt)}</span>
+                    <div className="flex gap-1.5">
+                      <button className="btn btn-primary btn-sm" onClick={() => restoreOpeningDraft(comparingDraftIdx)}>用这版替换当前</button>
+                      <button className="btn btn-ghost btn-sm" onClick={() => setComparingDraftIdx(null)}>关闭对比</button>
+                    </div>
+                  </div>
+                  <div className="prose-reader text-justify" style={{ fontSize: 15, lineHeight: 1.8 }}>{openingDrafts[comparingDraftIdx].text}</div>
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* 开篇 = 第 1 段：保留选句改写 */}
+                <div className="prose-reader max-w-[60ch] text-justify" onMouseUp={onProseSelect}>
+                  {prose ? <>{prose}{streaming && !prefersReducedMotion && <span className="caret" />}</> : (
+                    <span className="text-fg-subtle">{streaming ? '正在生成…' : '点右侧「生成开篇」开始。'}</span>
+                  )}
+                </div>
+
+                {/* 续写场景（第 2 段起）：连续往下读；仅最后一段可重写/删除 */}
+                {continuationNums.map((n) => (
+                  <div key={n} className="mt-6 border-t border-line-2 pt-5">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="eyebrow">第 {n} 段</span>
+                      {n === lastSceneNum && streamingScene === null && (
+                        <div className="flex gap-1">
+                          <button className="btn btn-ghost btn-sm gap-1" onClick={rewriteLastScene}><RotateCcw size={12} /> 重写本段</button>
+                          <button className="btn btn-ghost btn-sm gap-1" onClick={deleteLastScene}><X size={12} /> 删除本段</button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="prose-reader max-w-[60ch] text-justify">
+                      {sceneTexts[n]}{streamingScene === n && !prefersReducedMotion && <span className="caret" />}
+                    </div>
+                  </div>
+                ))}
+
+                {/* 续写入口（有界：逐次手动、一次一段；无自动章节循环 / 大纲生成 / 一键写到结局）*/}
+                {prose.trim() && streamingScene !== OPENING_SCENE_NUM && (
+                  <div className="mt-8 border-t border-line pt-5">
+                    {streamingScene !== null ? (
+                      <div className="flex items-center gap-2 text-sm text-accent">
+                        <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse motion-reduce:animate-none" />
+                        正在写第 {streamingScene} 段…
+                        <button className="btn btn-ghost btn-sm gap-1.5" onClick={() => streamAbortRef.current?.abort()}><Square size={13} /> 停止</button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <input
+                          value={nextIntent}
+                          onChange={(e) => setNextIntent(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') writeNextScene(); }}
+                          placeholder="下一段想写什么？（可留空＝自然往下接）"
+                          className="input flex-1"
+                        />
+                        <button className="btn btn-secondary shrink-0 gap-1.5" onClick={writeNextScene}><PenLine size={14} /> 写下一段</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           {/* 工具栏 */}
           <div className="flex flex-col gap-2 lg:sticky lg:top-0">
             <div className="eyebrow">本篇</div>
+            <select
+              className="input"
+              value={tone}
+              onChange={(e) => setTone(e.target.value)}
+              disabled={streaming}
+              aria-label="文风寄存器"
+              title="文风寄存器：影响成稿语气；选非默认可对抗各题材都被写成统一冷腔"
+            >
+              {TONE_PRESETS.map((t) => <option key={t.value} value={t.value}>文风 · {t.label}</option>)}
+            </select>
             {streaming ? (
               <button className="btn btn-primary justify-start gap-2" onClick={() => streamAbortRef.current?.abort()}><Square size={14} /> 停止生成</button>
             ) : (
@@ -984,10 +1194,10 @@ export default function FusionWorkshop() {
             {!streaming && resume === 'failed-resumable' && (
               <button className="btn btn-secondary justify-start gap-2" onClick={() => void streamOpening('resume')}><ArrowDownToLine size={14} /> 继续接写</button>
             )}
-            <button className="btn btn-secondary justify-start gap-2" onClick={() => void copyManuscript()} disabled={!prose.trim()}>
+            <button className="btn btn-secondary justify-start gap-2" onClick={() => void copyManuscript()} disabled={!allProse.trim()}>
               {copied ? <><Check size={14} /> 已复制</> : <><Copy size={14} /> 复制</>}
             </button>
-            <button className="btn btn-secondary justify-start gap-2" onClick={exportMd} disabled={!prose.trim()}><Download size={14} /> 导出 .md</button>
+            <button className="btn btn-secondary justify-start gap-2" onClick={exportMd} disabled={!allProse.trim()}><Download size={14} /> 导出 .md</button>
             <button className="btn btn-ghost justify-start gap-2" onClick={() => setStep('creator')}><ChevronLeft size={14} /> 回创世台</button>
 
             {fragmentDraft ? (
@@ -1012,25 +1222,30 @@ export default function FusionWorkshop() {
             ) : (
               <div className="mt-2 border-t border-line pt-3 text-xs leading-relaxed text-fg-subtle">在左侧正文里选中一句，可让 AI 就地改写（先预览、你接受才替换）。</div>
             )}
+
+            {openingDrafts.length > 0 && (
+              <div className="mt-2 space-y-1.5 border-t border-line pt-3">
+                <div className="eyebrow">历史版本 · {openingDrafts.length}</div>
+                {openingDrafts.map((d, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs">
+                    <button
+                      className={`min-w-0 flex-1 truncate text-left transition-colors ${comparingDraftIdx === i ? 'text-accent' : 'text-fg-muted hover:text-fg'}`}
+                      onClick={() => setComparingDraftIdx(comparingDraftIdx === i ? null : i)}
+                      title="对比这版与当前"
+                    >
+                      <span className="font-mono text-fg-subtle">{fmtDraftTime(d.createdAt)}</span> · {d.text.slice(0, 10)}…
+                    </button>
+                    <button className="shrink-0 text-fg-subtle hover:text-fg" onClick={() => restoreOpeningDraft(i)} title="恢复这版（当前正文会先存入历史）">恢复</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
         {errorRow}
         {rateRow}
       </div>
-
-      <AppDialog
-        open={Boolean(pendingDirectionChoice)}
-        title="切换这条创作方向？"
-        description="当前开篇正文会被清空，因为它和现有方向绑定。确认后，系统会把你带到新的设定定稿流程。"
-        confirmLabel="确认切换"
-        onClose={() => setPendingDirectionChoice(null)}
-        onConfirm={() => {
-          const direction = pendingDirectionChoice;
-          setPendingDirectionChoice(null);
-          if (direction) void applyDirection(direction);
-        }}
-      />
     </StudioShell>
   );
 }
