@@ -278,11 +278,6 @@ def classify_openai_error(exc: Exception) -> tuple[int, str, str]:
     return 500, "internal_error", "服务暂时不可用，请稍后重试。"
 
 
-def raise_friendly_api_error(exc: Exception) -> None:
-    status_code, code, message = classify_openai_error(exc)
-    raise ApiError(status_code=status_code, code=code, message=message) from exc
-
-
 def get_client_ip(request: Request) -> str:
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
