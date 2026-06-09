@@ -96,11 +96,10 @@ Extraction is **zero-parameter and auto-routed by cleaned word count** (no more 
 
 ### LLM endpoints (`api/index.py`)
 
-**9** `/api/py/` routes. Eight are structured (shared `run_structured` → `instructor.from_openai` + transient retry: up to `MAX_PARSE_RETRIES` (2) extra attempts with exponential backoff on 429/502/503/504, then a friendly `ApiError`; heavy ones also pass `instructor_retries` 1–2 and a 120s timeout). One streams via SSE. The 4-layer producers share `FOUR_LAYER_DNA_GUIDE`; every creation prompt shares `ANTI_SLOP_CONSTRAINT` and may append free-text `adversarialRules`.
+**8** `/api/py/` routes. Seven are structured (shared `run_structured` → `instructor.from_openai` + transient retry: up to `MAX_PARSE_RETRIES` (2) extra attempts with exponential backoff on 429/502/503/504, then a friendly `ApiError`; heavy ones also pass `instructor_retries` 1–2 and a 120s timeout). One streams via SSE. The 4-layer producers share `FOUR_LAYER_DNA_GUIDE`; every creation prompt shares `ANTI_SLOP_CONSTRAINT` and may append free-text `adversarialRules`.
 
 | Endpoint | Mode · `response_model` | Rate/60s | Live caller |
 |---|---|---|---|
-| `extract-chapter-map` | structured · `ChapterMapSummaryResponse` | 120 | *(retained; off the current runner path)* |
 | `extract-arc-map` | structured · `ChapterMapSummaryResponse` | 120 | `dnaEngine` (arc/sampling map) |
 | `extract-book-direct` | structured · `NovelDNACardResponse` | 10 | `dnaEngine` (direct route) |
 | `extract-book-reduce` | structured · `NovelDNACardResponse` | 10 | `dnaEngine` (reduce) |
@@ -110,7 +109,7 @@ Extraction is **zero-parameter and auto-routed by cleaned word count** (no more 
 | `stream-scene-text` | **SSE** — per-scene prose; `currentDraft` resumes an interrupted draft | 12 | `FusionWorkshop` (opening + fragment rewrite) |
 | `split-recommend` | structured · `SplitRecommendResponse` — JIT semantic split: numbered paragraphs → recommended cut points | 20 | `NovelUploader` |
 
-The old `generate-storyboard` / `stream-storyboard` endpoints and `StoryboardResponse` were **deleted** — the manuscript step is now one continuous opening, so there is no storyboard generation. `extract-chapter-map` still exists for single-chapter mapping but the runner maps by arc-window. Reasoning models (DeepSeek R1 / `*reasoner*`) may not support the tool-call/structured output `instructor` needs (surfaced as a friendly `bad_request`).
+The old `generate-storyboard` / `stream-storyboard` endpoints and `StoryboardResponse` were **deleted** — the manuscript step is now one continuous opening, so there is no storyboard generation. Reasoning models (DeepSeek R1 / `*reasoner*`) may not support the tool-call/structured output `instructor` needs (surfaced as a friendly `bad_request`).
 
 ### Streaming endpoint (real SSE)
 
