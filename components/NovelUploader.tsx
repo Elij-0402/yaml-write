@@ -11,8 +11,10 @@ import { resplit } from '../app/novelParser';
 import { planBlobPresplit } from '../app/blobPresplit';
 import { planStitch, planBulkStitch, planSplit, buildStitchBackup } from '../app/chapterOps';
 import { DEFAULT_CUSTOM_REGEX, validateLineRegex } from '../app/splitRegex';
+import { OVERSIZED_CHAPTER_CHARS } from '../app/dnaRouting';
 import ProviderCredentialsEditor from './ProviderCredentialsEditor';
 import AppDialog from './AppDialog';
+import { useFocusTrap } from '../app/useFocusTrap';
 
 // === Story 1.6: JIT 智能语义拆分 / Ollama 心跳 ===
 const SMART_SPLIT_MIN_WORDS = 8000; // 分章置信度极低判定：分章数 <= 1 且总字数 >= 此阈值
@@ -115,6 +117,9 @@ export default function NovelUploader() {
 
   // 解析 Worker 的中止句柄：卸载时 abort，由 app/novelParser 内部 terminate + 清看门狗。
   const parserAbortRef = useRef<AbortController | null>(null);
+  // 批量合并确认弹窗的焦点陷阱容器。
+  const bulkModalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(bulkModalRef, showBulkModal);
 
   useEffect(() => {
     return () => parserAbortRef.current?.abort();
@@ -144,7 +149,7 @@ export default function NovelUploader() {
   const reviewReasons = splitMeta?.reviewReasons || [];
 
   // Story 1.6 derived — 智能语义拆分入口判定 / 配置卡就绪态 / 推荐点索引
-  const oversizedChapter = chapters.find((c) => c.wordCount > 30000) || null;
+  const oversizedChapter = chapters.find((c) => c.wordCount > OVERSIZED_CHAPTER_CHARS) || null;
   const canSmartSplit =
     chapters.length >= 1 &&
     (
@@ -899,7 +904,7 @@ export default function NovelUploader() {
                       <button
                         disabled={chapter.id === chapters[0]?.id || processing}
                         onClick={(e) => { e.stopPropagation(); handleStitch(chapter.id); }}
-                        className="flex items-center gap-0.5 rounded border border-line bg-surface px-1.5 py-0.5 text-[10px] text-fg-muted opacity-0 transition hover:border-fg-subtle hover:text-fg group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="flex items-center gap-0.5 rounded border border-line bg-surface px-1.5 py-0.5 text-[10px] text-fg-muted opacity-0 transition hover:border-fg-subtle hover:text-fg group-hover:opacity-100 group-focus-within:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
                         title={chapter.id === chapters[0]?.id ? '第一章无法向前缝合' : '将本章物理缝合至上一章'}
                         aria-label="缝合至上一章"
                       ><Link2 size={11} /> 缝合</button>
@@ -910,7 +915,7 @@ export default function NovelUploader() {
                       <button
                         disabled={processing}
                         onClick={(e) => { e.stopPropagation(); setActiveChapterId(chapter.id); setIsSplitMode(true); }}
-                        className="flex items-center gap-0.5 rounded border border-line bg-surface px-1.5 py-0.5 text-[10px] text-fg-muted opacity-0 transition hover:border-fg-subtle hover:text-fg group-hover:opacity-100 disabled:opacity-40"
+                        className="flex items-center gap-0.5 rounded border border-line bg-surface px-1.5 py-0.5 text-[10px] text-fg-muted opacity-0 transition hover:border-fg-subtle hover:text-fg group-hover:opacity-100 group-focus-within:opacity-100 disabled:opacity-40"
                         title="帮我裁切本章"
                         aria-label="裁切本章"
                       ><Scissors size={11} /> 裁切</button>
@@ -1196,7 +1201,7 @@ export default function NovelUploader() {
       {/* 批量确认弹窗 */}
       {showBulkModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-fg/45 px-4">
-          <div className="card w-full max-w-md space-y-5 p-6 shadow-pop view-enter">
+          <div ref={bulkModalRef} className="card w-full max-w-md space-y-5 p-6 shadow-pop view-enter">
             <div className="flex items-center gap-2 text-fg"><Link2 size={16} /><h3 className="text-sm font-semibold">批量物理合并确认</h3></div>
             <p className="text-xs leading-relaxed text-fg-muted">确认合并选中的 <span className="font-semibold text-fg">{selectedChapterIds.size}</span> 个章节？此操作将按目录顺序物理拼接文本，且第一章无法被并入。</p>
             <div className="flex justify-end gap-2.5 pt-1">

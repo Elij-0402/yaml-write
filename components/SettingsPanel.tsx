@@ -1,7 +1,8 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import ProviderCredentialsEditor from './ProviderCredentialsEditor';
 import AppNotice from './AppNotice';
+import { useFocusTrap } from '../app/useFocusTrap';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -10,6 +11,9 @@ interface SettingsPanelProps {
 }
 
 export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsPanelProps) {
+  const panelRef = useRef<HTMLElement>(null);
+  useFocusTrap(panelRef, isOpen);
+
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -28,7 +32,7 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="设置">
       <button type="button" className="absolute inset-0 bg-fg/45" onClick={onClose} aria-label="关闭" />
 
-      <aside className="relative flex h-full w-full max-w-md flex-col border-l border-line bg-canvas shadow-pop view-enter">
+      <aside ref={panelRef} className="relative flex h-full w-full max-w-md flex-col border-l border-line bg-canvas shadow-pop view-enter">
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-line px-5">
           <div>
             <div className="eyebrow">Settings</div>

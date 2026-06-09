@@ -128,7 +128,7 @@ function normalizeProviderProfiles(rawProfiles: unknown): Record<ProviderId, Pro
   return normalized;
 }
 
-function normalizeLLMConfig(raw: unknown): LLMConfig {
+export function normalizeLLMConfig(raw: unknown): LLMConfig {
   const defaults = createDefaultProviderProfiles();
   if (!raw || typeof raw !== 'object') {
     return { ...DEFAULT_LLM_CONFIG, providerProfiles: defaults };

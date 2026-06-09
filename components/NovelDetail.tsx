@@ -9,7 +9,7 @@ import { useAppStore } from '../app/store';
 import { ensureLlmConfigReady } from '../app/llmClient';
 import { runDnaExtraction, reconcileExtraction } from '../app/dnaEngine';
 import { getLlmReadinessSummary } from '../app/workflow';
-import { routeBySize, buildArcWindows, selectSampledWindows, ARC_WINDOW_BUDGET_CHARS, SAMPLE_WINDOW_CAP } from '../app/dnaRouting';
+import { routeBySize, buildArcWindows, selectSampledWindows, ARC_WINDOW_BUDGET_CHARS, SAMPLE_WINDOW_CAP, OVERSIZED_CHAPTER_CHARS } from '../app/dnaRouting';
 import { type StructureBeat } from '../app/dnaSchema';
 import AppDialog from './AppDialog';
 import AppNotice from './AppNotice';
@@ -125,7 +125,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
   const dnaReady = isDnaReady(novel);
   const dnaCard = novel.dnaCard ?? null;
   const needsReview = novel.splitStatus === 'needs_review';
-  const oversizedChapter = chapters.find((c) => c.wordCount > 30000) || null;
+  const oversizedChapter = chapters.find((c) => c.wordCount > OVERSIZED_CHAPTER_CHARS) || null;
   const failedChapters = chapters.filter((c) => c.mapStatus === 'error');
   const failureGroups = Array.from(
     failedChapters.reduce((m, c) => {
@@ -317,7 +317,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
               action={<button onClick={() => setManageMode(true)} className="btn btn-secondary btn-sm gap-1.5"><Scissors size={13} /> 前往章节校验</button>}
             >
               {oversizedChapter
-                ? `章节「${oversizedChapter.name}」超过 30,000 字。提取时超出单弧窗上限的尾部会被截断、削弱该段 DNA 覆盖；建议先到章节校验用剪刀或智能拆分裁小，再提取。`
+                ? `章节「${oversizedChapter.name}」超过 48,000 字。提取时超出单弧窗上限的尾部会被截断、削弱该段 DNA 覆盖；建议先到章节校验用剪刀或智能拆分裁小，再提取。`
                 : '当前切分置信度较低，可能影响 DNA 质量。建议先校验修复，修复后会自动开始提取。'}
             </AppNotice>
           )}

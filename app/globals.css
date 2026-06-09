@@ -125,6 +125,9 @@
   }
   .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-3); }
 
+  /* —— 表单字段标签 —— */
+  .field-label { display: block; font-size: 12px; font-weight: 500; color: var(--fg-2); }
+
   /* —— 成稿正文阅读体（全系统唯一用 serif 处）—— */
   .prose-reader { font-family: var(--serif); font-size: 17px; line-height: 1.9; color: var(--fg); white-space: pre-wrap; }
 

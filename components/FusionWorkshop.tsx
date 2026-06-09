@@ -671,7 +671,7 @@ export default function FusionWorkshop() {
     if (!fragmentDraft) return;
     setSceneTexts((prev) => ({
       ...prev,
-      [OPENING_SCENE_NUM]: (prev[OPENING_SCENE_NUM] || '').replace(fragmentDraft.original, fragmentDraft.rewritten),
+      [OPENING_SCENE_NUM]: (prev[OPENING_SCENE_NUM] || '').replace(fragmentDraft.original, () => fragmentDraft.rewritten),
     }));
     setFragmentDraft(null);
     setSelectedFragment('');
@@ -949,11 +949,12 @@ export default function FusionWorkshop() {
                     title="扔掉这条"
                     aria-label="扔掉这条"
                     onClick={(e) => { e.stopPropagation(); discardDirection(idx); }}
-                    className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-raised hover:text-danger group-hover:opacity-100"
+                    className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-raised hover:text-danger group-hover:opacity-100 group-focus-within:opacity-100"
                   ><X size={14} /></button>
                   <span className="font-mono text-xs text-fg-subtle">{idxLabel[idx] || `${idx + 1}.`}</span>
                   <h4 className="pr-6 text-base font-semibold leading-snug text-fg">{dir.title}</h4>
                   <p className="flex-1 text-[13px] leading-relaxed text-fg-muted">{dir.concept}</p>
+                  {dir.catalyst && <p className="flex items-start gap-1.5 text-xs leading-relaxed text-fg-subtle"><Sparkles size={12} className="mt-0.5 shrink-0" /> {dir.catalyst}</p>}
                   {dir.transferNote && <p className="flex items-start gap-1.5 text-xs leading-relaxed text-fg-subtle"><Dna size={12} className="mt-0.5 shrink-0" /> {dir.transferNote}</p>}
                   <div className="flex flex-wrap gap-1.5">
                     <span className="chip">{engName}</span>

@@ -1,28 +1,18 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 
-MAX_CHAPTER_CONTENT_CHARS = 30000
 # 自适应提取：整本直提（小档）与弧窗（中/大档）的输入上限。
 MAX_DIRECT_INPUT_CHARS = 200000
 MAX_ARC_CONTENT_CHARS = 48000
 
 # ============================================================
-# 阶段一：单章 Map 提取
+# 阶段一：弧窗 / 单章 Map 摘要（extract-arc-map 的 response_model）
 # ============================================================
 class ChapterMapSummaryResponse(BaseModel):
     worldviewUpdates: str = Field(..., description="本章新展现的底层设定规则、地图、力量体系变化。若无，请写'无'。")
     keyPlotTurns: str = Field(..., description="本章发生的重大情节转折、核心矛盾进展（两句话以内）。")
     characterDevelopments: str = Field(..., description="本章涉及角色的内心变化、新动机或新关系（极简白描）。")
     styleObservations: str = Field(..., description="本章独特的遣词造句或叙事语调特征。")
-
-
-class ChapterMapInput(BaseModel):
-    title: str = Field(..., min_length=1, max_length=600)
-    content: str = Field(..., min_length=1, max_length=MAX_CHAPTER_CONTENT_CHARS)
-    apiKey: str = Field(..., min_length=1, max_length=512)
-    baseUrl: str = Field(..., min_length=1, max_length=512)
-    model: str = Field(..., min_length=1, max_length=200)
-    temperature: float = Field(0.7, ge=0.0, le=1.5)
 
 
 # ============================================================
@@ -96,17 +86,7 @@ class FusionDirectionsResponse(BaseModel):
     directions: List[FusionDirection] = Field(..., min_length=3, max_length=3)
 
 
-class DNACardItem(BaseModel):
-    novelName: str = ""
-    theme: str = ""
-    worldview: str = ""
-    characters: str = ""
-    narrativeStyle: str = ""
-    styleFingerprint: str = ""
-
-
-# v2 换皮迁移（角色制）输入：指认「哪本骨架(引擎) / 哪本题材(皮)」。
-# Phase 0 先定义形状；Phase 2 改写 generate-fusion-directions 端点时接通，届时移除 dnaCards/fusionBias 旧路。
+# v2 换皮迁移（角色制）输入：指认「哪本骨架(引擎) / 哪本题材(皮)」——engineCard 为骨架，skinSource 为题材皮 / 口述。
 class StructureBeatItem(BaseModel):
     function: str = ""
     summary: str = ""
@@ -128,10 +108,7 @@ class SkinSourceInput(BaseModel):
 
 
 class FusionDirectionsInput(BaseModel):
-    # 旧路（圆桌融合）：Phase 2 移除。
-    dnaCards: List[DNACardItem] = Field(default_factory=list)
-    fusionBias: float = Field(0.5, ge=0.01, le=0.99)
-    # 新路（换皮迁移·角色制）：engineCard 为骨架，skinSource 为题材皮 / 口述。
+    # 换皮迁移·角色制：engineCard 为骨架，skinSource 为题材皮 / 口述。
     engineCard: Optional[EngineCardInput] = None
     skinSource: Optional[SkinSourceInput] = None
     mode: Optional[str] = Field(None, pattern="^(self|cross)$")

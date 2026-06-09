@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import { useFocusTrap } from '../app/useFocusTrap';
 
 interface AppDialogProps {
   open: boolean;
@@ -30,19 +31,14 @@ export default function AppDialog({
   onClose,
 }: AppDialogProps) {
   const [value, setValue] = useState(initialValue);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const confirmRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (open) setValue(initialValue);
   }, [open, initialValue]);
 
-  // 打开后把焦点移到首个可操作元素（输入框优先，否则主行动），满足键盘可达。
-  useEffect(() => {
-    if (!open) return;
-    const t = setTimeout(() => (inputRef.current ?? confirmRef.current)?.focus(), 0);
-    return () => clearTimeout(t);
-  }, [open]);
+  // 焦点陷阱：打开移焦入对话框（优先输入框）、Tab 循环不逃逸、关闭归还焦点给触发元素。
+  useFocusTrap(dialogRef, open);
 
   useEffect(() => {
     if (!open) return;
@@ -58,15 +54,15 @@ export default function AppDialog({
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-fg/45 px-4" role="dialog" aria-modal="true" aria-label={title}>
       <button type="button" className="absolute inset-0" onClick={onClose} aria-label="关闭对话框" tabIndex={-1} />
-      <div className="card relative w-full max-w-md p-6 shadow-pop view-enter">
+      <div ref={dialogRef} className="card relative w-full max-w-md p-6 shadow-pop view-enter">
         <h3 className="text-base font-semibold text-fg">{title}</h3>
         {description && <p className="mt-2 text-sm leading-6 text-fg-muted">{description}</p>}
 
         {inputLabel && (
           <div className="mt-4 space-y-1.5">
-            <label className="field-label">{inputLabel}</label>
+            <label className="field-label" htmlFor="app-dialog-input">{inputLabel}</label>
             <input
-              ref={inputRef}
+              id="app-dialog-input"
               value={value}
               onChange={(event) => setValue(event.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') onConfirm(value); }}
@@ -79,7 +75,6 @@ export default function AppDialog({
         <div className="mt-6 flex justify-end gap-2.5">
           <button onClick={onClose} className="btn btn-ghost">{cancelLabel}</button>
           <button
-            ref={confirmRef}
             onClick={() => onConfirm(inputLabel ? value : undefined)}
             className={`btn ${confirmTone === 'danger' ? 'btn-danger' : 'btn-primary'}`}
           >

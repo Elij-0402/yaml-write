@@ -290,7 +290,7 @@ export default function Home() {
       )}
 
       {persistError && (
-        <div className="fixed bottom-6 left-6 z-50 flex items-center gap-2 rounded-lg border border-danger/40 bg-danger-subtle px-3 py-2 text-xs text-danger shadow-pop">
+        <div role="alert" className="fixed bottom-6 left-6 z-50 flex items-center gap-2 rounded-lg border border-danger/40 bg-danger-subtle px-3 py-2 text-xs text-danger shadow-pop">
           <span className="h-1.5 w-1.5 rounded-full bg-danger" /> 存储不可用，改动可能未保存
         </div>
       )}

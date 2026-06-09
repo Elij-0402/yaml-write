@@ -190,7 +190,7 @@ interface SseEventPayload {
   [key: string]: unknown;
 }
 
-function parseSseBuffer(buffer: string): { events: { event: string; payload: SseEventPayload }[]; rest: string } {
+export function parseSseBuffer(buffer: string): { events: { event: string; payload: SseEventPayload }[]; rest: string } {
   const chunks = buffer.split('\n\n');
   const rest = chunks.pop() ?? '';
   const events: { event: string; payload: SseEventPayload }[] = [];

@@ -14,6 +14,10 @@ export const ARC_MAX_CHARS = 2_000_000;
 export const ARC_WINDOW_BUDGET_CHARS = 24_000;
 // 饱和采样窗口上限：大书最多实测这么多窗，跨全书均匀铺开（含开篇与尾段）。
 export const SAMPLE_WINDOW_CAP = 48;
+// 超大单章告警阈值 = 后端单弧窗上限 MAX_ARC_CONTENT_CHARS / dnaEngine MAX_ARC_INPUT_CHARS。
+// 超过此值的单章在弧窗 map 时尾部才会被截断（dnaEngine 会 console.warn），UI 据此提示先裁切——
+// 与真实截断阈值同源，避免再出现「警告会截断但实际不截断」的 30k/48k 漂移。
+export const OVERSIZED_CHAPTER_CHARS = 48_000;
 
 export function routeBySize(wordCount: number): ExtractionRoute {
   if (!Number.isFinite(wordCount) || wordCount <= SMALL_MAX_CHARS) return 'direct';

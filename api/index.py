@@ -35,7 +35,6 @@ from api.schemas import (
     ArcMapInput,
     BookDirectInput,
     BookReduceInput,
-    ChapterMapInput,
     ChapterMapSummaryResponse,
     FusionDirectionsInput,
     FusionDirectionsResponse,
@@ -62,12 +61,10 @@ REQUEST_TIMEOUT_SECONDS = 25.0
 LONG_REQUEST_TIMEOUT_SECONDS = 120.0  # 重步骤（整本直提 / reduce / 弧窗 / 换皮 / 补洞）面向本地/非 Vercel 后端（决策 A），放宽超时
 STREAM_TIMEOUT_SECONDS = 60.0
 MAX_PARSE_RETRIES = 2
-MAX_CHAPTER_CONTENT_CHARS = 30000
 MAX_REDUCE_INPUT_CHARS = 200000
 MAX_SCENE_CONTEXT_CHARS = 24000
 MAX_SPLIT_RECOMMEND_CHARS = 20000
 RATE_LIMIT_RULES = {
-    "/api/py/extract-chapter-map": (60, 120),
     "/api/py/extract-arc-map": (60, 120),
     "/api/py/extract-book-direct": (60, 10),
     "/api/py/extract-book-reduce": (60, 10),
@@ -128,6 +125,11 @@ LOCAL_PORTS = {11434}
 
 _rate_limit_buckets: dict[str, Deque[float]] = defaultdict(deque)
 _rate_limit_lock = asyncio.Lock()
+# 节流式 GC：每 ~120s 顺带裁剪并删除已空的限流桶，避免唯一 IP 的桶无界堆积（内存泄漏）。
+# 用所有规则的最大窗口作裁剪口径，保守起见绝不误删未过期项。
+_RL_GC_INTERVAL = 120.0
+_RL_MAX_WINDOW = max([w for w, _ in RATE_LIMIT_RULES.values()] + [60])
+_last_rl_gc = 0.0
 
 
 class ApiError(Exception):
@@ -294,6 +296,15 @@ async def ensure_rate_limit(request: Request, endpoint: str) -> None:
     client_key = f"{get_client_ip(request)}:{endpoint}"
 
     async with _rate_limit_lock:
+        global _last_rl_gc
+        if now - _last_rl_gc > _RL_GC_INTERVAL:
+            _last_rl_gc = now
+            for key in list(_rate_limit_buckets.keys()):
+                bucket = _rate_limit_buckets[key]
+                while bucket and bucket[0] < now - _RL_MAX_WINDOW:
+                    bucket.popleft()
+                if not bucket:
+                    del _rate_limit_buckets[key]
         queue = _rate_limit_buckets[client_key]
         cutoff = now - window_seconds
         while queue and queue[0] < cutoff:
@@ -497,42 +508,6 @@ async def validation_error_handler(_: Request, exc: RequestValidationError):
 async def unhandled_error_handler(request: Request, exc: Exception):
     logger.exception("unhandled error endpoint=%s ip=%s", request.url.path, get_client_ip(request))
     return JSONResponse(status_code=500, content=error_payload("internal_error", "服务暂时不可用，请稍后重试。"))
-
-
-@app.post("/api/py/extract-chapter-map")
-async def extract_chapter_map(data: ChapterMapInput, request: Request):
-    await ensure_rate_limit(request, "/api/py/extract-chapter-map")
-    title = sanitize_text(data.title)
-    content = sanitize_text(data.content)
-    model = sanitize_text(data.model)
-    api_key = sanitize_text(data.apiKey)
-    if not title or not content:
-        raise ApiError(status_code=400, code="invalid_request", message="章节标题与内容不能为空。")
-    if len(content) > MAX_CHAPTER_CONTENT_CHARS:
-        raise ApiError(
-            status_code=413,
-            code="content_too_large",
-            message=f"章节内容超长（上限 {MAX_CHAPTER_CONTENT_CHARS} 字符），请先切分。",
-        )
-    validate_llm_creds(api_key, model, data.temperature)
-    logger.info("extract_chapter_map ip=%s model=%s content_chars=%s", get_client_ip(request), model, len(content))
-
-    system_prompt = (
-        "你是一个极其挑剔的文学分析编辑。请对给定章节标题与内容进行降维提炼，"
-        "过滤掉一切对话、抒情、战斗招式细节等冗余文本，只关注实质性的'DNA 突变点'：\n"
-        "1. 出现了哪些前所未有的设定、地图或规则？\n"
-        "2. 主角的情感底线、核心动机或人际关系发生了什么不可逆变化？\n"
-        "3. 本章最核心的情节推力是什么？\n"
-        "4. 本章独特的遣词造句或叙事语调特征？\n"
-        "请用极度精炼、非情绪化的骨架语言回答，每一项控制在 100 字内；某项无内容则填'无'。"
-    )
-    user_prompt = f"章节标题: {title}\n\n章节内容:\n{content}"
-    return await run_structured(
-        api_key=api_key, base_url=data.baseUrl, model=model,
-        response_model=ChapterMapSummaryResponse,
-        system_prompt=system_prompt, user_prompt=user_prompt,
-        temperature=data.temperature, request=request, label="extract_chapter_map",
-    )
 
 
 @app.post("/api/py/extract-book-reduce")
@@ -835,6 +810,9 @@ async def stream_scene_text(data: SceneTextInput, request: Request):
                 stream=True,
             )
             async for chunk in stream:
+                # 客户端断开（停止生成 / 关页）后立即停止从上游拉流，省 BYOK token。
+                if await request.is_disconnected():
+                    break
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta

@@ -51,7 +51,7 @@ Interactive API docs (dev): `http://localhost:3000/api/py/docs` or `http://local
 ### Backend hardening (`api/index.py`)
 
 Because the backend proxies user-supplied keys to arbitrary base URLs, it is deliberately defensive — keep these when editing:
-- **Per-IP rate limiting** (`ensure_rate_limit` + `RATE_LIMIT_RULES`), sliding 60s windows keyed by `x-forwarded-for` (primary) or client host, per endpoint: see the endpoint table below for limits. Unknown endpoints default to 30/60s.
+- **Per-IP rate limiting** (`ensure_rate_limit` + `RATE_LIMIT_RULES`), sliding 60s windows keyed by `x-forwarded-for` (primary) or client host, per endpoint: see the endpoint table below for limits. Unknown endpoints default to 30/60s. Empty buckets are GC'd (~120s throttle) so unique-IP keys don't accumulate unbounded. **Trust boundary:** the key uses the *left-most* `x-forwarded-for` value, which a client can spoof — so the limiter is only sound single-process / behind a trusted reverse proxy (acceptable for this local-first BYOK tool; revisit if deployed public-facing).
 - **SSRF guard** (`normalize_base_url` / `validate_base_url` + `DEFAULT_ALLOWED_BASE_URLS`): base URL must be in the allowlist (OpenAI / DeepSeek / Gemini / SiliconFlow / Ollama-localhost:11434; extendable via `ALLOWED_LLM_BASE_URLS` env). HTTP only for loopback; private/link-local/reserved/multicast IPs blocked; local hosts only on whitelisted ports (`LOCAL_PORTS = {11434}`).
 - **API-key log scrubbing**: `mask_api_key` (→ `sk-***[last4]`) + `scrub_sensitive` (regex over `api_key` fields) — never log plaintext keys; validation-error responses are scrubbed too.
 - **Structured errors**: `classify_openai_error` maps OpenAI SDK exceptions to friendly Chinese `ApiError`s; all responses use `{error:{code,message}}`. Don't leak raw upstream errors.
@@ -118,7 +118,7 @@ The old `generate-storyboard` / `stream-storyboard` endpoints and `StoryboardRes
 
 ### Local persistence — Dexie / IndexedDB (versioned)
 
-`app/db.ts` defines `NovelFusionDB` (`novels`, `chapters`, `fusionSessions`) with versioned schemas + sequential `.upgrade()` migrations, currently at **`version(11)`**. Milestones:
+`app/db.ts` defines `NovelFusionDB` (`novels`, `chapters`, `fusionSessions`) with versioned schemas + sequential `.upgrade()` migrations, currently at **`version(13)`**. Milestones:
 - **v1–v4**: novels/chapters base schema; `splitStatus` index; `splitMeta` normalization.
 - **v5**: book-level DNA fields — `novels.analysisStatus` (indexed, `'idle'`), `mapProgress`, `dnaCard`; `chapters.mapStatus` (indexed, `'pending'`), `mapSummary`.
 - **v6**: optional non-indexed `Chapter.contentSha256` (no-op upgrade; backfilled lazily).
@@ -127,8 +127,10 @@ The old `generate-storyboard` / `stream-storyboard` endpoints and `StoryboardRes
 - **v9**: DNA recut to the **4-layer** card + `FusionSession.settingHistory` (the AI-edit snapshot stack); existing 5-dim cards lazily marked `dnaCardVersion:1` (retained, not migrated). Index strings unchanged.
 - **v10**: `FusionSession` drops the deprecated `storyboard` field (the manuscript is a single continuous opening now). Pure type-layer change; no-op upgrade.
 - **v11**: `FusionSession` drops `settingHistory` (creator diff-preview / version-history removed — AI tweaks now apply directly to the targeted block). Upgrade deletes the stale snapshot stack from existing records.
+- **v12**: `FusionSession` adds optional non-indexed `openingDrafts` (opening-chapter version history — archived before each rewrite, ~5 kept; restore/compare). Lazy no-op upgrade.
+- **v13**: `FusionSession` adds optional non-indexed `freedom` (generation mode: `false`=换皮变题 default / `true`=0→1 原创) + `tone` (prose tone-register preset: cold/hot/humor/lyrical; default = 贴题材). Lazy no-op upgrade.
 
-`FusionSession` shape: `selectedIds`, `customPrompt`, `adversarialRules`, `step` (`material|directions|creator|manuscript`), `directions`, `blocks`, `directionTitle`, `sceneCount`, `sceneTexts`, `sceneResumeStatus`, plus `name/createdAt/updatedAt`.
+`FusionSession` shape: `selectedIds`, `customPrompt`, `adversarialRules`, `step` (`material|directions|creator|manuscript`), `directions`, `blocks`, `directionTitle`, `sceneCount`, `sceneTexts`, `sceneResumeStatus`, `openingDrafts?`, `freedom?`, `tone?`, plus `name/createdAt/updatedAt`.
 
 **Iron rule:** any change to the `Novel`/`Chapter`/`FusionSession` shape requires a new `this.version(n).stores(...).upgrade(...)` block — don't mutate existing version definitions. Components read reactively via `useLiveQuery` (`dexie-react-hooks`); mutations through `db.*.update(...)` propagate to all live queries.
 

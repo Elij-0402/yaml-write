@@ -138,8 +138,9 @@ export default function ProviderCredentialsEditor({
       </div>
     ) : (
       <div className={t.fieldWrap}>
-        <label className={t.label}>提供商</label>
+        <label className={t.label} htmlFor={`${variant}-provider`}>提供商</label>
         <select
+          id={`${variant}-provider`}
           value={activeProvider}
           onChange={(e) => setActiveProvider(e.target.value as typeof activeProvider)}
           className={t.select}
@@ -166,9 +167,10 @@ export default function ProviderCredentialsEditor({
       ollamaSlot
     ) : (
       <div className={t.fieldWrap}>
-        <label className={t.label}>{keyLabel}</label>
+        <label className={t.label} htmlFor={`${variant}-apikey`}>{keyLabel}</label>
         <div className={t.keyRow}>
           <input
+            id={`${variant}-apikey`}
             type={showKey ? 'text' : 'password'}
             value={activeProfile.apiKey}
             onChange={(e) => updateActiveProviderProfile({ apiKey: e.target.value })}
@@ -191,8 +193,9 @@ export default function ProviderCredentialsEditor({
 
   const baseUrlEl = (
     <div className={t.fieldWrap}>
-      <label className={t.label}>接口地址</label>
+      <label className={t.label} htmlFor={`${variant}-baseurl`}>接口地址</label>
       <input
+        id={`${variant}-baseurl`}
         type="text"
         value={activeProfile.baseUrl}
         onChange={(e) => updateActiveProviderProfile({ baseUrl: e.target.value })}
@@ -205,7 +208,7 @@ export default function ProviderCredentialsEditor({
 
   const modelEl = (
     <div className={t.fieldWrap}>
-      <label className={t.label}>模型</label>
+      <label className={t.label} htmlFor={`${variant}-model`}>模型</label>
       {activeProviderMeta.modelPresets.length > 0 && (
         <div className={t.chipRow}>
           {activeProviderMeta.modelPresets.map((preset) => {
@@ -225,6 +228,7 @@ export default function ProviderCredentialsEditor({
         </div>
       )}
       <input
+        id={`${variant}-model`}
         list={datalistId}
         value={activeProfile.model}
         onChange={(e) => updateActiveProviderProfile({ model: e.target.value })}

@@ -1,87 +1,35 @@
-<p align="center">
-  <a href="https://nextjs-fastapi-starter.vercel.app/">
-    <img src="https://assets.vercel.com/image/upload/v1588805858/repositories/vercel/logo.png" height="96">
-    <h3 align="center">Next.js FastAPI Starter</h3>
-  </a>
-</p>
+# 创作 DNA 工坊 · VARIATION ATELIER
 
-<p align="center">Simple Next.j 14 boilerplate that uses <a href="https://fastapi.tiangolo.com/">FastAPI</a> as the API backend.</p>
+一个中文小说「创意 DNA 与换皮变题」工具：把任意小说拆解为可迁移的**引擎**（结构骨架 + 编排节奏）与可替换的**皮**（题材 + 文笔），再把引擎嫁接到新题材上，流式生成一章全新的开篇。定位是**起书 / 立项副驾**（终点 = 一个打磨好的开篇），而非整本写作工厂。
 
-<br/>
+## 它怎么工作
 
-## Introduction
+上传 `.txt` → 浏览器内切分章节 → 按体量自动路由的提取器把全书蒸馏成一张 **4 层引擎/皮 DNA 卡** → 选一本书当**骨架（引擎）**、可选另一本当**题材（皮）**（或口述题材）→ 工坊把骨架的结构节拍迁移到新题材、产出 3 个融合方向 → 选一条，自动补齐设定逻辑缺口并微调四块设定 → **流式生成一章连续开篇**。
 
-This is a hybrid Next.js 14 + Python template. One great use case of this is to write Next.js apps that use Python AI libraries on the backend, while still having the benefits of Next.js Route Handlers and Server Side Rendering.
+所有数据存在浏览器本地（IndexedDB + LocalStorage），无服务端数据库；模型 API Key 走 BYOK，绝不落服务端。
 
-## How It Works
+## 快速开始
 
-The Python/FastAPI server is mapped into to Next.js app under `/api/`.
-
-This is implemented using [`next.config.js` rewrites](https://github.com/digitros/nextjs-fastapi/blob/main/next.config.js) to map any request to `/api/py/:path*` to the FastAPI API, which is hosted in the `/api` folder.
-
-Also, the app/api routes are available on the same domain, so you can use NextJs Route Handlers and make requests to `/api/...`.
-
-On localhost, the rewrite will be made to the `127.0.0.1:8000` port, which is where the FastAPI server is running.
-
-In production, the FastAPI server is hosted as [Python serverless functions](https://vercel.com/docs/concepts/functions/serverless-functions/runtimes/python) on Vercel.
-
-## Demo
-
-https://nextjs-fastapi-starter.vercel.app/
-
-## Deploy Your Own
-
-You can clone & deploy it to Vercel with one click:
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdigitros%2Fnextjs-fastapi%2Ftree%2Fmain)
-
-## Developing Locally
-
-You can clone & create this repo with the following command
-
-```bash
-npx create-next-app nextjs-fastapi --example "https://github.com/digitros/nextjs-fastapi"
-```
-
-## Getting Started
-
-First, create and activate a virtual environment:
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-
-Then, install the dependencies:
+在本目录（`yaml-write/`）下：
 
 ```bash
 npm install
-# or
-yarn
-# or
-pnpm install
+npm run dev          # 并发起 Next.js (:3000) + FastAPI/uvicorn (:8000)
 ```
 
-Then, run the development server(python dependencies will be installed automatically here):
+打开 http://localhost:3000 ，在「设置」里填入任一 OpenAI 兼容服务商的 API Key（默认 DeepSeek）即可解锁全流程。
+
+其它命令：
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
+npm run build        # 生产构建（含全量类型检查）
+npx tsc --noEmit     # 仅类型检查（快）
+npm test             # vitest 纯逻辑单测
+python -m unittest discover -s api   # 后端 Python 单测
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 架构与约定
 
-The FastApi server will be running on [http://127.0.0.1:8000](http://127.0.0.1:8000) – feel free to change the port in `package.json` (you'll also need to update it in `next.config.js`).
+混合 Next.js（全 client component）+ FastAPI，经 `next.config.js` rewrites 同源代理（无 CORS 层）。完整的架构、数据契约、Dexie 版本与开发铁律见 **[CLAUDE.md](CLAUDE.md)** —— 本仓库的权威说明源。
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-- [FastAPI Documentation](https://fastapi.tiangolo.com/) - learn about FastAPI features and API.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js/) - your feedback and contributions are welcome!
+技术栈：Next.js 14 · React 18 · Zustand(persist) · Dexie / IndexedDB · Tailwind · FastAPI · instructor + Pydantic · OpenAI SDK（多 provider BYOK）。

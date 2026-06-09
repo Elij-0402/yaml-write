@@ -12,7 +12,7 @@ import {
 } from './dnaRouting';
 
 // Resumable, concurrency-limited book-level DNA extraction (Map-Reduce).
-// Map: one /extract-chapter-map call per chapter, persisted immediately so a
+// Map: one /extract-arc-map call per arc-window, persisted immediately so a
 // refresh/crash never loses progress. Reduce: fold all map summaries into one
 // NovelDNACard. Re-running skips chapters already mapStatus==='done'.
 
