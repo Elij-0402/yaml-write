@@ -16,8 +16,6 @@ import {
 // refresh/crash never loses progress. Reduce: fold all map summaries into one
 // NovelDNACard. Re-running skips chapters already mapStatus==='done'.
 
-export type DnaProgressListener = (current: number, total: number) => void;
-
 // === 前端 429 抖动指数退避护航 ===
 // 后端 run_structured 已内置 429/502/503/504 退避（api/index.py:279-298），耗尽后透出
 // 真实 HTTP 429（{error:{code:'rate_limited'}}，无 Retry-After / retryAfterSeconds）。
