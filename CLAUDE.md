@@ -68,7 +68,7 @@ The **`NovelDNACard`** is 4 layers — ①② = migratable **engine**, ③④ = 
 
 Other synced shapes: `ChapterMapSummary` (`worldviewUpdates/keyPlotTurns/characterDevelopments/styleObservations`), `FusionDirection` (4 setting blocks + `title/concept/catalyst/transferNote`), and the `SettingBlocks` block keys (`worldviewBlock/protagonistBlock/antagonistBlock/narrativeTone`).
 
-**Legacy 5-dim cards** (`theme/worldview/characters/narrativeStyle/styleFingerprint`) are retained lazily, not migrated (Dexie v9): `db.ts` keeps `LegacyNovelDNACard` + the `isLegacyDnaCard` / `isFourLayerDnaCard` guards, and `Novel.dnaCardVersion` (`1` = legacy, `2` = 4-layer). Re-extracting a novel upgrades it to a v2 card. The deprecated per-chapter `ChapterAnalysis`/`Character`/`Relationship` types still live in `db.ts` (kept on `Chapter.analysis?` for zero data loss) but the backend has no matching model.
+**Legacy 5-dim cards** (`theme/worldview/characters/narrativeStyle/styleFingerprint`) are retained lazily, not migrated (Dexie v9): `db.ts` keeps `LegacyNovelDNACard` + the `isLegacyDnaCard` / `isFourLayerDnaCard` guards, and `Novel.dnaCardVersion` (`1` = legacy, `2` = 4-layer). Re-extracting a novel upgrades it to a v2 card. The deprecated per-chapter `ChapterAnalysis`/`Character`/`Relationship` types and the `Chapter.analysis?` field were **removed** (Dexie v14 deletes any residual `analysis` from stored chapters); the per-chapter map now lives in `mapSummary`.
 
 ### Client-side chapter-splitting engine (V2)
 
@@ -118,7 +118,7 @@ The old `generate-storyboard` / `stream-storyboard` endpoints and `StoryboardRes
 
 ### Local persistence — Dexie / IndexedDB (versioned)
 
-`app/db.ts` defines `NovelFusionDB` (`novels`, `chapters`, `fusionSessions`) with versioned schemas + sequential `.upgrade()` migrations, currently at **`version(13)`**. Milestones:
+`app/db.ts` defines `NovelFusionDB` (`novels`, `chapters`, `fusionSessions`) with versioned schemas + sequential `.upgrade()` migrations, currently at **`version(14)`**. Milestones:
 - **v1–v4**: novels/chapters base schema; `splitStatus` index; `splitMeta` normalization.
 - **v5**: book-level DNA fields — `novels.analysisStatus` (indexed, `'idle'`), `mapProgress`, `dnaCard`; `chapters.mapStatus` (indexed, `'pending'`), `mapSummary`.
 - **v6**: optional non-indexed `Chapter.contentSha256` (no-op upgrade; backfilled lazily).
@@ -129,6 +129,7 @@ The old `generate-storyboard` / `stream-storyboard` endpoints and `StoryboardRes
 - **v11**: `FusionSession` drops `settingHistory` (creator diff-preview / version-history removed — AI tweaks now apply directly to the targeted block). Upgrade deletes the stale snapshot stack from existing records.
 - **v12**: `FusionSession` adds optional non-indexed `openingDrafts` (opening-chapter version history — archived before each rewrite, ~5 kept; restore/compare). Lazy no-op upgrade.
 - **v13**: `FusionSession` adds optional non-indexed `freedom` (generation mode: `false`=换皮变题 default / `true`=0→1 原创) + `tone` (prose tone-register preset: cold/hot/humor/lyrical; default = 贴题材). Lazy no-op upgrade.
+- **v14**: removes the deprecated `ChapterAnalysis` type family — drops the `Chapter.analysis?` field and deletes any residual `analysis` from stored chapters. Index strings unchanged.
 
 `FusionSession` shape: `selectedIds`, `customPrompt`, `adversarialRules`, `step` (`material|directions|creator|manuscript`), `directions`, `blocks`, `directionTitle`, `sceneCount`, `sceneTexts`, `sceneResumeStatus`, `openingDrafts?`, `freedom?`, `tone?`, plus `name/createdAt/updatedAt`.
 

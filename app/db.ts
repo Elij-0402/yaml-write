@@ -1,28 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 import type { ChapterMapSummary, FusionDirection, NovelDNACard } from './dnaSchema';
 
-export interface Character {
-  name: string;
-  personality: string;
-  appearance: string;
-  coreConflict: string;
-  chapters: string;
-}
-
-export interface Relationship {
-  roleA: string;
-  roleB: string;
-  description: string;
-}
-
-export interface ChapterAnalysis {
-  worldview: string;
-  plotSkeleton: string;
-  characters: Character[];
-  relationships: Relationship[];
-  style: string;
-}
-
 // Book-level DNA 形状（ChapterMapSummary / StructureBeat / NovelDNACard）现由 app/dnaSchema.ts 单一源定义并 import。
 
 // 存量 5 维卡：惰性迁移保留原文不丢（决策 B）。仅在重新提取时升级为 4 层 NovelDNACard。
@@ -108,7 +86,6 @@ export interface Chapter {
   content: string;
   contentSha256?: string; // 增量测序校验哈希；由 Story 1.2 写入 / 2.2 精测时按需填充
   status: 'unparsed' | 'parsing' | 'done' | 'error';
-  analysis?: ChapterAnalysis; // deprecated since v5 — replaced by mapSummary
   errorMsg?: string;
   parsingSessionId?: string;
   parsingOwnerId?: string;
@@ -379,6 +356,19 @@ class NovelFusionDB extends Dexie {
       })
       .upgrade(async () => {
         /* freedom / tone 为新可选字段，存量无需迁移 */
+      });
+    // v14: 移除废弃的 ChapterAnalysis 类型族——Chapter.analysis 自 v5 起被 mapSummary 取代，全仓零读写。
+    // 索引串与 v13 一致（analysis 非索引、纯类型层移除）。存量章节残留的 analysis 主动删除，避免无主数据长存。
+    this.version(14)
+      .stores({
+        novels: 'id, name, createdAt, splitStatus, analysisStatus',
+        chapters: 'id, novelId, chapterIndex, status, mapStatus',
+        fusionSessions: 'id, updatedAt, createdAt',
+      })
+      .upgrade(async (tx) => {
+        await tx.table('chapters').toCollection().modify((c: Record<string, unknown>) => {
+          delete c.analysis;
+        });
       });
   }
 }
