@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Upload, Loader2, FileText } from 'lucide-react';
+import { Upload, Loader2, FileText, Plus } from 'lucide-react';
 import { db, type Novel, type SplitStatus } from '../app/db';
 import { useAppStore } from '../app/store';
 import { parseNovelFile } from '../app/novelParser';
@@ -171,35 +171,42 @@ export default function LibraryView({ onRequestDelete }: { onRequestDelete: (nov
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInputRef.current?.click(); } }}
       className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed text-center transition-colors ${
-        empty ? 'gap-4 px-8 py-16' : 'gap-2 px-6 py-8'
+        empty ? 'gap-4 px-8 py-14' : 'gap-1.5 px-6 py-5'
       } ${dragActive ? 'border-accent bg-accent-subtle' : 'border-line bg-panel hover:border-fg-subtle'}`}
     >
-      <div className={`flex items-center justify-center rounded-full border border-line bg-surface text-fg-muted ${empty ? 'h-14 w-14' : 'h-10 w-10'}`}>
-        <Upload size={empty ? 22 : 18} />
+      <div className={`flex items-center justify-center rounded-full border border-line bg-surface text-fg-muted ${empty ? 'h-12 w-12' : 'h-8 w-8'}`}>
+        <Upload size={empty ? 19 : 14} />
       </div>
       <div>
-        <p className="text-sm font-medium text-fg" style={{ color: dragActive ? 'var(--accent)' : undefined }}>
+        <p className={`font-medium ${empty ? 'text-sm' : 'text-[13px]'} ${dragActive ? 'text-accent-ink' : 'text-fg'}`}>
           {dragActive ? '松开鼠标，开始导入' : '点击选择或拖拽 TXT 到这里'}
         </p>
-        <p className="mt-1.5 text-xs leading-6 text-fg-muted">支持 UTF-8 / GB18030 / BIG5 自适应识别 · 单文件 ≤ {MAX_UPLOAD_SIZE_MB}MB</p>
+        <p className="mt-1 text-xs leading-5 text-fg-subtle">UTF-8 / GB18030 / BIG5 自适应识别 · 单文件 ≤ {MAX_UPLOAD_SIZE_MB}MB</p>
       </div>
     </div>
   );
 
   return (
-    <div className="view-enter mx-auto w-full max-w-5xl">
+    <div className="view-enter mx-auto w-full max-w-[880px]">
       <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".txt" className="hidden" />
 
-      <div className="mb-6 flex items-end justify-between gap-4">
+      <div className="mb-5 flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-fg">作品库</h1>
-          <p className="mt-1 text-sm text-fg-muted">导入读过的书，提炼成可换皮的 4 层 DNA。</p>
+          <h1 className="text-base font-semibold text-fg">作品库</h1>
+          <p className="mt-1 text-[13px] text-fg-muted">导入读过的书，提炼成可换皮的 4 层 DNA。</p>
         </div>
-        {!empty && <span className="chip">{novels.length} 部作品</span>}
+        {!empty && (
+          <div className="flex shrink-0 items-center gap-2.5">
+            <span className="font-mono text-xs tabular-nums text-fg-subtle">{novels.length} 部</span>
+            <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+              <Plus size={14} /> 导入作品
+            </button>
+          </div>
+        )}
       </div>
 
       {empty ? (
-        <div className="space-y-6">
+        <div className="space-y-5">
           {dropZone}
           <div className="grid gap-3 sm:grid-cols-3">
             {[
@@ -209,8 +216,8 @@ export default function LibraryView({ onRequestDelete }: { onRequestDelete: (nov
             ].map(([idx, title, desc]) => (
               <div key={idx} className="card p-4">
                 <div className="eyebrow">{idx}</div>
-                <div className="mt-2 flex items-center gap-1.5 text-sm font-medium text-fg">
-                  <FileText size={14} className="text-fg-subtle" />{title}
+                <div className="mt-2 flex items-center gap-1.5 text-[13px] font-medium text-fg">
+                  <FileText size={13} className="text-fg-subtle" />{title}
                 </div>
                 <p className="mt-1 text-xs leading-6 text-fg-muted">{desc}</p>
               </div>
@@ -218,35 +225,39 @@ export default function LibraryView({ onRequestDelete }: { onRequestDelete: (nov
           </div>
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="space-y-3">
           {dropZone}
-          {novels.map((novel) => (
-            <NovelCard
-              key={novel.id}
-              novel={novel}
-              active={selectedNovelId === novel.id}
-              onOpen={() => setSelectedNovelId(novel.id)}
-              onDelete={() => onRequestDelete(novel)}
-            />
-          ))}
+          <div className="overflow-hidden rounded-lg border border-line bg-surface">
+            <div className="divide-y divide-line-2">
+              {novels.map((novel) => (
+                <NovelCard
+                  key={novel.id}
+                  novel={novel}
+                  active={selectedNovelId === novel.id}
+                  onOpen={() => setSelectedNovelId(novel.id)}
+                  onDelete={() => onRequestDelete(novel)}
+                />
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
       {uploading && (
-        <div className="card mt-6 flex items-center gap-4 p-5">
-          <Loader2 size={22} className="shrink-0 animate-spin text-accent motion-reduce:animate-none" />
+        <div className="card mt-5 flex items-center gap-3.5 p-4">
+          <Loader2 size={18} className="shrink-0 animate-spin text-accent-ink motion-reduce:animate-none" />
           <div className="min-w-0">
-            <p className="text-sm font-medium text-fg">{STAGE_LABEL[uploadStage]}</p>
-            <p className="mt-0.5 text-xs leading-6 text-fg-muted">
+            <p className="text-[13px] font-medium text-fg">{STAGE_LABEL[uploadStage]}</p>
+            <p className="mt-0.5 text-xs leading-5 text-fg-muted">
               导入完成后会自动进入切分校验。
-              {uploadStageText && <span className="ml-1 font-mono text-accent">{uploadStageText}</span>}
+              {uploadStageText && <span className="ml-1 font-mono text-accent-ink">{uploadStageText}</span>}
             </p>
           </div>
         </div>
       )}
 
       {errorMsg && (
-        <AppNotice tone="error" title="导入失败" className="mt-6">{errorMsg}</AppNotice>
+        <AppNotice tone="error" title="导入失败" className="mt-5">{errorMsg}</AppNotice>
       )}
     </div>
   );

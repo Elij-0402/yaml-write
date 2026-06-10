@@ -827,7 +827,7 @@ export default function NovelUploader() {
               <div className="truncate font-mono text-[10px] text-fg-subtle">原因：{reviewReasons.join(' · ')}</div>
             )}
             {repairing && (
-              <div className="flex items-center gap-2 text-accent">
+              <div className="flex items-center gap-2 text-accent-ink">
                 <Loader2 size={13} className="animate-spin motion-reduce:animate-none" />
                 <span className="font-mono">{stageLabelMap[uploadStage]} {uploadStageText}</span>
               </div>
@@ -893,7 +893,7 @@ export default function NovelUploader() {
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5 pl-2">
                     {chapter.mapStatus === 'mapping' ? (
-                      <Loader2 size={12} className="animate-spin text-accent motion-reduce:animate-none" />
+                      <Loader2 size={12} className="animate-spin text-accent-ink motion-reduce:animate-none" />
                     ) : chapter.mapStatus === 'done' ? (
                       <Dna size={13} className="text-success" />
                     ) : chapter.mapStatus === 'error' ? (
@@ -932,9 +932,9 @@ export default function NovelUploader() {
       {/* 右栏：阅读 / 裁切 / 空态 */}
       <div className="relative flex h-full flex-1 flex-col overflow-hidden bg-canvas">
         {!activeChapter ? (
-          <div className="flex flex-1 select-none flex-col items-center justify-center gap-5 p-8 text-center">
-            <div className="grid h-20 w-20 place-items-center rounded-full border border-line bg-panel text-fg-subtle">
-              <Scissors size={26} />
+          <div className="flex flex-1 select-none flex-col items-center justify-center gap-4 p-8 text-center">
+            <div className="grid h-14 w-14 place-items-center rounded-full border border-line bg-panel text-fg-subtle">
+              <Scissors size={20} />
             </div>
             <div className="max-w-sm space-y-2">
               <p className="text-sm font-medium text-fg">选择一章，校验它是否适合进入 DNA 提取</p>
@@ -1055,7 +1055,7 @@ export default function NovelUploader() {
                               <div className="my-1.5 w-full rounded-md border border-line bg-surface p-2.5 view-enter">
                                 <div className="flex items-start justify-between gap-3">
                                   <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-1 text-[11px] font-medium text-fg"><Sparkles size={12} className="text-accent" /> AI 推荐在此拆分</div>
+                                    <div className="flex items-center gap-1 text-[11px] font-medium text-fg"><Sparkles size={12} className="text-accent-ink" /> AI 推荐在此拆分</div>
                                     <div className="mt-0.5 text-[11px] leading-relaxed text-fg-muted">{rec.reason}</div>
                                     {rec.suggestedTitle && <div className="mt-1 truncate font-mono text-[10px] text-fg-subtle">下半章建议标题：{rec.suggestedTitle}</div>}
                                   </div>
@@ -1200,11 +1200,11 @@ export default function NovelUploader() {
 
       {/* 批量确认弹窗 */}
       {showBulkModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-fg/45 px-4">
-          <div ref={bulkModalRef} className="card w-full max-w-md space-y-5 p-6 shadow-pop view-enter">
-            <div className="flex items-center gap-2 text-fg"><Link2 size={16} /><h3 className="text-sm font-semibold">批量物理合并确认</h3></div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim px-4">
+          <div ref={bulkModalRef} className="glass pop-enter w-full max-w-[400px] space-y-4 rounded-lg p-5 shadow-pop">
+            <div className="flex items-center gap-2 text-fg"><Link2 size={15} /><h3 className="text-sm font-semibold">批量物理合并确认</h3></div>
             <p className="text-xs leading-relaxed text-fg-muted">确认合并选中的 <span className="font-semibold text-fg">{selectedChapterIds.size}</span> 个章节？此操作将按目录顺序物理拼接文本，且第一章无法被并入。</p>
-            <div className="flex justify-end gap-2.5 pt-1">
+            <div className="flex justify-end gap-2 pt-1">
               <button onClick={() => setShowBulkModal(false)} className="btn btn-ghost" aria-label="取消合并">取消</button>
               <button onClick={() => { setShowBulkModal(false); handleBulkStitch(); }} className="btn btn-primary" aria-label="确认批量合并">确认合并</button>
             </div>

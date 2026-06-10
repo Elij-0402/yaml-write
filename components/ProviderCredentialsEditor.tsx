@@ -37,15 +37,15 @@ interface EditorTheme {
   advancedBody: string;
 }
 
-// 冷调系统极简下两变体趋同（统一亮色），crystal 仅更紧凑些。
+// 双主题下两变体趋同，crystal 仅更紧凑些。激活态文字用 accent-ink（按主题校准对比）。
 const SHARED = {
   chip: 'rounded-md border px-2.5 py-1 transition-colors',
-  chipActive: 'border-accent bg-accent-subtle text-accent',
+  chipActive: 'border-accent bg-accent-subtle text-accent-ink',
   chipMuted: 'border-line bg-surface text-fg-muted hover:text-fg hover:border-fg-subtle',
   keyRow: 'flex items-center gap-2',
   toggleBtn: 'btn btn-ghost btn-sm btn-icon shrink-0',
   tabBase: 'rounded-md border px-2.5 py-1 transition-colors',
-  tabActive: 'border-accent bg-accent-subtle text-accent',
+  tabActive: 'border-accent bg-accent-subtle text-accent-ink',
   tabInactive: 'border-line bg-surface text-fg-muted hover:text-fg',
 };
 

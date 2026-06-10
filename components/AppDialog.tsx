@@ -52,11 +52,11 @@ export default function AppDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-fg/45 px-4" role="dialog" aria-modal="true" aria-label={title}>
-      <button type="button" className="absolute inset-0" onClick={onClose} aria-label="关闭对话框" tabIndex={-1} />
-      <div ref={dialogRef} className="card relative w-full max-w-md p-6 shadow-pop view-enter">
-        <h3 className="text-base font-semibold text-fg">{title}</h3>
-        {description && <p className="mt-2 text-sm leading-6 text-fg-muted">{description}</p>}
+    <div className="fixed inset-0 z-[60] flex items-center justify-center px-4" role="dialog" aria-modal="true" aria-label={title}>
+      <button type="button" className="absolute inset-0 bg-scrim" onClick={onClose} aria-label="关闭对话框" tabIndex={-1} />
+      <div ref={dialogRef} className="glass pop-enter relative w-full max-w-[400px] rounded-lg p-5 shadow-pop">
+        <h3 className="text-sm font-semibold text-fg">{title}</h3>
+        {description && <p className="mt-2 text-[13px] leading-6 text-fg-muted">{description}</p>}
 
         {inputLabel && (
           <div className="mt-4 space-y-1.5">
@@ -67,12 +67,12 @@ export default function AppDialog({
               onChange={(event) => setValue(event.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') onConfirm(value); }}
               placeholder={placeholder}
-              className="input text-sm"
+              className="input"
             />
           </div>
         )}
 
-        <div className="mt-6 flex justify-end gap-2.5">
+        <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose} className="btn btn-ghost">{cancelLabel}</button>
           <button
             onClick={() => onConfirm(inputLabel ? value : undefined)}

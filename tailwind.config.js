@@ -13,7 +13,7 @@ module.exports = {
         serif: ['var(--serif)'],
       },
       colors: {
-        // 冷调系统极简 —— 命名色单一源，指向 globals.css 的 CSS 变量。
+        // Linear 风暗色优先双主题 —— 命名色单一源，指向 globals.css 的 CSS 变量。
         canvas: 'var(--bg)',
         panel: 'var(--bg-subtle)',
         surface: 'var(--surface)',
@@ -23,17 +23,22 @@ module.exports = {
         'fg-subtle': 'var(--fg-3)',
         line: 'var(--border)',
         'line-2': 'var(--border-2)',
+        scrim: 'var(--scrim)',
         accent: {
           DEFAULT: 'var(--accent)',
           hover: 'var(--accent-hover)',
           fg: 'var(--accent-fg)',
+          ink: 'var(--accent-ink)', // 强调色文字/图标（按主题校准对比）；--accent 仅实心填充
           subtle: 'var(--accent-subtle)',
         },
         danger: {
           DEFAULT: 'var(--danger)',
           subtle: 'var(--danger-subtle)',
         },
-        success: 'var(--success)',
+        success: {
+          DEFAULT: 'var(--success)',
+          subtle: 'var(--success-subtle)',
+        },
       },
       borderRadius: {
         sm: 'var(--radius-sm)',

@@ -17,13 +17,14 @@ function novelStatus(novel: Novel): { label: string; tone: StatusTone } {
   return { label: '待处理', tone: 'muted' };
 }
 
-// 状态点：提取中=蓝呼吸（唯一「正在发生」）；就绪=绿实心；其余=灰描边。绝不让 idle/就绪抢强调蓝。
+// 状态点：提取中=靛蓝呼吸（唯一「正在发生」）；就绪=绿实心；其余=灰描边。idle/就绪绝不抢强调色。
 function StatusDot({ tone }: { tone: StatusTone }) {
   if (tone === 'live') return <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent animate-pulse motion-reduce:animate-none" />;
   if (tone === 'ready') return <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />;
   return <span className="h-1.5 w-1.5 shrink-0 rounded-full border border-fg-subtle" />;
 }
 
+// 作品行（列表式，宿主容器负责 divide-y / 圆角）：状态点 + 书名 + mono 计量 + hover 删除。
 export default function NovelCard({
   novel,
   active,
@@ -38,34 +39,30 @@ export default function NovelCard({
   const status = novelStatus(novel);
   return (
     <div
-      className={`card group relative cursor-pointer p-4 transition-colors hover:border-fg-subtle ${active ? 'border-accent' : ''}`}
+      className={`group relative flex h-12 cursor-pointer items-center gap-3 px-4 transition-colors hover:bg-raised ${active ? 'bg-raised' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
     >
-      <div className="flex items-start gap-2.5">
-        <span className="mt-1.5"><StatusDot tone={status.tone} /></span>
-        <div className="min-w-0 flex-1">
-          <div className="truncate pr-6 text-sm font-medium text-fg" title={novel.name}>{novel.name}</div>
-          <div className="mt-2 flex items-center gap-2">
-            <span className="font-mono text-xs tabular-nums text-fg-subtle">{formatWordCount(novel.wordCount)}</span>
-            <span
-              className={`text-xs ${
-                status.tone === 'live' ? 'text-accent' : status.tone === 'ready' ? 'text-success' : 'text-fg-subtle'
-              }`}
-            >
-              · {status.label}
-            </span>
-          </div>
-        </div>
-      </div>
+      <StatusDot tone={status.tone} />
+      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg" title={novel.name}>{novel.name}</span>
+
+      <span className="hidden shrink-0 font-mono text-xs tabular-nums text-fg-subtle sm:inline">{formatWordCount(novel.wordCount)}</span>
+      <span
+        className={`w-16 shrink-0 text-right text-xs ${
+          status.tone === 'live' ? 'text-accent-ink' : status.tone === 'ready' ? 'text-success' : 'text-fg-subtle'
+        }`}
+      >
+        {status.label}
+      </span>
+
       <button
         onClick={(e) => { e.stopPropagation(); onDelete(); }}
-        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-raised hover:text-danger group-hover:opacity-100 focus-visible:opacity-100"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-fg-subtle opacity-0 transition hover:bg-surface hover:text-danger focus-visible:opacity-100 group-hover:opacity-100"
         aria-label={`删除《${novel.name}》`}
       >
-        <X size={15} />
+        <X size={14} />
       </button>
     </div>
   );

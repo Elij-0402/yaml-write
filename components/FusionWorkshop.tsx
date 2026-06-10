@@ -72,56 +72,53 @@ const TONE_PRESETS: { value: string; label: string }[] = [
   { value: 'lyrical', label: '抒情细腻' },
 ];
 
-// Studio 外壳：breadcrumb + 本地步骤条 + 单一「下一步」行 + 返回创作库。每个步骤共用此头部。
+// Studio 外壳：顶部步进轨（数字格 1-4，当前 = 靛蓝实心 = 聚焦标记）+ 单一「下一步」提示。
+// 面包屑与返回创作库由全局顶栏负责。每个步骤共用此头部。
 function StudioShell({
   current,
-  subtitle,
   nextLabel,
-  onBack,
   children,
   overlay,
 }: {
   current: WorkshopStep;
-  subtitle: string;
   nextLabel: string;
-  onBack: () => void;
   children: React.ReactNode;
   overlay?: React.ReactNode;
 }) {
   const currentIdx = WORKSHOP_STEPS.findIndex((s) => s.id === current);
   return (
     <div className="flex h-full min-h-0 flex-col view-enter">
-      <div className="mb-5 shrink-0 space-y-3">
-        <div className="flex items-center gap-1.5 text-xs text-fg-muted">
-          <button onClick={onBack} className="flex items-center gap-1 hover:text-fg"><ChevronLeft size={14} /> 创作库</button>
-          <span className="text-fg-subtle">/</span>
-          <span className="truncate text-fg">{subtitle}</span>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
+      <div className="mb-5 flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="flex items-center" aria-label="创作步骤">
           {WORKSHOP_STEPS.map((s, i) => {
             const state = i < currentIdx ? 'done' : i === currentIdx ? 'current' : 'todo';
             return (
-              <span key={s.id} className="flex items-center gap-1.5">
+              <span key={s.id} className="flex items-center">
                 <span
-                  className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs ${
-                    state === 'current' ? 'border-accent bg-accent-subtle text-accent'
-                      : state === 'done' ? 'border-line bg-surface text-fg-muted'
-                      : 'border-line bg-surface text-fg-subtle'
+                  aria-current={state === 'current' ? 'step' : undefined}
+                  className={`flex items-center gap-1.5 text-[12.5px] font-medium ${
+                    state === 'current' ? 'text-fg' : state === 'done' ? 'text-fg-muted' : 'text-fg-subtle'
                   }`}
                 >
-                  <span className="font-mono text-[10px]">{i + 1}</span> {s.label}
+                  <span
+                    className={`grid h-[18px] w-[18px] place-items-center rounded-[5px] border font-mono text-[10px] leading-none ${
+                      state === 'current'
+                        ? 'border-accent bg-accent text-accent-fg'
+                        : state === 'done'
+                        ? 'border-line bg-surface text-fg-muted'
+                        : 'border-line text-fg-subtle'
+                    }`}
+                  >
+                    {state === 'done' ? <Check size={10} /> : i + 1}
+                  </span>
+                  {s.label}
                 </span>
-                {i < WORKSHOP_STEPS.length - 1 && <span className="h-px w-3 bg-line" />}
+                {i < WORKSHOP_STEPS.length - 1 && <span className="mx-2.5 h-px w-5 bg-line" />}
               </span>
             );
           })}
         </div>
-
-        <div className="flex items-center gap-2.5 border-l-2 border-line pl-3 text-sm">
-          <span className="eyebrow shrink-0">下一步</span>
-          <span className="text-fg-muted">{nextLabel}</span>
-        </div>
+        <span className="min-w-0 truncate text-xs text-fg-subtle">下一步 · {nextLabel}</span>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">{children}</div>
@@ -748,9 +745,8 @@ export default function FusionWorkshop() {
     setSceneResumeStatus((prev) => { const next = { ...prev }; delete next[lastSceneNum]; return next; });
   };
 
-  const backToCreations = () => setWorkshopOpen(false);
-  const errorRow = error && <p className="mt-3 text-sm text-danger">{error}</p>;
-  const rateRow = rateLimited && <p className="mt-2 text-xs text-accent">云端有些拥挤，已自动放缓退避重试，请稍候…</p>;
+  const errorRow = error && <p className="mt-3 text-[13px] text-danger">{error}</p>;
+  const rateRow = rateLimited && <p className="mt-2 text-xs text-accent-ink">云端有些拥挤，已自动放缓退避重试，请稍候…</p>;
 
   // 切换方向确认弹窗：定义一次，作为 overlay 挂到方向页 StudioShell（chooseDirection 唯一触发处）。
   // 此前只渲染在成稿页 return，而 pendingDirectionChoice 只可能从方向页置真 → 方向页点切换静默无弹窗（已修）。
@@ -772,11 +768,11 @@ export default function FusionWorkshop() {
   // ============================ 渲染 ============================
   if (readyNovels.length < 1) {
     return (
-      <StudioShell current="material" subtitle="新创作" nextLabel="先完成至少一本作品的 DNA 提取" onBack={backToCreations}>
-        <div className="card max-w-2xl p-8">
+      <StudioShell current="material" nextLabel="先完成至少一本作品的 DNA 提取">
+        <div className="card max-w-xl p-6">
           <div className="eyebrow">工坊入口 · 启动条件</div>
-          <h2 className="mt-2 text-lg font-semibold text-fg">先让至少一本书准备好。</h2>
-          <p className="mt-2 text-sm leading-7 text-fg-muted">创作工坊吃的是已经提炼完成的 DNA。没有就绪作品时，我们不会把你扔进半残的创作页，而是明确把你送回上一段流程。</p>
+          <h2 className="mt-2 text-base font-semibold text-fg">先让至少一本书准备好。</h2>
+          <p className="mt-2 text-[13px] leading-7 text-fg-muted">创作工坊吃的是已经提炼完成的 DNA。没有就绪作品时，我们不会把你扔进半残的创作页，而是明确把你送回上一段流程。</p>
           {firstIncompleteNovel && (
             <button className="btn btn-secondary mt-5 gap-1.5" onClick={() => { setWorkshopOpen(false); setSelectedNovelId(firstIncompleteNovel.id); }}>
               <ChevronLeft size={14} /> 去看《{firstIncompleteNovel.name}》的提取进度
@@ -794,26 +790,24 @@ export default function FusionWorkshop() {
     const engineDna = engineNovel && isFourLayerDnaCard(engineNovel.dnaCard) ? engineNovel.dnaCard : null;
     const skinDna = skinNovel && isFourLayerDnaCard(skinNovel.dnaCard) ? skinNovel.dnaCard : null;
     return (
-      <StudioShell current="material" subtitle="配方设定" nextLabel={nextActionLabel} onBack={backToCreations}>
-        <div className="mx-auto max-w-4xl space-y-6">
+      <StudioShell current="material" nextLabel={nextActionLabel}>
+        <div className="mx-auto max-w-4xl space-y-5">
           <div>
-            <h2 className="text-lg font-semibold text-fg">谁当骨架，谁换皮？</h2>
-            <p className="mt-1 text-sm text-fg-muted">{sourceSummary}。只需决定两件事：哪本书提供结构骨架，哪本书提供题材与风格，其余交给系统。</p>
+            <h2 className="text-base font-semibold text-fg">谁当骨架，谁换皮？</h2>
+            <p className="mt-1 text-[13px] text-fg-muted">{sourceSummary}。只需决定两件事：哪本书提供结构骨架，哪本书提供题材与风格，其余交给系统。</p>
           </div>
 
           {/* 生成模式 */}
           <div className="flex flex-wrap items-center gap-3">
             <span className="eyebrow">生成模式</span>
-            <div className="inline-flex rounded-md border border-line bg-panel p-0.5" role="group" aria-label="生成模式">
+            <div className="seg" role="group" aria-label="生成模式">
               {([{ v: false, label: '换皮变题' }, { v: true, label: '0→1 原创' }] as const).map((opt) => (
                 <button
                   key={String(opt.v)}
                   type="button"
                   onClick={() => setFreedom(opt.v)}
                   aria-pressed={freedom === opt.v}
-                  className={`rounded-[5px] px-3 py-1.5 text-[13px] font-medium transition-colors ${
-                    freedom === opt.v ? 'bg-surface text-fg shadow-pop' : 'text-fg-muted hover:text-fg'
-                  }`}
+                  className="seg-item"
                 >{opt.label}</button>
               ))}
             </div>
@@ -914,13 +908,13 @@ export default function FusionWorkshop() {
       </button>
     );
     return (
-      <StudioShell current="directions" subtitle="方向筛选" nextLabel={nextActionLabel} onBack={backToCreations} overlay={directionSwitchDialog}>
+      <StudioShell current="directions" nextLabel={nextActionLabel} overlay={directionSwitchDialog}>
         <div className="mx-auto max-w-4xl space-y-5">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <div className="eyebrow">候选池 · {directions.length} 条</div>
-              <h2 className="mt-1 text-lg font-semibold text-fg">挑一条，或再来一批。</h2>
-              <p className="mt-1 max-w-2xl text-sm text-fg-muted">{engName} 的结构引擎 × {skinLabel} 的题材表皮。喜欢的留着、选中其一往下走；都不对就再抽一批（系统会避开已生成过的）。</p>
+              <h2 className="mt-1 text-base font-semibold text-fg">挑一条，或再来一批。</h2>
+              <p className="mt-1 max-w-2xl text-[13px] text-fg-muted">{engName} 的结构引擎 × {skinLabel} 的题材表皮。喜欢的留着、选中其一往下走；都不对就再抽一批（系统会避开已生成过的）。</p>
             </div>
             {directions.length > 0 && rerollBtn}
           </div>
@@ -960,7 +954,7 @@ export default function FusionWorkshop() {
                     <span className="chip">{engName}</span>
                     <span className="chip">{skinLabel}</span>
                   </div>
-                  <span className="flex items-center gap-1 text-xs font-medium text-accent opacity-0 transition group-hover:opacity-100">选择此方向 <ArrowRight size={12} /></span>
+                  <span className="flex items-center gap-1 text-xs font-medium text-accent-ink opacity-0 transition group-hover:opacity-100">选择此方向 <ArrowRight size={12} /></span>
                 </div>
               ))}
             </div>
@@ -987,21 +981,21 @@ export default function FusionWorkshop() {
   // ===== 创世台 =====
   if (step === 'creator') {
     return (
-      <StudioShell current="creator" subtitle={selectedDirectionReady ? directionTitle : '设定定稿'} nextLabel={nextActionLabel} onBack={backToCreations}>
+      <StudioShell current="creator" nextLabel={nextActionLabel}>
         <div className="mx-auto max-w-5xl space-y-5">
           <div>
-            <h2 className="text-lg font-semibold text-fg">定地基，想改就跟我说。</h2>
-            <p className="mt-1 text-sm text-fg-muted">系统已把题材迁移与设定补全做完。确认世界观、主角、对手与叙事语气；AI 改动会直接套用到选中的设定卡，你也可以随时手改。</p>
+            <h2 className="text-base font-semibold text-fg">{selectedDirectionReady ? directionTitle : '定地基，想改就跟我说。'}</h2>
+            <p className="mt-1 text-[13px] text-fg-muted">系统已把题材迁移与设定补全做完。确认世界观、主角、对手与叙事语气；AI 改动会直接套用到选中的设定卡，你也可以随时手改。</p>
           </div>
 
           {repairing && (
-            <div className="flex items-center gap-2 rounded-lg border border-accent/30 bg-accent-subtle px-3 py-2 text-xs text-accent">
+            <div className="flex items-center gap-2 rounded-lg border border-accent/30 bg-accent-subtle px-3 py-2 text-xs text-accent-ink">
               <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse motion-reduce:animate-none" />
               正在补洞：核对新题材能否撑起原结构骨架，修补逻辑断裂点…
             </div>
           )}
           {!repairing && repairGaps.length > 0 && (
-            <details className="rounded-lg border border-success/40 bg-surface px-3 py-2 text-xs text-success">
+            <details className="rounded-lg border border-success/35 bg-success-subtle px-3 py-2 text-xs text-success">
               <summary className="cursor-pointer select-none">已自动修补 {repairGaps.length} 处设定缺口，确保这条方向前后自洽（点开查看）</summary>
               <ul className="mt-2 space-y-1.5 text-fg-muted">
                 {repairGaps.map((g, i) => (<li key={i}><b className="text-success">{g.beat}</b>：{g.issue} → {g.patch}</li>))}
@@ -1061,7 +1055,7 @@ export default function FusionWorkshop() {
 
             {/* AI 共创侧栏 */}
             <aside className="card h-fit space-y-3 p-4 lg:sticky lg:top-0">
-              <div className="flex items-center gap-1.5 text-sm font-semibold text-fg"><Wand2 size={15} className="text-accent" /> 与 AI 共创</div>
+              <div className="flex items-center gap-1.5 text-[13px] font-semibold text-fg"><Wand2 size={14} className="text-accent-ink" /> 与 AI 共创</div>
               <p className="text-[11px] leading-relaxed text-fg-muted">点一张卡选中目标（当前：{BLOCKS.find((b) => b.key === tweakTarget)?.label}）。说一句大白话，AI 会直接改这张卡。</p>
               <div className="rounded-lg border border-line bg-panel p-2">
                 <textarea
@@ -1094,7 +1088,7 @@ export default function FusionWorkshop() {
 
   // ===== 成稿 =====
   return (
-    <StudioShell current="manuscript" subtitle={directionTitle || '开篇成稿'} nextLabel={nextActionLabel} onBack={backToCreations}>
+    <StudioShell current="manuscript" nextLabel={nextActionLabel}>
       <div className="mx-auto max-w-5xl">
         <div className="grid gap-6 lg:grid-cols-[1fr_220px]">
           {/* 正文纸 */}
@@ -1149,7 +1143,7 @@ export default function FusionWorkshop() {
                 {prose.trim() && streamingScene !== OPENING_SCENE_NUM && (
                   <div className="mt-8 border-t border-line pt-5">
                     {streamingScene !== null ? (
-                      <div className="flex items-center gap-2 text-sm text-accent">
+                      <div className="flex items-center gap-2 text-[13px] text-accent-ink">
                         <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse motion-reduce:animate-none" />
                         正在写第 {streamingScene} 段…
                         <button className="btn btn-ghost btn-sm gap-1.5" onClick={() => streamAbortRef.current?.abort()}><Square size={13} /> 停止</button>
@@ -1230,7 +1224,7 @@ export default function FusionWorkshop() {
                 {openingDrafts.map((d, i) => (
                   <div key={i} className="flex items-center gap-2 text-xs">
                     <button
-                      className={`min-w-0 flex-1 truncate text-left transition-colors ${comparingDraftIdx === i ? 'text-accent' : 'text-fg-muted hover:text-fg'}`}
+                      className={`min-w-0 flex-1 truncate text-left transition-colors ${comparingDraftIdx === i ? 'text-accent-ink' : 'text-fg-muted hover:text-fg'}`}
                       onClick={() => setComparingDraftIdx(comparingDraftIdx === i ? null : i)}
                       title="对比这版与当前"
                     >

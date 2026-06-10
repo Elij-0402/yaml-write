@@ -10,6 +10,7 @@ import { runDnaExtraction } from './dnaEngine';
 import { ensureLlmConfigReady } from './llmClient';
 import { getLlmReadinessSummary } from './workflow';
 import AppRail from '../components/AppRail';
+import CommandPalette from '../components/CommandPalette';
 import LibraryView from '../components/LibraryView';
 import CreationsView from '../components/CreationsView';
 import NovelWorkspace from '../components/NovelWorkspace';
@@ -90,6 +91,7 @@ export default function Home() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsIntent, setSettingsIntent] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [homeSection, setHomeSection] = useState<Section>('library');
   const [dialogState, setDialogState] = useState<
@@ -99,12 +101,19 @@ export default function Home() {
     | null
   >(null);
 
-  // ⌘/Ctrl + , 打开设置
+  // ⌘/Ctrl + , 设置 · ⌘/Ctrl + K 命令面板（打开面板时收起设置与移动端抽屉）
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === ',') {
         e.preventDefault();
         setSettingsOpen(true);
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setPaletteOpen((prev) => {
+          const next = !prev;
+          if (next) { setSettingsOpen(false); setMobileNavOpen(false); }
+          return next;
+        });
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -130,16 +139,26 @@ export default function Home() {
   const creationCount = (creationsRaw || []).filter(
     (c) => c.step === 'creator' || c.step === 'manuscript' || Object.keys(c.sceneTexts || {}).length > 0
   ).length;
+  const activeCreation = useLiveQuery(
+    () => (activeCreationId ? db.fusionSessions.get(activeCreationId) : undefined),
+    [activeCreationId],
+  );
 
   const extractingCount = novels.filter((n) => isExtracting(n)).length;
   const llmReadiness = useMemo(() => getLlmReadinessSummary(llmConfig), [llmConfig]);
   const { doneToast, dismissToast } = useBackgroundExtraction(selectedNovelId, llmConfig);
 
-  // 清理幽灵选中：持久化的 selectedNovelId 指向已删除作品时复位（仅在 live 查询解析完成后判断）。
+  // 清理幽灵选中：持久化的 selectedNovelId 指向已删除作品时复位。
+  // liveQuery 数组可能短暂滞后于刚提交的写入（导入后立即选中的场景），
+  // 因此不能只看 novelsRaw —— 复位前再查一次 DB，确认真的不存在才清。
   useEffect(() => {
-    if (novelsRaw && selectedNovelId && !novelsRaw.some((n) => n.id === selectedNovelId)) {
-      setSelectedNovelId(null);
-    }
+    if (!novelsRaw || !selectedNovelId) return;
+    if (novelsRaw.some((n) => n.id === selectedNovelId)) return;
+    let cancelled = false;
+    void db.novels.get(selectedNovelId).then((hit) => {
+      if (!cancelled && !hit) setSelectedNovelId(null);
+    });
+    return () => { cancelled = true; };
   }, [novelsRaw, selectedNovelId, setSelectedNovelId]);
 
   // 进入实体即记住所属段，使「从该实体返回」落回正确的库 home（离开 studio→创作库、离开作品→作品库）。
@@ -184,8 +203,19 @@ export default function Home() {
     }
   };
 
-  const sectionTitle =
-    view === 'studio' ? '创作' : view === 'novel' ? selectedNovel?.name || '作品' : view === 'creations' ? '创作库' : '作品库';
+  // 顶栏面包屑：根段可点（回库），当前实体为纯文本。
+  const breadcrumb: { label: string; onClick?: () => void }[] =
+    view === 'studio'
+      ? [
+          { label: '创作库', onClick: () => selectSection('creations') },
+          { label: activeCreation?.name || activeCreation?.directionTitle || '新创作' },
+        ]
+      : view === 'novel'
+      ? [
+          { label: '作品库', onClick: () => selectSection('library') },
+          { label: selectedNovel?.name || '作品' },
+        ]
+      : [{ label: view === 'creations' ? '创作库' : '作品库' }];
 
   return (
     <div className="flex h-screen overflow-hidden bg-canvas">
@@ -193,6 +223,7 @@ export default function Home() {
         activeSection={activeSection}
         onSelectSection={selectSection}
         onOpenSettings={() => { setSettingsOpen(true); setMobileNavOpen(false); }}
+        onOpenPalette={() => { setPaletteOpen(true); setMobileNavOpen(false); }}
         readinessOk={llmReadiness.ok}
         novelCount={novels.length}
         creationCount={creationCount}
@@ -201,18 +232,37 @@ export default function Home() {
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
-        {/* 移动端顶栏 */}
-        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-4 lg:hidden">
-          <button onClick={() => setMobileNavOpen(true)} className="btn btn-ghost btn-sm btn-icon" aria-label="打开导航">
-            <Menu size={18} />
+        {/* 顶栏：面包屑 + 全局后台活动。 */}
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-4 lg:px-5">
+          <button onClick={() => setMobileNavOpen(true)} className="btn btn-ghost btn-sm btn-icon lg:hidden" aria-label="打开导航">
+            <Menu size={16} />
           </button>
-          <span className="truncate text-sm font-medium text-fg">{sectionTitle}</span>
-        </div>
+
+          <nav aria-label="当前位置" className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px]">
+            {breadcrumb.map((seg, i) => (
+              <React.Fragment key={`${seg.label}-${i}`}>
+                {i > 0 && <span className="text-fg-subtle">/</span>}
+                {seg.onClick ? (
+                  <button onClick={seg.onClick} className="shrink-0 text-fg-muted transition-colors hover:text-fg">{seg.label}</button>
+                ) : (
+                  <span className="truncate font-medium text-fg">{seg.label}</span>
+                )}
+              </React.Fragment>
+            ))}
+          </nav>
+
+          {extractingCount > 0 && (
+            <span className="flex shrink-0 items-center gap-2 rounded-sm border border-line bg-surface px-2 py-1 text-[11px] text-fg-muted">
+              <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse motion-reduce:animate-none" />
+              提取中 <span className="font-mono tabular-nums">{extractingCount}</span>
+            </span>
+          )}
+        </header>
 
         <div
           className={`min-h-0 flex-1 ${view === 'library' || view === 'creations' ? 'overflow-y-auto' : 'overflow-hidden'}`}
         >
-          <div className={`p-5 sm:p-6 lg:p-8 ${view === 'novel' || view === 'studio' ? 'h-full' : ''}`}>
+          <div className={`p-5 sm:p-6 lg:p-7 ${view === 'novel' || view === 'studio' ? 'h-full' : ''}`}>
             {view === 'studio' ? (
               <FusionWorkshop />
             ) : view === 'novel' && selectedNovel ? (
@@ -228,6 +278,13 @@ export default function Home() {
           </div>
         </div>
       </main>
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onSelectSection={selectSection}
+        onOpenSettings={() => { setSettingsOpen(true); setSettingsIntent(null); }}
+      />
 
       <SettingsPanel
         isOpen={settingsOpen}
@@ -281,24 +338,17 @@ export default function Home() {
         <div
           role="status"
           aria-live="polite"
-          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-accent/30 bg-surface px-4 py-2.5 text-sm text-accent shadow-pop"
+          className="pop-enter fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2.5 rounded-lg border border-line bg-surface px-4 py-2.5 text-[13px] text-fg shadow-pop"
         >
-          <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
           {doneToast}
-          <button onClick={dismissToast} className="text-fg-subtle hover:text-fg" aria-label="关闭通知"><X size={14} /></button>
+          <button onClick={dismissToast} className="ml-1 text-fg-subtle transition-colors hover:text-fg" aria-label="关闭通知"><X size={14} /></button>
         </div>
       )}
 
       {persistError && (
         <div role="alert" className="fixed bottom-6 left-6 z-50 flex items-center gap-2 rounded-lg border border-danger/40 bg-danger-subtle px-3 py-2 text-xs text-danger shadow-pop">
           <span className="h-1.5 w-1.5 rounded-full bg-danger" /> 存储不可用，改动可能未保存
-        </div>
-      )}
-
-      {extractingCount > 0 && view !== 'novel' && (
-        <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-xs text-fg-muted shadow-pop">
-          <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse motion-reduce:animate-none" />
-          {extractingCount} 本作品正在后台提取 DNA
         </div>
       )}
     </div>

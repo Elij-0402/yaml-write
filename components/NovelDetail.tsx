@@ -116,7 +116,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
 
   useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
 
-  if (!novel) return <div className="text-fg-muted">加载中…</div>;
+  if (!novel) return <div className="text-sm text-fg-muted">加载中…</div>;
 
   const llmReadiness = getLlmReadinessSummary(llmConfig);
   const progress = novel.mapProgress || { total: 0, current: 0 };
@@ -203,54 +203,51 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
     );
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5">
-      {/* 步骤指引条 */}
-      <div className="card p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="mx-auto max-w-[720px] space-y-4">
+      {/* 流程位置说明 */}
+      <div className="card">
+        <div className="flex flex-wrap items-start justify-between gap-3 px-4 pt-3.5">
           <div className="min-w-0">
-            <div className="eyebrow">DNA 提取 · 工作流中段</div>
-            <p className="mt-1.5 text-sm leading-6 text-fg-muted">{dnaStepCopy.body}</p>
+            <div className="text-[13px] font-medium text-fg">{dnaStepCopy.title}</div>
+            <p className="mt-1 text-xs leading-6 text-fg-muted">{dnaStepCopy.body}</p>
           </div>
           <span className="chip shrink-0">下一步 · {dnaStepCopy.next}</span>
         </div>
-        <div className="mt-3 border-t border-line-2 pt-3">
-          <div className="text-sm font-medium text-fg">{dnaStepCopy.title}</div>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            <span className="chip">已分析 {analyzedCount} 章</span>
-            <span className="chip">短章 {shortCount}</span>
-            <span className="chip">长章 {longCount}</span>
-            {busy && (
-              <span className="chip text-accent">{status === 'reducing' ? '正在归纳全书 DNA' : `提取章节 ${progress.current}/${progress.total || '…'}`}</span>
-            )}
-          </div>
+        <div className="mt-3 flex flex-wrap gap-1.5 border-t border-line-2 px-4 py-3">
+          <span className="chip">已分析 {analyzedCount} 章</span>
+          <span className="chip">短章 {shortCount}</span>
+          <span className="chip">长章 {longCount}</span>
+          {busy && (
+            <span className="chip text-accent-ink">{status === 'reducing' ? '正在归纳全书 DNA' : `提取章节 ${progress.current}/${progress.total || '…'}`}</span>
+          )}
         </div>
       </div>
 
       {dnaReady ? (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="flex items-center gap-2 text-sm font-medium text-success">
-              <span className="h-2 w-2 rounded-full bg-success" /> DNA 已就绪
+            <span className="flex items-center gap-2 text-[13px] font-medium text-success">
+              <span className="h-1.5 w-1.5 rounded-full bg-success" /> DNA 已就绪
             </span>
             <div className="flex items-center gap-2">
               <button onClick={() => setConfirmReextractOpen(true)} className="btn btn-secondary btn-sm gap-1.5" title="基于全书重新归纳 DNA（覆盖当前结果）">
                 <RotateCcw size={13} /> 重新提取
               </button>
               {readyNovelCount >= 1 && (
-                <button onClick={enterWorkshop} className="btn btn-primary btn-sm gap-1.5">进入工坊 <ArrowRight size={14} /></button>
+                <button onClick={enterWorkshop} className="btn btn-primary btn-sm gap-1.5">进入工坊 <ArrowRight size={13} /></button>
               )}
             </div>
           </div>
 
           {/* 覆盖度带 */}
-          <div className="card p-4">
+          <div className="card px-4 py-3.5">
             <div className="flex items-center justify-between gap-3">
               <div className="eyebrow">提取覆盖度</div>
               {extractionRoute === 'sampling'
                 ? <span className="chip">采样估计</span>
                 : <span className="chip text-success"><Check size={11} /> 全覆盖</span>}
             </div>
-            <p className="mt-2 text-sm leading-6 text-fg-muted">
+            <p className="mt-1.5 text-xs leading-6 text-fg-muted">
               {extractionRoute === 'direct'
                 ? '整本直提：全文一次性进入长上下文提取，无章节遗漏。'
                 : extractionRoute === 'arc'
@@ -260,9 +257,9 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
           </div>
 
           {isFourLayerDnaCard(dnaCard) ? (
-            <div className="space-y-3">
-              {/* ① 结构骨架 */}
-              <div className="card p-4">
+            /* 4 层 DNA：单一文档卡，分区由发丝线分隔（①② 引擎 / ③④ 皮）。 */
+            <div className="card divide-y divide-line-2">
+              <div className="px-4 py-3.5">
                 <div className="flex items-center justify-between gap-2">
                   <span className="eyebrow">① 结构骨架 · 引擎</span>
                   {editBtn('structureSkeleton', skeletonToText(dnaCard.structureSkeleton))}
@@ -270,46 +267,47 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
                 {editingLayer === 'structureSkeleton'
                   ? editor('structureSkeleton', '每行一个 beat：功能 — 摘要（摘要可省略）', 150)
                   : (
-                    <div className="mt-2 space-y-1 font-mono text-[13px] leading-relaxed text-fg-muted">
+                    <div className="mt-2 space-y-1 font-mono text-[12.5px] leading-relaxed text-fg-muted">
                       {dnaCard.structureSkeleton.length === 0 ? '—' : dnaCard.structureSkeleton.map((b, i) => (
                         <div key={i}><span className="text-fg">{b.function}</span>{b.summary ? ` — ${b.summary}` : ''}</div>
                       ))}
                     </div>
                   )}
               </div>
-              {/* ②③④ */}
               {[...ENGINE_LAYERS, ...SKIN_LAYERS].map(({ key, label }) => (
-                <div key={key} className="card p-4">
+                <div key={key} className="px-4 py-3.5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="eyebrow">{label}</span>
                     {editBtn(key, dnaCard[key] || '')}
                   </div>
                   {editingLayer === key
                     ? editor(key, '手动编辑')
-                    : <div className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-fg">{dnaCard[key] || '—'}</div>}
+                    : <div className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-fg">{dnaCard[key] || '—'}</div>}
                 </div>
               ))}
             </div>
           ) : isLegacyDnaCard(dnaCard) ? (
             <div className="space-y-3">
               <AppNotice tone="info">旧版 5 维 DNA（原文已保留不丢）。点「重新提取」可升级为引擎/皮 4 层模型。</AppNotice>
-              {[
-                { label: '母题', value: dnaCard.theme },
-                { label: '世界观', value: dnaCard.worldview },
-                { label: '角色', value: dnaCard.characters },
-                { label: '叙事', value: dnaCard.narrativeStyle },
-                { label: '风格', value: dnaCard.styleFingerprint },
-              ].map(({ label, value }) => (
-                <div key={label} className="card p-4">
-                  <div className="eyebrow">{label}</div>
-                  <div className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-fg">{value || '—'}</div>
-                </div>
-              ))}
+              <div className="card divide-y divide-line-2">
+                {[
+                  { label: '母题', value: dnaCard.theme },
+                  { label: '世界观', value: dnaCard.worldview },
+                  { label: '角色', value: dnaCard.characters },
+                  { label: '叙事', value: dnaCard.narrativeStyle },
+                  { label: '风格', value: dnaCard.styleFingerprint },
+                ].map(({ label, value }) => (
+                  <div key={label} className="px-4 py-3.5">
+                    <div className="eyebrow">{label}</div>
+                    <div className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-fg">{value || '—'}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : null}
         </div>
       ) : (
-        <div className="max-w-xl space-y-4">
+        <div className="space-y-4">
           {!busy && (needsReview || oversizedChapter) && (
             <AppNotice
               tone="warning"
@@ -333,15 +331,16 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
           )}
 
           {busy ? (
-            <div className="card space-y-4 p-5">
-              <div className="flex items-center gap-2 text-sm text-fg">
+            <div className="card space-y-3.5 p-4">
+              <div className="flex items-center gap-2 text-[13px] text-fg">
                 <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse motion-reduce:animate-none" />
                 {status === 'reducing' ? '正在归纳全书创作 DNA…' : `正在提取 DNA ${progress.current}/${progress.total || '…'}`}
+                <span className="ml-auto font-mono text-[11px] tabular-nums text-fg-subtle">{pct}%</span>
               </div>
-              <div className="h-1 overflow-hidden rounded-full bg-line">
+              <div className="h-[3px] overflow-hidden rounded-full bg-raised">
                 <div className="h-full rounded-full bg-accent transition-all duration-300" style={{ width: `${pct}%` }} />
               </div>
-              {rateLimited && <p className="text-xs text-accent">云端有些拥挤，已自动放缓退避重试，测序绝不中断。</p>}
+              {rateLimited && <p className="text-xs text-accent-ink">云端有些拥挤，已自动放缓退避重试，测序绝不中断。</p>}
               <p className="text-xs leading-6 text-fg-muted">正在后台自动提取（按体量自适应），可切到别处，跑完会通知你。当前状态会在这里持续更新。</p>
             </div>
           ) : (
@@ -364,15 +363,15 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
               )}
 
               {llmReadiness.ok && (
-                <div className="card p-4 text-xs leading-6 text-fg-muted">
+                <div className="card px-4 py-3 text-xs leading-6 text-fg-muted">
                   DNA 会在后台自动按体量提取。若长时间没有推进，优先检查切分质量与模型配置。
                 </div>
               )}
 
-              <div className="flex gap-6 border-t border-line pt-4 text-xs text-fg-subtle">
+              <div className="flex gap-5 border-t border-line pt-3.5 font-mono text-[11px] tabular-nums text-fg-subtle">
                 <span>已分析 {analyzedCount} 章</span>
-                <span>短章（&lt;500字）{shortCount} 章</span>
-                <span>长章（&gt;12000字）{longCount} 章</span>
+                <span>短章（&lt;500字）{shortCount}</span>
+                <span>长章（&gt;12000字）{longCount}</span>
               </div>
             </>
           )}
@@ -382,8 +381,8 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
       {error && <AppNotice tone="error">{error}</AppNotice>}
 
       {savedToast && (
-        <div role="status" aria-live="polite" className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-accent/30 bg-surface px-4 py-2.5 text-xs text-accent shadow-pop">
-          <span className="h-1.5 w-1.5 rounded-full bg-accent" /> {savedToast}
+        <div role="status" aria-live="polite" className="pop-enter fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-xs text-fg shadow-pop">
+          <span className="h-1.5 w-1.5 rounded-full bg-success" /> {savedToast}
         </div>
       )}
 

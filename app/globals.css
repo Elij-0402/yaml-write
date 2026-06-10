@@ -3,71 +3,108 @@
 @tailwind utilities;
 
 /* ============================================================
-   冷调系统极简设计系统（亮色优先）— zinc 冷中性 + 单一蓝强调。
-   纯白画布、发丝线建层级、几乎无阴影、全 sans。
-   视觉铁律：强调蓝只标「主行动 / 聚焦 / 正在发生」，绝不装饰；
-   每屏一个主行动 = 蓝实心；层级来自字号/字重/留白/发丝线；
-   danger 红仅真错误；idle/就绪用中性灰、不抢蓝。
+   VARIATION ATELIER 设计系统 — Linear 风极简 · 暗色优先双主题。
+   near-black 冷调画布 + 发丝线层级 + 单一低饱和靛蓝强调。
+   视觉铁律：
+   · 靛蓝只标「主行动 / 聚焦 / 正在发生」，绝不装饰；每屏至多一个实心主按钮；
+   · 彩色文字一律用 -ink / 校准变体（text-accent-ink 等），--accent 仅作实心填充；
+   · 层级靠字号/字重/留白/发丝线 + surface 明度阶；--shadow-pop 仅浮层；
+   · 遮罩一律 --scrim；idle/就绪用中性灰点，蓝色只给「正在发生」；
+   · danger 红仅真错误。完整规范见 design-system/MASTER.md。
    ============================================================ */
 @layer base {
+  /* —— 暗色（默认）—— */
   :root {
-    /* —— 面（白 + 冷灰，靠明度与发丝线分层）—— */
-    --bg:        #FFFFFF; /* 应用底 / 画布 */
-    --bg-subtle: #FAFAFA; /* 轨 / 凹槽 / 次级面 (zinc-50) */
-    --surface:   #FFFFFF; /* 卡片（白 + 发丝线，不靠灰底） */
-    --surface-2: #F4F4F5; /* hover / 选中底 (zinc-100) */
+    --bg:        #0B0C0E; /* 应用画布 */
+    --bg-subtle: #0E1012; /* 侧栏 / 轨 / 输入底 */
+    --surface:   #131519; /* 卡片 */
+    --surface-2: #1A1D22; /* hover / 选中底 */
 
-    /* —— 文字三级 —— */
-    --fg:   #18181B; /* 主文字 (zinc-900) */
-    --fg-2: #52525B; /* 次要 (zinc-600) */
-    --fg-3: #A1A1AA; /* 三级 / 占位 (zinc-400) */
+    --fg:   #EDEEF2;
+    --fg-2: #9CA1AA;
+    --fg-3: #646A76;
 
-    /* —— 发丝线 —— */
-    --border:   #E4E4E7; /* 主分隔线 / 边框 (zinc-200) */
-    --border-2: #F4F4F5; /* 内部次级线 (zinc-100) */
+    --border:   #23262C;
+    --border-2: #1A1C21;
 
-    /* —— 单一强调（蓝）—— 主行动 / 聚焦 / 正在发生 —— */
-    --accent:        #2563EB; /* blue-600 */
-    --accent-hover:  #1D4ED8; /* blue-700 */
+    /* 单一强调：低饱和靛蓝（Linear 同源）。 */
+    --accent:        #5E6AD2; /* 实心填充：按钮 / 点 / 进度 / caret */
+    --accent-hover:  #6B76DD;
     --accent-fg:     #FFFFFF;
-    --accent-subtle: #EFF6FF; /* blue-50：激活态弱底 */
+    --accent-ink:    #8B93EE; /* 强调色文字 / 图标（暗色对比校准） */
+    --accent-subtle: #1B1E33;
 
-    /* —— 功能色 —— */
-    --danger:        #DC2626;
-    --danger-subtle: #FEF2F2;
-    --success:       #16A34A; /* 仅完成态点缀，克制使用 */
+    --danger:         #F07178;
+    --danger-subtle:  #2A171A;
+    --success:        #4CC38A;
+    --success-subtle: #15271E;
+
+    --scrim:         rgba(5, 6, 8, 0.62);
+    --surface-glass: rgba(19, 21, 25, 0.86);
 
     --radius-sm: 6px;
     --radius:    8px;
-    --radius-lg: 12px;
+    --radius-lg: 10px;
 
-    /* 唯一浮层柔阴影（卡片几乎全平，仅弹窗 / 抽屉 / 浮层用）*/
-    --shadow-pop: 0 10px 32px -12px rgba(24,24,27,.18), 0 2px 6px -3px rgba(24,24,27,.10);
+    /* 唯一浮层阴影（弹窗 / 抽屉 / 命令面板）。 */
+    --shadow-pop: 0 16px 44px -16px rgba(0, 0, 0, 0.66), 0 4px 14px -8px rgba(0, 0, 0, 0.5);
 
-    /* —— 字体：sans 操作 · mono 计量 · serif 仅成稿正文阅读 —— */
     --sans:  'Inter','system-ui',-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif;
     --mono:  ui-monospace,'SF Mono','Cascadia Code','Consolas','Segoe UI Mono',monospace;
     --serif: 'Source Han Serif SC','Noto Serif SC','Songti SC',Georgia,serif;
   }
 
+  /* —— 亮色（data-theme 由 app/theme.ts + layout 内联脚本写入）—— */
+  :root[data-theme='light'] {
+    --bg:        #FFFFFF;
+    --bg-subtle: #F9F9FB;
+    --surface:   #FFFFFF;
+    --surface-2: #F2F3F5;
+
+    --fg:   #17181C;
+    --fg-2: #5B5E66;
+    --fg-3: #999DA6;
+
+    --border:   #E7E8EB;
+    --border-2: #F2F3F5;
+
+    --accent:        #5E6AD2;
+    --accent-hover:  #4E59C7;
+    --accent-fg:     #FFFFFF;
+    --accent-ink:    #4F58C4;
+    --accent-subtle: #EEF0FB;
+
+    --danger:         #DC2626;
+    --danger-subtle:  #FEF1F1;
+    --success:        #16A34A;
+    --success-subtle: #EBF8F0;
+
+    --scrim:         rgba(20, 21, 26, 0.45);
+    --surface-glass: rgba(255, 255, 255, 0.88);
+
+    --shadow-pop: 0 12px 36px -14px rgba(17, 18, 23, 0.18), 0 3px 10px -6px rgba(17, 18, 23, 0.08);
+  }
+
   * { border-color: var(--border); }
 
-  html { color-scheme: light; }
+  html { color-scheme: dark; }
+  html[data-theme='light'] { color-scheme: light; }
 
   body {
     background: var(--bg);
     color: var(--fg);
     font-family: var(--sans);
     font-size: 14px;
-    line-height: 1.55;
+    line-height: 1.6;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
     min-height: 100vh;
   }
 
+  h1, h2, h3, h4 { letter-spacing: -0.011em; }
+
   ::selection { background: var(--accent-subtle); color: var(--fg); }
 
-  /* 细滚动条 */
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border: 3px solid var(--bg); border-radius: 9999px; }
@@ -76,18 +113,18 @@
   input, textarea, select { background: transparent; font: inherit; color: inherit; }
   input::placeholder, textarea::placeholder { color: var(--fg-3); }
 
-  /* 可见聚焦环（键盘可达）—— 仅 focus-visible，不污染鼠标点击 */
+  /* 键盘可达焦点环：仅 focus-visible，不污染鼠标点击。 */
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
 }
 
 @layer components {
-  /* —— 按钮 —— 一屏一个主行动 = 蓝实心；次级 = 描边；ghost = 透明 —— */
+  /* —— 按钮 —— 32px 紧凑档；一屏一个靛蓝实心主行动 —— */
   .btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-    height: 36px; padding: 0 14px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: 32px; padding: 0 12px;
     font-size: 13px; font-weight: 500; line-height: 1; white-space: nowrap;
-    border: 1px solid transparent; border-radius: var(--radius); cursor: pointer;
-    transition: background-color .15s ease, border-color .15s ease, color .15s ease, opacity .15s ease;
+    border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer;
+    transition: background-color .14s ease, border-color .14s ease, color .14s ease, opacity .14s ease;
   }
   .btn:disabled { opacity: .45; cursor: not-allowed; }
   .btn-primary   { background: var(--accent); color: var(--accent-fg); }
@@ -96,48 +133,85 @@
   .btn-secondary:hover:not(:disabled) { background: var(--surface-2); }
   .btn-ghost     { background: transparent; color: var(--fg-2); }
   .btn-ghost:hover:not(:disabled)     { background: var(--surface-2); color: var(--fg); }
-  .btn-danger    { background: transparent; color: var(--danger); border-color: var(--border); }
-  .btn-danger:hover:not(:disabled)    { background: var(--danger-subtle); border-color: var(--danger); }
-  .btn-sm { height: 30px; padding: 0 10px; font-size: 12px; border-radius: var(--radius-sm); }
-  .btn-lg { height: 42px; padding: 0 20px; font-size: 14px; }
-  .btn-icon { width: 36px; padding: 0; }
-  .btn-icon.btn-sm { width: 30px; }
+  /* danger = 破坏性确认：实心红仅出现在确认弹窗；行内危险动作用 ghost+danger 文字。 */
+  .btn-danger    { background: var(--danger); color: #fff; }
+  .btn-danger:hover:not(:disabled)    { filter: brightness(1.08); }
+  .btn-sm { height: 28px; padding: 0 9px; font-size: 12px; }
+  .btn-lg { height: 38px; padding: 0 16px; font-size: 13.5px; border-radius: var(--radius); }
+  .btn-icon { width: 32px; padding: 0; }
+  .btn-icon.btn-sm { width: 28px; }
 
-  /* —— 输入 —— */
+  /* —— 输入 —— 凹一档的 subtle 底 + 发丝线 —— */
   .input {
-    width: 100%; height: 36px; padding: 0 12px; font-size: 13px;
-    background: var(--surface); color: var(--fg);
-    border: 1px solid var(--border); border-radius: var(--radius);
-    transition: border-color .15s ease, box-shadow .15s ease;
+    width: 100%; height: 32px; padding: 0 10px; font-size: 13px;
+    background: var(--bg-subtle); color: var(--fg);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    transition: border-color .14s ease, box-shadow .14s ease, background-color .14s ease;
   }
-  textarea.input { height: auto; min-height: 80px; padding: 9px 12px; line-height: 1.55; resize: vertical; }
-  .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
+  textarea.input { height: auto; min-height: 76px; padding: 8px 10px; line-height: 1.6; resize: vertical; }
+  .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); background: var(--surface); }
   select.input { cursor: pointer; }
 
-  /* —— 卡片 —— 白 + 发丝线，几乎无阴影 —— */
+  /* —— 卡片 —— surface 明度阶 + 发丝线，无阴影 —— */
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); }
 
-  /* —— chip / mono 计量小标 / eyebrow —— */
+  /* —— 浮层玻璃面（弹窗 / 命令面板）—— */
+  .glass {
+    background: var(--surface-glass);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--border);
+  }
+
+  /* —— chip / eyebrow / kbd / 字段标签 —— */
   .chip {
-    display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px;
+    display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px;
     font-family: var(--mono); font-size: 11px; line-height: 1; color: var(--fg-2);
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
   }
   .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-3); }
-
-  /* —— 表单字段标签 —— */
+  .kbd {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 17px; height: 17px; padding: 0 4px;
+    font-family: var(--mono); font-size: 10.5px; line-height: 1; color: var(--fg-3);
+    background: var(--bg-subtle); border: 1px solid var(--border); border-bottom-width: 1.5px; border-radius: 4px;
+  }
   .field-label { display: block; font-size: 12px; font-weight: 500; color: var(--fg-2); }
 
-  /* —— 成稿正文阅读体（全系统唯一用 serif 处）—— */
+  /* —— 分段控件（tab 切换 / 模式切换）—— 当前态 = 中性 surface + 发丝线，不用蓝 —— */
+  .seg {
+    display: inline-flex; gap: 2px; padding: 2px;
+    background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  .seg-item {
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
+    font-size: 12.5px; font-weight: 500; line-height: 1; color: var(--fg-2);
+    border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer;
+    transition: background-color .14s ease, color .14s ease, border-color .14s ease;
+  }
+  .seg-item:hover { color: var(--fg); }
+  .seg-item[aria-selected='true'], .seg-item[aria-pressed='true'], .seg-item[aria-checked='true'] {
+    background: var(--surface); border-color: var(--border); color: var(--fg);
+  }
+
+  /* —— 成稿正文阅读体（全系统唯一 serif）—— */
   .prose-reader { font-family: var(--serif); font-size: 17px; line-height: 1.9; color: var(--fg); white-space: pre-wrap; }
 
   /* —— 流式光标 —— 唯一持续「正在发生」的活信号 —— */
-  .caret { display: inline-block; width: 2px; height: 1.05em; background: var(--accent); vertical-align: -2px; margin-left: 1px; animation: caret-blink 1.05s step-end infinite; }
+  .caret { display: inline-block; width: 2px; height: 1.05em; background: var(--accent-ink); vertical-align: -2px; margin-left: 1px; animation: caret-blink 1.05s step-end infinite; }
   @keyframes caret-blink { 50% { opacity: 0; } }
 
   /* —— 视图进入（克制）—— */
-  .view-enter { animation: view-rise .24s cubic-bezier(.16,1,.3,1); }
+  .view-enter { animation: view-rise .2s cubic-bezier(.16,1,.3,1); }
   @keyframes view-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  /* —— 浮层进入（弹窗 / 命令面板）—— */
+  .pop-enter { animation: pop-rise .15s cubic-bezier(.16,1,.3,1); }
+  @keyframes pop-rise { from { opacity: 0; transform: scale(.985) translateY(3px); } to { opacity: 1; transform: none; } }
+
+  /* —— 右缘滑入（设置抽屉等 sheet）—— */
+  .slide-in-right { animation: slide-right .22s cubic-bezier(.16,1,.3,1); }
+  @keyframes slide-right { from { opacity: .6; transform: translateX(24px); } to { opacity: 1; transform: none; } }
 
   /* —— 加载骨架 —— >1s 用 skeleton 而非空白 —— */
   .skeleton {
@@ -147,6 +221,6 @@
   @keyframes skeleton-pan { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
 
   @media (prefers-reduced-motion: reduce) {
-    .caret, .view-enter, .skeleton { animation: none; }
+    .caret, .view-enter, .pop-enter, .slide-in-right, .skeleton { animation: none; }
   }
 }
