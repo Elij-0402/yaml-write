@@ -83,6 +83,7 @@ async def generate_output(stage: str, fixture: dict, cfg) -> dict:
         api_key=cfg.api_key, base_url=cfg.base_url, model=cfg.gen_model,
         response_model=spec["response"], system_prompt=system, user_prompt=user,
         temperature=temperature, request=_FakeRequest(), label=f"eval_{stage}",
+        instructor_retries=1, timeout=120.0,
     )
     return result.model_dump()
 

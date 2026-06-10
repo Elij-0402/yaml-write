@@ -70,5 +70,8 @@ def _default_judge(stage, produced, reference, *, cfg, votes=1):
 
 
 def _judge_client(cfg):
-    from api.index import build_openai_client
-    return build_openai_client(cfg.api_key, cfg.base_url, timeout=60.0)
+    """同步 OpenAI 客户端(judge_output 是同步调用);复用后端 SSRF 校验。"""
+    from openai import OpenAI
+    from api.index import validate_base_url
+    return OpenAI(api_key=cfg.api_key, base_url=validate_base_url(cfg.base_url),
+                  timeout=60.0, max_retries=0)

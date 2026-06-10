@@ -43,4 +43,6 @@ evals/cache/
 evals/reports/
 evals/fixtures/captured/
 evals/fixtures/**/*.txt
+evals/cases/
+evals/_bootstrap.py
 .env
