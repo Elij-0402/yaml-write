@@ -37,3 +37,10 @@ next-env.d.ts
 # python
 __pycache__/
 venv
+
+# eval harness
+evals/cache/
+evals/reports/
+evals/fixtures/captured/
+evals/fixtures/**/*.txt
+.env
