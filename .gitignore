@@ -46,3 +46,8 @@ evals/fixtures/**/*.txt
 evals/cases/
 evals/_bootstrap.py
 .env
+
+# agent workspace (local only)
+.scratch/
+.superpowers/
+skills-lock.json
