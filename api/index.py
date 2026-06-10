@@ -55,13 +55,15 @@ from api.prompts import (
     TONE_GUIDE,
     NON_COLD_TONE_RELEASE,
     FOUR_LAYER_DNA_GUIDE,
-    MAX_REDUCE_INPUT_CHARS,
     MAX_SCENE_CONTEXT_CHARS,
     sanitize_text,
     trim_text_tail,
     build_scene_user_prompt,
     build_tone_clause,
     build_repair_prompts,
+    build_book_direct_prompts,
+    build_book_reduce_prompts,
+    build_arc_map_prompts,
 )
 
 logger = logging.getLogger("novel_fusion_api")
@@ -379,22 +381,9 @@ async def extract_book_reduce(data: BookReduceInput, request: Request):
     api_key = sanitize_text(data.apiKey)
     validate_llm_creds(api_key, model, data.temperature)
 
-    lines = []
-    for idx, m in enumerate(data.mapSummaries):
-        lines.append(
-            f"第 {idx + 1} 章 | 设定:{m.worldviewUpdates} | 情节:{m.keyPlotTurns} | "
-            f"角色:{m.characterDevelopments} | 风格:{m.styleObservations}"
-        )
-    timeline = "\n".join(lines)
-    if len(timeline) > MAX_REDUCE_INPUT_CHARS:
-        timeline = timeline[:MAX_REDUCE_INPUT_CHARS]
     logger.info("extract_book_reduce ip=%s model=%s chapters=%s", get_client_ip(request), model, len(data.mapSummaries))
 
-    system_prompt = (
-        "你是一个顶级的小说架构大师与叙事学者。下面是这本小说全部章节/弧窗提炼出的 Map 摘要序列（按时间线排列）。"
-        "请通过长上下文综合推理，" + FOUR_LAYER_DNA_GUIDE
-    )
-    user_prompt = f"小说名：{data.novelName or '（未命名）'}\n\n章节/弧窗 Map 摘要序列：\n{timeline}"
+    system_prompt, user_prompt = build_book_reduce_prompts(data)
     return await run_structured(
         api_key=api_key, base_url=data.baseUrl, model=model,
         response_model=NovelDNACardResponse,
@@ -418,11 +407,7 @@ async def extract_book_direct(data: BookDirectInput, request: Request):
     validate_llm_creds(api_key, model, data.temperature)
     logger.info("extract_book_direct ip=%s model=%s content_chars=%s", get_client_ip(request), model, len(content))
 
-    system_prompt = (
-        "你是一个顶级的小说架构大师与叙事学者。下面给出一本小说接近完整的正文（可能为节选/截断）。"
-        "请整体把握全书后，" + FOUR_LAYER_DNA_GUIDE
-    )
-    user_prompt = f"小说名：{data.novelName or '（未命名）'}\n\n【小说正文】\n{content}"
+    system_prompt, user_prompt = build_book_direct_prompts(data)
     return await run_structured(
         api_key=api_key, base_url=data.baseUrl, model=model,
         response_model=NovelDNACardResponse,
@@ -447,16 +432,7 @@ async def extract_arc_map(data: ArcMapInput, request: Request):
     validate_llm_creds(api_key, model, data.temperature)
     logger.info("extract_arc_map ip=%s model=%s content_chars=%s", get_client_ip(request), model, len(content))
 
-    system_prompt = (
-        "你是一个极其挑剔的文学分析编辑。下面是一段【连续章节区间】的正文（可能跨多章）。"
-        "请对这段区间整体降维提炼，过滤对话、抒情、招式细节等冗余，只关注实质性的'DNA 突变点'：\n"
-        "1. 本区间新展现的底层设定、地图或规则？\n"
-        "2. 主角的情感底线 / 核心动机 / 人际关系发生的不可逆变化？\n"
-        "3. 本区间最核心的情节推力（含关键转折与爽点）？\n"
-        "4. 本区间独特的遣词造句或叙事语调特征？\n"
-        "用极度精炼、非情绪化的骨架语言回答，每项控制在 150 字内；某项无内容则填'无'。"
-    )
-    user_prompt = f"区间标识: {title}\n\n区间正文:\n{content}"
+    system_prompt, user_prompt = build_arc_map_prompts(data)
     return await run_structured(
         api_key=api_key, base_url=data.baseUrl, model=model,
         response_model=ChapterMapSummaryResponse,

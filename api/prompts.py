@@ -2,7 +2,15 @@
 只依赖 api.schemas + 标准库,无副作用、不发网络、不碰凭证。"""
 from typing import Optional
 
-from api.schemas import SceneTextInput, RepairSettingGapsInput
+from api.schemas import (
+    SceneTextInput,
+    RepairSettingGapsInput,
+    BookDirectInput,
+    BookReduceInput,
+    ArcMapInput,
+    MAX_DIRECT_INPUT_CHARS,
+    MAX_ARC_CONTENT_CHARS,
+)
 
 # prompt 拼装相关的上限常量(从 index.py 迁入)。
 MAX_REDUCE_INPUT_CHARS = 200000
@@ -150,4 +158,55 @@ def build_repair_prompts(data: RepairSettingGapsInput) -> tuple[str, str]:
             f"antagonistBlock：{data.antagonistBlock}\nnarrativeTone：{data.narrativeTone}\n\n"
             "请补洞并返回完整的四块设定与 gaps 清单。"
         )
+    return system, user
+
+
+def build_book_direct_prompts(data: BookDirectInput) -> tuple[str, str]:
+    """整本直提 (system, user)。content 的空检查留在 handler;此处复刻截断逻辑。"""
+    content = sanitize_text(data.content)
+    if len(content) > MAX_DIRECT_INPUT_CHARS:
+        content = content[:MAX_DIRECT_INPUT_CHARS]
+    system = (
+        "你是一个顶级的小说架构大师与叙事学者。下面给出一本小说接近完整的正文（可能为节选/截断）。"
+        "请整体把握全书后，" + FOUR_LAYER_DNA_GUIDE
+    )
+    user = f"小说名：{data.novelName or '（未命名）'}\n\n【小说正文】\n{content}"
+    return system, user
+
+
+def build_book_reduce_prompts(data: BookReduceInput) -> tuple[str, str]:
+    """全书 reduce (system, user)。"""
+    lines = []
+    for idx, m in enumerate(data.mapSummaries):
+        lines.append(
+            f"第 {idx + 1} 章 | 设定:{m.worldviewUpdates} | 情节:{m.keyPlotTurns} | "
+            f"角色:{m.characterDevelopments} | 风格:{m.styleObservations}"
+        )
+    timeline = "\n".join(lines)
+    if len(timeline) > MAX_REDUCE_INPUT_CHARS:
+        timeline = timeline[:MAX_REDUCE_INPUT_CHARS]
+    system = (
+        "你是一个顶级的小说架构大师与叙事学者。下面是这本小说全部章节/弧窗提炼出的 Map 摘要序列（按时间线排列）。"
+        "请通过长上下文综合推理，" + FOUR_LAYER_DNA_GUIDE
+    )
+    user = f"小说名：{data.novelName or '（未命名）'}\n\n章节/弧窗 Map 摘要序列：\n{timeline}"
+    return system, user
+
+
+def build_arc_map_prompts(data: ArcMapInput) -> tuple[str, str]:
+    """弧窗 map (system, user)。content/title 的空检查留在 handler;此处复刻截断逻辑。"""
+    title = sanitize_text(data.title)
+    content = sanitize_text(data.content)
+    if len(content) > MAX_ARC_CONTENT_CHARS:
+        content = content[:MAX_ARC_CONTENT_CHARS]
+    system = (
+        "你是一个极其挑剔的文学分析编辑。下面是一段【连续章节区间】的正文（可能跨多章）。"
+        "请对这段区间整体降维提炼，过滤对话、抒情、招式细节等冗余，只关注实质性的'DNA 突变点'：\n"
+        "1. 本区间新展现的底层设定、地图或规则？\n"
+        "2. 主角的情感底线 / 核心动机 / 人际关系发生的不可逆变化？\n"
+        "3. 本区间最核心的情节推力（含关键转折与爽点）？\n"
+        "4. 本区间独特的遣词造句或叙事语调特征？\n"
+        "用极度精炼、非情绪化的骨架语言回答，每项控制在 150 字内；某项无内容则填'无'。"
+    )
+    user = f"区间标识: {title}\n\n区间正文:\n{content}"
     return system, user
