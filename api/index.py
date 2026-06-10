@@ -291,6 +291,25 @@ def sse_event(event: str, payload: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+_capture_counter = 0
+
+
+def capture_fixture(endpoint: str, payload: dict, base_dir: str = "evals/fixtures/captured") -> None:
+    """EVAL_CAPTURE=1 时,把剥离凭证后的请求体落盘成评测夹具。默认关闭,对正常运行零影响。"""
+    if not os.getenv("EVAL_CAPTURE"):
+        return
+    global _capture_counter
+    _capture_counter += 1
+    scrubbed = dict(payload)
+    for k in ("apiKey", "baseUrl"):
+        if k in scrubbed:
+            scrubbed[k] = ""
+    os.makedirs(base_dir, exist_ok=True)
+    path = os.path.join(base_dir, f"{endpoint}-{_capture_counter:04d}.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(scrub_sensitive(json.dumps(scrubbed, ensure_ascii=False, indent=2)))
+
+
 def pick_instructor_mode(base_url: str, model: str) -> instructor.Mode:
     """选择 instructor 结构化模式：DeepSeek 系（直连或经硅基流动）的 function-calling 不稳定，
     改用 JSON 模式（response_format）更可靠；OpenAI / Gemini 等原生支持 tools，保持默认 TOOLS。"""
@@ -378,6 +397,7 @@ async def unhandled_error_handler(request: Request, exc: Exception):
 @app.post("/api/py/extract-book-reduce")
 async def extract_book_reduce(data: BookReduceInput, request: Request):
     await ensure_rate_limit(request, "/api/py/extract-book-reduce")
+    capture_fixture("extract-book-reduce", data.model_dump())
     model = sanitize_text(data.model)
     api_key = sanitize_text(data.apiKey)
     validate_llm_creds(api_key, model, data.temperature)
@@ -398,6 +418,7 @@ async def extract_book_reduce(data: BookReduceInput, request: Request):
 async def extract_book_direct(data: BookDirectInput, request: Request):
     """小档「整本直提」：整本（或大块）净化文本一次喂入 → 直接产 4 层 DNA，跳过逐章 map。"""
     await ensure_rate_limit(request, "/api/py/extract-book-direct")
+    capture_fixture("extract-book-direct", data.model_dump())
     model = sanitize_text(data.model)
     api_key = sanitize_text(data.apiKey)
     content = sanitize_text(data.content)
@@ -422,6 +443,7 @@ async def extract_book_direct(data: BookDirectInput, request: Request):
 async def extract_arc_map(data: ArcMapInput, request: Request):
     """中/大档「弧窗 map」：若干连续章节拼接成的弧文本 → 一条 ChapterMapSummary。"""
     await ensure_rate_limit(request, "/api/py/extract-arc-map")
+    capture_fixture("extract-arc-map", data.model_dump())
     title = sanitize_text(data.title)
     content = sanitize_text(data.content)
     model = sanitize_text(data.model)
@@ -446,6 +468,7 @@ async def extract_arc_map(data: ArcMapInput, request: Request):
 @app.post("/api/py/generate-fusion-directions")
 async def generate_fusion_directions(data: FusionDirectionsInput, request: Request):
     await ensure_rate_limit(request, "/api/py/generate-fusion-directions")
+    capture_fixture("generate-fusion-directions", data.model_dump())
     model = sanitize_text(data.model)
     api_key = sanitize_text(data.apiKey)
     validate_llm_creds(api_key, model, data.temperature)
@@ -476,6 +499,7 @@ async def generate_fusion_directions(data: FusionDirectionsInput, request: Reque
 async def repair_setting_gaps(data: RepairSettingGapsInput, request: Request):
     """补洞：逐结构节拍核对新题材能否支撑，定位断裂点并补入自洽事件 / 设定（质量护城河）。"""
     await ensure_rate_limit(request, "/api/py/repair-setting-gaps")
+    capture_fixture("repair-setting-gaps", data.model_dump())
     model = sanitize_text(data.model)
     api_key = sanitize_text(data.apiKey)
     validate_llm_creds(api_key, model, data.temperature)
@@ -494,6 +518,7 @@ async def repair_setting_gaps(data: RepairSettingGapsInput, request: Request):
 @app.post("/api/py/tweak-fusion-blocks")
 async def tweak_fusion_blocks(data: TweakBlocksInput, request: Request):
     await ensure_rate_limit(request, "/api/py/tweak-fusion-blocks")
+    capture_fixture("tweak-fusion-blocks", data.model_dump())
     model = sanitize_text(data.model)
     api_key = sanitize_text(data.apiKey)
     instruction = sanitize_text(data.userInstruction)
@@ -539,6 +564,7 @@ async def tweak_fusion_blocks(data: TweakBlocksInput, request: Request):
 @app.post("/api/py/stream-scene-text")
 async def stream_scene_text(data: SceneTextInput, request: Request):
     await ensure_rate_limit(request, "/api/py/stream-scene-text")
+    capture_fixture("stream-scene-text", data.model_dump())
     model = sanitize_text(data.model)
     api_key = sanitize_text(data.apiKey)
     validate_llm_creds(api_key, model, data.temperature)
@@ -595,6 +621,7 @@ async def stream_scene_text(data: SceneTextInput, request: Request):
 @app.post("/api/py/split-recommend")
 async def split_recommend(data: SplitRecommendInput, request: Request):
     await ensure_rate_limit(request, "/api/py/split-recommend")
+    capture_fixture("split-recommend", data.model_dump())
     model = sanitize_text(data.model)
     api_key = sanitize_text(data.apiKey)
     validate_llm_creds(api_key, model, data.temperature)
