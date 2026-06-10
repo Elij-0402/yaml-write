@@ -58,6 +58,7 @@ from api.prompts import (
     sanitize_text,
     trim_text_tail,
     build_scene_user_prompt,
+    build_scene_system_prompt,
     build_tone_clause,
     build_repair_prompts,
     build_book_direct_prompts,
@@ -572,18 +573,7 @@ async def stream_scene_text(data: SceneTextInput, request: Request):
     scene = data.currentScene
     logger.info("stream_scene_text ip=%s model=%s scene=%s", get_client_ip(request), model, scene.sceneNumber)
 
-    adv = ANTI_SLOP_CONSTRAINT
-    if data.adversarialRules and data.adversarialRules.strip():
-        adv += f"\n【用户红队对抗规则（必须遵守）】：{data.adversarialRules.strip()}"
-
-    tone_clause = build_tone_clause(data.tone)
-
-    system_prompt = (
-        "你是一位文字极具颗粒度的小说家。请根据给定的设定积木与当前分镜大纲创作小说正文。\n"
-        + adv
-        + tone_clause
-        + "\n直接输出正文，不要任何前言、标题或解释。"
-    )
+    system_prompt = build_scene_system_prompt(data)
     user_prompt = build_scene_user_prompt(data)
 
     async def event_generator():

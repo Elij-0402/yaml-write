@@ -112,6 +112,20 @@ def build_tone_clause(tone: Optional[str]) -> str:
     return clause
 
 
+def build_scene_system_prompt(data: SceneTextInput) -> str:
+    """成稿正文 system prompt（纯函数，可单测）。端点与评测共用,零漂移。
+    反套路硬约束 + 可选红队对抗规则 + 文风寄存器子句。"""
+    adv = ANTI_SLOP_CONSTRAINT
+    if data.adversarialRules and data.adversarialRules.strip():
+        adv += f"\n【用户红队对抗规则（必须遵守）】：{data.adversarialRules.strip()}"
+    return (
+        "你是一位文字极具颗粒度的小说家。请根据给定的设定积木与当前分镜大纲创作小说正文。\n"
+        + adv
+        + build_tone_clause(data.tone)
+        + "\n直接输出正文，不要任何前言、标题或解释。"
+    )
+
+
 def build_repair_prompts(data: RepairSettingGapsInput) -> tuple[str, str]:
     """补洞 (system, user) 提示词（纯函数，可单测）。
     freedom=True：只查方向自身自洽、绝不拉回源结构；False：逐节拍核对源结构能否被新题材支撑。"""
