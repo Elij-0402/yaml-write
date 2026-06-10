@@ -54,7 +54,6 @@ from api.prompts import (
     ANTI_SLOP_CONSTRAINT,
     TONE_GUIDE,
     NON_COLD_TONE_RELEASE,
-    FOUR_LAYER_DNA_GUIDE,
     MAX_SCENE_CONTEXT_CHARS,
     sanitize_text,
     trim_text_tail,
@@ -64,6 +63,8 @@ from api.prompts import (
     build_book_direct_prompts,
     build_book_reduce_prompts,
     build_arc_map_prompts,
+    build_fusion_directions_prompts,
+    resolve_fusion_temperature,
 )
 
 logger = logging.getLogger("novel_fusion_api")
@@ -460,84 +461,8 @@ async def generate_fusion_directions(data: FusionDirectionsInput, request: Reque
     mode = data.mode or ("cross" if (skin and (skin.novelName or skin.themeSkin)) else "self")
     logger.info("generate_fusion_directions ip=%s model=%s mode=%s freedom=%s beats=%s", get_client_ip(request), model, mode, data.freedom, len(engine.structureSkeleton))
 
-    beats = "\n".join(
-        f"- {b.function}：{b.summary}" for b in engine.structureSkeleton if (b.function or "").strip()
-    ) or "（结构骨架为空）"
-
-    if skin and (skin.novelName or (skin.themeSkin or "").strip()):
-        skin_block = (
-            f"题材来源：{skin.novelName or '（口述）'}\n"
-            f"题材世界观与意象：{skin.themeSkin or '（未提供，可据来源自行归纳）'}\n"
-            f"参考文笔质感：{skin.proseStyle or '（无特别要求）'}"
-        )
-        if skin.userBrief and skin.userBrief.strip():
-            skin_block += f"\n用户额外诉求：{skin.userBrief.strip()}"
-    else:
-        brief = (skin.userBrief.strip() if (skin and skin.userBrief) else "")
-        skin_block = (
-            "（自我裂变：无题材书，请基于用户口述/自由发挥另立一个与原书反差鲜明的新题材）\n"
-            f"用户口述题材诉求：{brief or '（未指定，请自选一个反差鲜明的新题材）'}"
-        )
-
-    extra = ""
-    if data.userCustomPrompt and data.userCustomPrompt.strip():
-        extra += f"\n\n【用户自定义大方向】：{data.userCustomPrompt.strip()}"
-    if data.adversarialRules and data.adversarialRules.strip():
-        extra += f"\n\n【用户红队对抗规则（最高优先级，违反即重写）】：{data.adversarialRules.strip()}"
-    if data.avoidDirections:
-        avoid_lines = "\n".join(
-            f"- {a.strip()}" for a in data.avoidDirections if (a or "").strip()
-        )
-        if avoid_lines:
-            extra += (
-                "\n\n【已生成过的方向（必须明显避开：题材内核 / 核心机制 / 角色配置都要换，"
-                "禁止换名雷同或换汤不换药）】：\n" + avoid_lines
-            )
-
-    if data.freedom:
-        # 0→1 原创 / 自由重组分支：DNA 当灵感调色板而非固定骨架，用户意图压过源书节拍，
-        # 松绑「节拍不变」硬规则、软化反套路对文风的压平，并抬高 variation（temperature 下限 0.9）。
-        system_prompt = (
-            "你是一位富于原创力的小说立项策划（学理：把 Propp 功能 / 类推迁移当作【灵感源】，而非模具）。"
-            "任务：把【骨架引擎】的功能节拍仅当灵感调色板，产出 3 个真正原创、彼此迥异的开篇立项方向。\n"
-            "原则：\n"
-            "1. DNA 是灵感不是模具——可自由重组 / 增删 / 跳过 / 另起结构节拍，不必保留原书的节拍序列与顺序。\n"
-            "2. 用户意图（想往哪写 / 口述题材 / 反套路约束）权重高于源书节拍；二者冲突时优先服从用户意图，大胆偏离源书。\n"
-            "3. 3 个方向须采用迥异的核心创意（题材内核 / 主题 / 机制 / 主角配置都不同），禁止换名式雷同，也禁止三个都只是源书的近似重映射。\n"
-            "4. 每个方向给出：title、concept（一句话核心冲突）、catalyst（催化变量及其质变）、"
-            "worldviewBlock / protagonistBlock / antagonistBlock / narrativeTone（具体设定四块）、"
-            "transferNote（一句话：从引擎借用了什么灵感、又如何大胆偏离 / 重组）。\n"
-            "5. 设定四块要逻辑自洽、可支撑后续开篇正文；文风随题材自由生长、鼓励鲜明个性，不必压成统一冷腔。\n"
-            "（文风提示：仍尽量避免「命运的齿轮」「那一刻」之类陈词滥调与空洞煽情，但不强制统一冷腔——优先贴合各自题材的鲜明文风。）"
-        )
-        user_prompt = (
-            f"【可借用的引擎灵感（仅供参考，可自由取舍 / 重组 / 另起，非约束）】\n来源：{engine.novelName or '（未命名）'}\n"
-            f"结构功能节拍：\n{beats}\n编排节奏参考：{engine.pacingSyuzhet or '（未提供）'}\n\n"
-            f"【创作主轴（最高权重）与题材调色板】\n{skin_block}{extra}\n\n"
-            "请以用户意图为主轴、引擎仅作灵感，产出 3 个真正原创、彼此迥异的开篇立项方向。"
-        )
-        temperature = min(1.5, max(data.temperature, 0.9))
-    else:
-        system_prompt = (
-            "你是一位精通「换皮变题」的小说迁移大师（学理：Propp 功能不变·角色可替换；Riedl『story analogues』类推迁移）。"
-            "任务：把【骨架引擎】的功能节拍序列，逐一类推迁移到【新题材皮】，产出 3 个『形似神不似』的换皮嫁接方向。\n"
-            "硬规则：\n"
-            "1. 保持引擎的功能节拍序列与编排节奏不变——同一套结构骨架与爽点曲线，只换皮、不换骨。\n"
-            "2. 把每个功能节拍重新具象化为新题材里的等价事件（角色 / 道具 / 场景 / 机制换皮，功能不变），严禁照抄原书的题材名词。\n"
-            "3. 3 个方向必须采用显著不同的嫁接思路（如：题材直译 / 反转母题 / 杂交第三元素），彼此在题材与机制上明显区分，禁止换名式雷同。\n"
-            "4. 每个方向给出：title、concept（一句话核心冲突）、catalyst（催化变量及其质变）、"
-            "worldviewBlock / protagonistBlock / antagonistBlock / narrativeTone（换皮后的新书具体设定四块）、"
-            "transferNote（一句话溯源：保留了引擎的哪条结构、替换成了什么题材皮）。\n"
-            "5. 设定四块要逻辑自洽、可支撑后续开篇正文；narrativeTone 贴合新题材重新生成文笔，不照搬原书。\n"
-            + ANTI_SLOP_CONSTRAINT
-        )
-        user_prompt = (
-            f"【骨架引擎（迁移不变量）】\n来源：{engine.novelName or '（未命名）'}\n"
-            f"结构功能节拍序列：\n{beats}\n编排节奏：{engine.pacingSyuzhet or '（未提供）'}\n\n"
-            f"【新题材皮（替换目标）】\n{skin_block}{extra}\n\n"
-            "请输出 3 个换皮嫁接方向。"
-        )
-        temperature = data.temperature
+    system_prompt, user_prompt = build_fusion_directions_prompts(data)
+    temperature = resolve_fusion_temperature(data)
     return await run_structured(
         api_key=api_key, base_url=data.baseUrl, model=model,
         response_model=FusionDirectionsResponse,
