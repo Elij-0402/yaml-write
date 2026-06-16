@@ -12,6 +12,7 @@ import { planBlobPresplit } from '../app/blobPresplit';
 import { planStitch, planBulkStitch, planSplit, buildStitchBackup } from '../app/chapterOps';
 import { DEFAULT_CUSTOM_REGEX, validateLineRegex } from '../app/splitRegex';
 import { OVERSIZED_CHAPTER_CHARS } from '../app/dnaRouting';
+import { formatWordCount, sha256Hex } from '../app/util';
 import ProviderCredentialsEditor from './ProviderCredentialsEditor';
 import AppDialog from './AppDialog';
 import { useFocusTrap } from '../app/useFocusTrap';
@@ -36,19 +37,6 @@ interface SplitRecommendation {
 
 type UploadStage = 'idle' | 'detecting' | 'reading' | 'splitting' | 'hashing' | 'saving';
 
-function formatWordCount(count: number): string {
-  if (count >= 10000) return `${(count / 10000).toFixed(1)}万`;
-  return `${count}`;
-}
-
-async function computeSha256(text: string): Promise<string> {
-  const msgBuffer = new TextEncoder().encode(text);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  return hashHex;
-}
-
 // 章节校验台（切分复核）：导入由 LibraryView 负责，本组件只在已选中作品时被 NovelWorkspace 的「章节校验」tab 挂载。
 export default function NovelUploader() {
   const { selectedNovelId, setManageMode, llmConfig } =
@@ -57,7 +45,6 @@ export default function NovelUploader() {
   const activeProviderMeta = getProviderMeta(activeProvider);
   const activeProfile = llmConfig.providerProfiles[activeProvider];
 
-  const [uploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [uploadStage, setUploadStage] = useState<UploadStage>('idle');
   const [uploadStageText, setUploadStageText] = useState('');
@@ -262,7 +249,7 @@ export default function NovelUploader() {
 
       await new Promise((resolve) => setTimeout(resolve, 200));
 
-      const sha = await computeSha256(plan.mergedContent);
+      const sha = await sha256Hex(plan.mergedContent);
 
       await db.transaction('rw', [db.chapters, db.novels], async () => {
         await db.chapters.update(plan.keepId, {
@@ -377,7 +364,7 @@ export default function NovelUploader() {
       // 各保留锚点合并后正文的 sha（async crypto，先于事务算好）。
       const shaByKeep = new Map<string, string>();
       for (const m of plan.merges) {
-        shaByKeep.set(m.keepId, await computeSha256(m.mergedContent));
+        shaByKeep.set(m.keepId, await sha256Hex(m.mergedContent));
       }
 
       await db.transaction('rw', [db.chapters, db.novels], async () => {
@@ -458,7 +445,7 @@ export default function NovelUploader() {
   };
 
   const doResplit = async (strategy: SplitStrategyId) => {
-    if (!activeNovel || repairing || uploading) return;
+    if (!activeNovel || repairing) return;
     if (!activeNovel.sourceTextCleaned?.trim()) { setErrorMsg('本地缓纯文本内容缺失，无法重分章'); return; }
 
     if (strategy === 'custom') {
@@ -558,7 +545,7 @@ export default function NovelUploader() {
   };
 
   const runResplit = async (strategy: SplitStrategyId) => {
-    if (!activeNovel || repairing || uploading) return;
+    if (!activeNovel || repairing) return;
     if (isExtracting(activeNovel)) {
       setErrorMsg('正在提取 DNA，重新切分会删除正在写入的章节。请先到「DNA 提取」页暂停后再重切。');
       return;
@@ -619,8 +606,8 @@ export default function NovelUploader() {
 
       const plan = planSplit(activeChapter, originalLineIndices[pIdx], chapters);
 
-      const shaA = await computeSha256(plan.contentA);
-      const shaB = await computeSha256(plan.contentB);
+      const shaA = await sha256Hex(plan.contentA);
+      const shaB = await sha256Hex(plan.contentB);
 
       const newChapterId = crypto.randomUUID();
 

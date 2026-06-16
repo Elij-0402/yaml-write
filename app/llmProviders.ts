@@ -21,8 +21,6 @@ export interface ProviderMeta {
   modelPresets: ProviderModelPreset[];
 }
 
-const PROVIDER_ORDER: ProviderId[] = ['openai', 'deepseek', 'gemini', 'siliconflow', 'ollama', 'custom'];
-
 export const PROVIDER_REGISTRY: Record<ProviderId, ProviderMeta> = {
   openai: {
     id: 'openai',
@@ -100,7 +98,7 @@ export const PROVIDER_REGISTRY: Record<ProviderId, ProviderMeta> = {
 };
 
 export function isProviderId(value: unknown): value is ProviderId {
-  return typeof value === 'string' && PROVIDER_ORDER.includes(value as ProviderId);
+  return typeof value === 'string' && Object.hasOwn(PROVIDER_REGISTRY, value);
 }
 
 export function getProviderMeta(providerId: ProviderId): ProviderMeta {
@@ -108,13 +106,12 @@ export function getProviderMeta(providerId: ProviderId): ProviderMeta {
 }
 
 export function listProviderMetas(): ProviderMeta[] {
-  return PROVIDER_ORDER.map((providerId) => PROVIDER_REGISTRY[providerId]);
+  return Object.values(PROVIDER_REGISTRY);
 }
 
 export function createDefaultProviderProfiles(): Record<ProviderId, ProviderProfile> {
-  return PROVIDER_ORDER.reduce((acc, providerId) => {
-    const provider = PROVIDER_REGISTRY[providerId];
-    acc[providerId] = {
+  return Object.values(PROVIDER_REGISTRY).reduce((acc, provider) => {
+    acc[provider.id] = {
       apiKey: '',
       baseUrl: provider.defaultBaseUrl,
       model: provider.defaultModel,

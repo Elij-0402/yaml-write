@@ -8,6 +8,7 @@ import { useAppStore } from '../app/store';
 import { parseNovelFile } from '../app/novelParser';
 import { planBlobPresplit } from '../app/blobPresplit';
 import { rescoreSplit } from '../app/splitQuality';
+import { OVERSIZED_CHAPTER_CHARS } from '../app/dnaRouting';
 import NovelCard from './NovelCard';
 import AppNotice from './AppNotice';
 
@@ -23,11 +24,6 @@ const STAGE_LABEL: Record<UploadStage, string> = {
   hashing: '计算内容指纹与一致性校验…',
   saving: '写入本地项目与章节索引…',
 };
-
-async function computeSha256(text: string): Promise<string> {
-  const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
-}
 
 export default function LibraryView({ onRequestDelete }: { onRequestDelete: (novel: Novel) => void }) {
   const { selectedNovelId, setSelectedNovelId, setManageMode } = useAppStore();
@@ -129,9 +125,14 @@ export default function LibraryView({ onRequestDelete }: { onRequestDelete: (nov
         await db.chapters.bulkAdd(chaptersToSave);
       });
 
-      // 导入后落到「章节校验」工作区：先看见章节+质量再显式进 DNA。
+      // 导入后自动分流（goal·流程自动化）：
+      // · 高置信切分 → 落 DNA 板（manageMode=false），后台自动起提取（见 page.tsx 置信度闸）。
+      // · 中置信切分 → 落 DNA 板，但不自动跑；DNA 板给非阻塞提示 + 「直接开始提取」一键继续。
+      // · 低置信 / 超长章节 → 落「章节校验」台（manageMode=true），先人工修复再继续。
+      const hasOversized = effectiveChapters.some((c) => c.wordCount > OVERSIZED_CHAPTER_CHARS);
+      const needsReview = effSplitMeta.confidenceLevel === 'low' || hasOversized;
       setSelectedNovelId(novelId);
-      setManageMode(true);
+      setManageMode(needsReview);
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       setErrorMsg(err instanceof Error ? err.message : '解析或保存小说失败');
@@ -249,7 +250,7 @@ export default function LibraryView({ onRequestDelete }: { onRequestDelete: (nov
           <div className="min-w-0">
             <p className="text-[13px] font-medium text-fg">{STAGE_LABEL[uploadStage]}</p>
             <p className="mt-0.5 text-xs leading-5 text-fg-muted">
-              导入完成后会自动进入切分校验。
+              切分质量达标会直接进入 DNA，存疑才转人工校验。
               {uploadStageText && <span className="ml-1 font-mono text-accent-ink">{uploadStageText}</span>}
             </p>
           </div>

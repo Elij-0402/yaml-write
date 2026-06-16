@@ -6,11 +6,7 @@ import { db } from '../app/db';
 import { useAppStore } from '../app/store';
 import NovelDetail from './NovelDetail';
 import NovelUploader from './NovelUploader';
-
-function formatWordCount(count: number): string {
-  if (count >= 10000) return `${(count / 10000).toFixed(1)} 万字`;
-  return `${count} 字`;
-}
+import { formatWordCount } from '../app/util';
 
 // 单本作品工作区：标题 + mono 计量 + 分段 tab（DNA / 章节校验）。面包屑由全局顶栏负责。
 export default function NovelWorkspace({ novelId }: { novelId: string }) {
@@ -27,7 +23,7 @@ export default function NovelWorkspace({ novelId }: { novelId: string }) {
           <h1 className="truncate text-base font-semibold text-fg">{novel?.name || '加载中…'}</h1>
           {novel && (
             <span className="shrink-0 font-mono text-xs tabular-nums text-fg-subtle">
-              {formatWordCount(novel.wordCount)} · {chapterCount} 章
+              {formatWordCount(novel.wordCount)} 字 · {chapterCount} 章
             </span>
           )}
         </div>

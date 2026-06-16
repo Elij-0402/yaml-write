@@ -122,6 +122,10 @@ export interface FusionSession {
   openingDrafts?: OpeningDraft[]; // v12：开篇历史版本（重写前归档，可恢复/对比；缺省视为无历史）
   freedom?: boolean; // v13：生成模式（false=换皮变题默认 / true=0→1 原创）持久化，重载不再回默认
   tone?: string;     // v13：成稿文风寄存器预设键（cold/hot/humor/lyrical；缺省=贴题材）
+  // v15：配方对话框 / 方向候选池草稿持久化——关闭/刷新工坊后可原样恢复（缺省视为初始态）。
+  recipeStage?: number;        // 配方向导当前子屏（0 骨架 / 1 题材 / 2 意图 / 3 确认）
+  avoidDirections?: string[];  // 候选池「已丢弃 / 不喜欢」方向描述（title：concept），再生成时回喂去重
+  lockedFeatures?: string[];   // 候选池锁定的亮点，注入后续生成的 userCustomPrompt（必须保留）
   updatedAt: number;
 }
 
@@ -369,6 +373,18 @@ class NovelFusionDB extends Dexie {
         await tx.table('chapters').toCollection().modify((c: Record<string, unknown>) => {
           delete c.analysis;
         });
+      });
+    // v15: FusionSession 新增 recipeStage / avoidDirections / lockedFeatures（配方对话框 + 候选池草稿），
+    // 均可选、非索引。索引串与 v14 一致。新可选字段，存量留空（recipeStage 缺省 0、两数组缺省 []）——
+    // 不回填以免阻塞启动主线程；首次进入新版配方向导 / 候选池时按需写入。
+    this.version(15)
+      .stores({
+        novels: 'id, name, createdAt, splitStatus, analysisStatus',
+        chapters: 'id, novelId, chapterIndex, status, mapStatus',
+        fusionSessions: 'id, updatedAt, createdAt',
+      })
+      .upgrade(async () => {
+        /* recipeStage / avoidDirections / lockedFeatures 为新可选字段，存量无需迁移 */
       });
   }
 }

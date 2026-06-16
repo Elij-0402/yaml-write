@@ -2,6 +2,7 @@ import { db, type Chapter } from './db';
 import { type ChapterMapSummary, type NovelDNACard, parseChapterMapSummary, parseNovelDNACard } from './dnaSchema';
 import { selectResumeTargets, planReconcile } from './dnaState';
 import { RateLimitSignal, TransientError, callStructured } from './llmClient';
+import { sha256Hex } from './util';
 import { useAppStore } from './store';
 import {
   routeBySize,
@@ -163,13 +164,6 @@ async function extractBookDirect(novelName: string, content: string, signal: Abo
   );
 }
 
-async function computeSha256(text: string): Promise<string> {
-  const msgBuffer = new TextEncoder().encode(text);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
 // reconcile 落库（统一不变量的「后向一半」落地）：读 novel + chapters → planReconcile（纯决策）→
 // 在单个 db.transaction 内应用复位计划（analysisStatus → idle，mapping 章节 → pending）。
 // NovelDetail 挂载对账调用本函数，不再内联 db 写——前向（runDnaExtraction 的 resume）与后向（本函数）同住此 seam 后面。
@@ -200,7 +194,7 @@ export async function ensureIncrementalHashes(
     // chapters keep their cached summaries for the Reduce phase (AC3).
     if (onlyChapterId && c.id !== onlyChapterId) continue;
     const currentSha = c.contentSha256;
-    const computedSha = await computeSha256(c.content);
+    const computedSha = await sha256Hex(c.content);
     if (!currentSha || currentSha !== computedSha) {
       await db.chapters.update(c.id, {
         contentSha256: computedSha,

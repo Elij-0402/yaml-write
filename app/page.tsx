@@ -8,7 +8,6 @@ import { isDnaReady, isExtracting, canAutoStart } from './dnaState';
 import { useAppStore, type LLMConfig } from './store';
 import { runDnaExtraction } from './dnaEngine';
 import { ensureLlmConfigReady } from './llmClient';
-import { getLlmReadinessSummary } from './workflow';
 import AppRail from '../components/AppRail';
 import CommandPalette from '../components/CommandPalette';
 import LibraryView from '../components/LibraryView';
@@ -21,6 +20,8 @@ import AppDialog from '../components/AppDialog';
 // 后台自适应提取（NFR1）：导入/选中一部 idle 且无 DNA 的作品时，自动在后台起提取——
 // 用户可离开（page.tsx 常驻，run 不随面板切换中止），跑完弹「DNA 就绪」通知。单飞 + 完成后再评估（队列推进）。
 // 仅作用于「当前选中」作品，避免应用启动时对历史未提取作品批量开跑。提取本身可续跑、挂载自愈（见 dnaEngine/NovelDetail）。
+// 自动化分流（goal·流程自动化）：仅「高置信切分」自动起跑；中置信不自动跑（DNA 板给「直接开始提取」一键入口）；
+// 低置信（needs_review）由 canAutoStart 之外再加 splitStatus/confidenceLevel 闸守住——导入即落人工校验台。
 function useBackgroundExtraction(selectedNovelId: string | null, llmConfig: LLMConfig) {
   const novel = useLiveQuery(
     () => (selectedNovelId ? db.novels.get(selectedNovelId) : undefined),
@@ -40,6 +41,9 @@ function useBackgroundExtraction(selectedNovelId: string | null, llmConfig: LLMC
     if (!selectedNovelId || !novel) return;
     if (!ensureLlmConfigReady(llmConfig).ok) return; // 未配密钥不自动跑（配好后本 effect 因 llmConfig 变化重评）
     if (!canAutoStart(novel)) return; // 状态层门：仅全新 idle 自启；已有结果走手动重提，error 不自动重启
+    // 切分置信度闸（goal）：只有高置信才自动测序。中/低置信交给用户在 DNA 板「直接开始提取」或先去校验，
+    // 避免把质量存疑的切分静默喂进 DNA 提取。splitStatus 已对 low 标 needs_review，这里进一步要求 high。
+    if (novel.splitStatus !== 'ok' || novel.splitMeta?.confidenceLevel !== 'high') return;
     if (chapterCount === 0) return; // 仅「尚无章节（还在解析）」时不跑
 
     const id = selectedNovelId;
@@ -145,7 +149,7 @@ export default function Home() {
   );
 
   const extractingCount = novels.filter((n) => isExtracting(n)).length;
-  const llmReadiness = useMemo(() => getLlmReadinessSummary(llmConfig), [llmConfig]);
+  const llmReadiness = useMemo(() => ensureLlmConfigReady(llmConfig), [llmConfig]);
   const { doneToast, dismissToast } = useBackgroundExtraction(selectedNovelId, llmConfig);
 
   // 清理幽灵选中：持久化的 selectedNovelId 指向已删除作品时复位。

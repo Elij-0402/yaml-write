@@ -3,11 +3,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
-  ChevronLeft, Wrench, Palette, ArrowUpDown, ArrowRight, ArrowUp, Sparkles, Shuffle,
+  ChevronLeft, Palette, ArrowUpDown, ArrowRight, ArrowUp, Sparkles, Shuffle,
   X, Square, Copy, Download, RotateCcw, PenLine, ArrowDownToLine, Check, Wand2, Dna,
+  Lock, ThumbsDown, GitBranch,
 } from 'lucide-react';
 import { db, isFourLayerDnaCard, type FusionSession, type OpeningDraft } from '../app/db';
 import { isDnaReady } from '../app/dnaState';
+import { formatWordCount } from '../app/util';
 import { type BlockKey, type FusionDirection, type SettingBlocks, type StructureBeat, parseFusionDirections } from '../app/dnaSchema';
 import { withRateLimitRetry } from '../app/dnaEngine';
 import { StreamSseError, callStructured, ensureLlmConfigReady, streamSse } from '../app/llmClient';
@@ -57,10 +59,8 @@ const WORKSHOP_STEPS: Array<{ id: WorkshopStep; label: string }> = [
 
 // 开篇历史版本时间戳（mm-dd HH:MM）。app 代码可用 Date，与 Workflow 脚本的限制无关。
 const fmtDraftTime = (ts: number): string => {
-  try {
-    const d = new Date(ts);
-    return `${`${d.getMonth() + 1}`.padStart(2, '0')}-${`${d.getDate()}`.padStart(2, '0')} ${`${d.getHours()}`.padStart(2, '0')}:${`${d.getMinutes()}`.padStart(2, '0')}`;
-  } catch { return ''; }
+  const d = new Date(ts);
+  return `${`${d.getMonth() + 1}`.padStart(2, '0')}-${`${d.getDate()}`.padStart(2, '0')} ${`${d.getHours()}`.padStart(2, '0')}:${`${d.getMinutes()}`.padStart(2, '0')}`;
 };
 
 // 成稿文风寄存器预设（值与后端 TONE_GUIDE 的 key 对齐）。
@@ -70,6 +70,14 @@ const TONE_PRESETS: { value: string; label: string }[] = [
   { value: 'hot', label: '热血爽快' },
   { value: 'humor', label: '幽默轻快' },
   { value: 'lyrical', label: '抒情细腻' },
+];
+
+// 配方对话框子屏（goal·第四步信息架构）：骨架 → 题材 → 意图 → 确认。
+const RECIPE_STAGES: { label: string; hint: string }[] = [
+  { label: '骨架', hint: '选一本书作骨架' },
+  { label: '题材', hint: '选题材书或口述' },
+  { label: '意图', hint: '填写偏好（可跳过）' },
+  { label: '确认', hint: '确认配方，生成方向' },
 ];
 
 // Studio 外壳：顶部步进轨（数字格 1-4，当前 = 靛蓝实心 = 聚焦标记）+ 单一「下一步」提示。
@@ -147,6 +155,11 @@ export default function FusionWorkshop() {
   const [freedom, setFreedom] = useState(false);
   // 成稿文风寄存器（v13 持久化）：''=贴题材默认 / cold / hot / humor / lyrical。
   const [tone, setTone] = useState('');
+  // 配方对话框（goal）：当前子屏 0 骨架 / 1 题材 / 2 意图 / 3 确认。按创作持久化（v15），关闭/刷新可恢复。
+  const [recipeStage, setRecipeStage] = useState(0);
+  // 候选池（goal）：锁定的亮点（注入后续生成的 userCustomPrompt）+ 已弃/不喜欢方向（回喂后端 avoidDirections 去重）。
+  const [lockedFeatures, setLockedFeatures] = useState<string[]>([]);
+  const [avoidList, setAvoidList] = useState<string[]>([]);
   const [colliding, setColliding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -232,11 +245,15 @@ export default function FusionWorkshop() {
         setOpeningDrafts(saved.openingDrafts || []);
         setFreedom(saved.freedom ?? false);
         setTone(saved.tone || '');
+        setRecipeStage(typeof saved.recipeStage === 'number' ? saved.recipeStage : 0);
+        setLockedFeatures(saved.lockedFeatures || []);
+        setAvoidList(saved.avoidDirections || []);
       } else {
         setSelectedIds([]); setCustomPrompt(''); setAdversarialRules(''); setStep('material');
         setDirections([]); setBlocks(EMPTY_BLOCKS); setDirectionTitle('');
         setSceneTexts({}); setSceneResumeStatus({}); setOpeningDrafts([]);
         setFreedom(false); setTone('');
+        setRecipeStage(0); setLockedFeatures([]); setAvoidList([]);
       }
       setEditingBlock(null); setRepairGaps([]); setComparingDraftIdx(null);
       setSelectedFragment(''); setFragmentDraft(null); setTweakTarget('worldviewBlock');
@@ -271,6 +288,9 @@ export default function FusionWorkshop() {
         openingDrafts,
         freedom,
         tone,
+        recipeStage,
+        avoidDirections: avoidList,
+        lockedFeatures,
         updatedAt: Date.now(),
       };
       await db.fusionSessions.put(session);
@@ -278,6 +298,7 @@ export default function FusionWorkshop() {
   }, [
     activeCreationId, step, selectedIds, customPrompt, adversarialRules, directions, blocks,
     directionTitle, sceneTexts, sceneResumeStatus, openingDrafts, freedom, tone,
+    recipeStage, avoidList, lockedFeatures,
     streamingScene, colliding, tweaking, repairing, rewriting,
   ]);
 
@@ -374,22 +395,42 @@ export default function FusionWorkshop() {
     };
   };
 
-  // 候选池：单次生成请求（首发覆盖 / 再来一批追加共用）。avoid=已有方向，喂回后端去重。
-  const requestDirections = (recipe: FusionRecipe, avoid: string[], signal: AbortSignal) =>
-    withRateLimitRetry(
+  // 候选池去重上限：后端 avoidDirections 上限 40 条；本地同步裁剪保留最近的。
+  const dedupCap = (arr: string[]): string[] => Array.from(new Set(arr)).slice(-40);
+  const poolDescriptors = (): string[] => directions.map((d) => `${d.title}：${d.concept}`);
+  // 喂回后端去重的 avoid 集合：已弃/不喜欢（avoidList）+ 当前池内方向；做变体时排除被参照那条。
+  const buildAvoid = (excludeDesc?: string): string[] =>
+    dedupCap([...avoidList, ...poolDescriptors()].filter((d) => d !== excludeDesc));
+
+  // 候选池：单次生成请求（首发 / 再来一批 / 变体共用）。
+  // userCustomPrompt 融合：交叉模式的口述偏好 + 锁定亮点（必须保留）+ 变体参照（保留内核换展开）。
+  const requestDirections = (
+    recipe: FusionRecipe,
+    opts: { avoid: string[]; variantOf?: FusionDirection },
+    signal: AbortSignal,
+  ) => {
+    const parts: string[] = [];
+    if (recipe.mode === 'cross' && customPrompt.trim()) parts.push(customPrompt.trim());
+    if (lockedFeatures.length) parts.push(`必须保留以下亮点（不可丢弃）：${lockedFeatures.join('；')}`);
+    if (opts.variantOf) parts.push(`在这条方向的基础上做变体，保留它的内核、但换一种展开方式：「${opts.variantOf.title}——${opts.variantOf.concept}」`);
+    const userCustomPrompt = parts.join('\n').trim().slice(0, 2000) || undefined;
+    return withRateLimitRetry(
       () => callStructured<{ directions: FusionDirection[] }>('/api/py/generate-fusion-directions', {
         engineCard: recipe.engineCard,
         skinSource: recipe.skinSource,
         mode: recipe.mode,
         freedom: recipe.freedom,
-        userCustomPrompt: recipe.mode === 'cross' ? (customPrompt.trim() || undefined) : undefined,
+        userCustomPrompt,
         adversarialRules: adversarialRules.trim() || undefined,
-        avoidDirections: avoid.length ? avoid : undefined,
+        avoidDirections: opts.avoid.length ? opts.avoid : undefined,
       }, { signal, parse: parseFusionDirections }),
       { signal }
     );
+  };
 
-  const collide = async () => {
+  // 候选池单次请求 → 落库。'fresh'=覆盖并进方向页；'append'=追加（再来一批 / 变体）。
+  // variantOf：基于某条做变体，保留内核换展开，并把那条排除出 avoid。
+  const runDirections = async (kind: 'fresh' | 'append', variantOf?: FusionDirection) => {
     if (!guardLlm() || colliding) return;
     const recipe = buildRecipe();
     if ('error' in recipe) { setError(recipe.error); return; }
@@ -397,10 +438,12 @@ export default function FusionWorkshop() {
     setColliding(true);
     try {
       const ac = new AbortController();
-      const data = await requestDirections(recipe, [], ac.signal);
+      const exclude = variantOf ? `${variantOf.title}：${variantOf.concept}` : undefined;
+      const data = await requestDirections(recipe, { avoid: buildAvoid(exclude), variantOf }, ac.signal);
       if (!mountedRef.current) return;
-      setDirections(data.directions || []);
-      setStep('directions');
+      const next = data.directions || [];
+      if (kind === 'fresh') { setDirections(next); setStep('directions'); }
+      else setDirections((prev) => [...prev, ...next]);
     } catch (err) {
       if (!mountedRef.current) return;
       setError(err instanceof Error ? err.message : '生成方向失败');
@@ -408,31 +451,31 @@ export default function FusionWorkshop() {
       if (mountedRef.current) setColliding(false);
     }
   };
+  const collide = () => runDirections('fresh');
+  const rerollDirections = () => runDirections('append');
+  const variantFromDirection = (direction: FusionDirection) => runDirections('append', direction);
 
-  // 再来一批：在原配方上追加 3 条，把现有方向喂回后端去重，停留在方向页（候选池累积）。
-  const rerollDirections = async () => {
-    if (!guardLlm() || colliding) return;
-    const recipe = buildRecipe();
-    if ('error' in recipe) { setError(recipe.error); return; }
-    setError(null);
-    setColliding(true);
-    try {
-      const ac = new AbortController();
-      const avoid = directions.slice(-20).map((d) => `${d.title}：${d.concept}`);
-      const data = await requestDirections(recipe, avoid, ac.signal);
-      if (!mountedRef.current) return;
-      setDirections((prev) => [...prev, ...(data.directions || [])]);
-    } catch (err) {
-      if (!mountedRef.current) return;
-      setError(err instanceof Error ? err.message : '生成方向失败');
-    } finally {
-      if (mountedRef.current) setColliding(false);
-    }
+  // 锁定某个亮点：注入后续生成（必须保留）。最多 6 条，去重。
+  const lockFeature = (raw: string) => {
+    const text = (raw || '').trim();
+    if (!text) return;
+    setLockedFeatures((prev) => (prev.includes(text) ? prev : [...prev, text].slice(-6)));
   };
+  const unlockFeature = (idx: number) => setLockedFeatures((prev) => prev.filter((_, i) => i !== idx));
 
-  // 扔掉候选池里的一条（纯前端 filter；directions 已随会话持久化）。
-  const discardDirection = (idx: number) =>
+  // 扔掉候选池里的一条：从池中移除，并把描述记入 avoid（再来一批时避开重复，AC）。
+  const discardDirection = (idx: number) => {
+    const d = directions[idx];
+    if (d) setAvoidList((prev) => dedupCap([...prev, `${d.title}：${d.concept}`]));
     setDirections((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  // 标记不喜欢：移除 + 把「这一类」记入 avoid（比单纯丢弃更强的避开信号，依据行也会展示）。
+  const dislikeDirection = (idx: number) => {
+    const d = directions[idx];
+    if (d) setAvoidList((prev) => dedupCap([...prev, `不喜欢这一类：${d.title}`]));
+    setDirections((prev) => prev.filter((_, i) => i !== idx));
+  };
 
   const applyDirection = async (direction: FusionDirection) => {
     const baseBlocks = {
@@ -783,115 +826,255 @@ export default function FusionWorkshop() {
     );
   }
 
-  // ===== 配方台 =====
+  // ===== 配方台 · 配方对话框（4 屏向导：骨架 → 题材 → 意图 → 确认）=====
+  // 左侧「对话 / 步骤流」+ 右侧「当前选择摘要」。选择即时回执、可返回修改、子屏与选择均按创作持久化。
   if (step === 'material') {
     const recipe = buildRecipe();
     const recipeErr = 'error' in recipe ? recipe.error : null;
-    const engineDna = engineNovel && isFourLayerDnaCard(engineNovel.dnaCard) ? engineNovel.dnaCard : null;
-    const skinDna = skinNovel && isFourLayerDnaCard(skinNovel.dnaCard) ? skinNovel.dnaCard : null;
-    return (
-      <StudioShell current="material" nextLabel={nextActionLabel}>
-        <div className="mx-auto max-w-4xl space-y-5">
-          <div>
-            <h2 className="text-base font-semibold text-fg">谁当骨架，谁换皮？</h2>
-            <p className="mt-1 text-[13px] text-fg-muted">{sourceSummary}。只需决定两件事：哪本书提供结构骨架，哪本书提供题材与风格，其余交给系统。</p>
-          </div>
+    const stage = Math.max(0, Math.min(RECIPE_STAGES.length - 1, recipeStage));
+    const canVisit = (s: number) => s === 0 || Boolean(engineNovel); // 骨架屏永远可达，其余屏需先定骨架
+    const goStage = (s: number) => { if (canVisit(s)) { setError(null); setRecipeStage(s); } };
+    const novelMeta = (n: typeof readyNovels[number]) => {
+      const dna = isFourLayerDnaCard(n.dnaCard) ? n.dnaCard : null;
+      return {
+        dna,
+        beats: dna ? dna.structureSkeleton.map((b) => b.function).filter(Boolean).slice(0, 5).join(' → ') : '',
+        chapters: n.splitMeta?.chapterCount,
+      };
+    };
 
-          {/* 生成模式 */}
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="eyebrow">生成模式</span>
-            <div className="seg" role="group" aria-label="生成模式">
-              {([{ v: false, label: '换皮变题' }, { v: true, label: '0→1 原创' }] as const).map((opt) => (
-                <button
-                  key={String(opt.v)}
-                  type="button"
-                  onClick={() => setFreedom(opt.v)}
-                  aria-pressed={freedom === opt.v}
-                  className="seg-item"
-                >{opt.label}</button>
+    // 助理对话回执（已确认步骤）：营造连续对话感，每完成一个选择就给一句即时反馈。
+    const transcript: string[] = [];
+    if (stage >= 1 && engineNovel) transcript.push(`已把《${engineNovel.name}》设为骨架——它决定故事推进的力学。`);
+    if (stage >= 2) transcript.push(skinNovel ? `题材来自《${skinNovel.name}》——会抽取它的世界观与文风颗粒。` : '这一轮不绑题材书，用你的一句话口述来定题材。');
+    if (stage >= 3) transcript.push((customPrompt.trim() || adversarialRules.trim()) ? '偏好已记下，生成时一并考虑。' : '你没有填写偏好——本轮完全依赖两本书的 DNA 自动碰撞。');
+
+    const assistant = (node: React.ReactNode) => (
+      <div className="flex items-start gap-2">
+        <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+        <p className="text-[13px] leading-relaxed text-fg">{node}</p>
+      </div>
+    );
+    const summaryItem = (label: string, value: string, sub?: string) => (
+      <div>
+        <div className="text-[11px] text-fg-subtle">{label}</div>
+        <div className="mt-0.5 break-words text-[13px] text-fg">{value}</div>
+        {sub && <div className="mt-0.5 text-[11px] text-fg-subtle">{sub}</div>}
+      </div>
+    );
+
+    return (
+      <StudioShell current="material" nextLabel={RECIPE_STAGES[stage].hint}>
+        <div className="mx-auto grid w-full max-w-5xl gap-5 lg:grid-cols-[1fr_300px]">
+          {/* 左：对话 / 步骤流 */}
+          <div className="min-w-0 space-y-4">
+            {/* 子步进（可点返回；当前=靛蓝实心格） */}
+            <div className="flex flex-wrap items-center gap-y-1">
+              {RECIPE_STAGES.map((s, i) => (
+                <span key={s.label} className="flex items-center">
+                  <button
+                    type="button"
+                    onClick={() => goStage(i)}
+                    disabled={!canVisit(i)}
+                    aria-current={i === stage ? 'step' : undefined}
+                    className={`flex items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                      i === stage ? 'text-fg' : i < stage ? 'text-fg-muted hover:text-fg' : 'text-fg-subtle'
+                    }`}
+                  >
+                    <span className={`grid h-[16px] w-[16px] place-items-center rounded-[4px] border font-mono text-[9px] leading-none ${
+                      i === stage ? 'border-accent bg-accent text-accent-fg' : i < stage ? 'border-line bg-surface text-fg-muted' : 'border-line text-fg-subtle'
+                    }`}>{i < stage ? <Check size={9} /> : i + 1}</span>
+                    {s.label}
+                  </button>
+                  {i < RECIPE_STAGES.length - 1 && <span className="mx-0.5 h-px w-3 bg-line" />}
+                </span>
               ))}
             </div>
-            <span className="text-xs text-fg-muted">{freedom ? 'DNA 当灵感调色板，以你的意图为主轴自由重组结构' : '保持源书结构骨架，只换题材与文风'}</span>
-          </div>
 
-          {/* 配方：骨架 × 皮 */}
-          <div className="grid items-stretch gap-3 md:grid-cols-[1fr_auto_1fr]">
-            <div className="card p-5">
-              <div className="eyebrow flex items-center gap-1.5"><Wrench size={12} /> 骨架（引擎）</div>
-              <select
-                className="input mt-2 font-semibold"
-                value={selectedIds[0] || ''}
-                onChange={(e) => pickEngine(e.target.value)}
-              >
-                <option value="" disabled>选择骨架书…</option>
-                {readyNovels.map((n) => (
-                  <option key={n.id} value={n.id}>{n.name}{isFourLayerDnaCard(n.dnaCard) ? '' : '（旧版DNA）'}</option>
+            {/* 对话回执 */}
+            {transcript.length > 0 && (
+              <div className="space-y-1.5">
+                {transcript.map((t, i) => (
+                  <div key={i} className="flex items-start gap-2 text-[12.5px] text-fg-muted">
+                    <Check size={13} className="mt-0.5 shrink-0 text-success" /> <span>{t}</span>
+                  </div>
                 ))}
-              </select>
-              {engineDna ? (
-                <div className="mt-3 space-y-2 text-xs">
-                  <div><span className="text-fg-subtle">结构骨架　</span><span className="font-mono text-fg-muted">{engineDna.structureSkeleton.map((b) => b.function).filter(Boolean).slice(0, 6).join(' → ') || '—'}</span></div>
-                  <div><span className="text-fg-subtle">编排节奏　</span><span className="text-fg-muted">{engineDna.pacingSyuzhet || '—'}</span></div>
+              </div>
+            )}
+
+            {/* 当前屏 */}
+            <div className="card view-enter p-5" key={stage}>
+              {stage === 0 && (
+                <div className="space-y-4">
+                  {assistant(<>先挑一本读过的书当 <b className="font-semibold">骨架</b>。它的结构骨架和编排节奏会被原样搬到新题材上。</>)}
+                  <div className="space-y-2">
+                    {readyNovels.map((n) => {
+                      const m = novelMeta(n);
+                      const sel = selectedIds[0] === n.id;
+                      return (
+                        <button
+                          key={n.id}
+                          type="button"
+                          onClick={() => pickEngine(n.id)}
+                          className={`w-full rounded-lg border p-3 text-left transition-colors ${sel ? 'border-accent bg-surface-2' : 'border-line bg-surface hover:border-fg-subtle'}`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
+                              <span className="truncate text-[13px] font-medium text-fg">{n.name}</span>
+                              {!m.dna && <span className="chip shrink-0">旧版DNA</span>}
+                              {sel && <Check size={13} className="shrink-0 text-accent-ink" />}
+                            </div>
+                            <span className="shrink-0 font-mono text-[11px] tabular-nums text-fg-subtle">{formatWordCount(n.wordCount)}字{m.chapters ? ` · ${m.chapters}章` : ''}</span>
+                          </div>
+                          {m.beats && <div className="mt-1.5 truncate font-mono text-[11px] text-fg-subtle" title={m.beats}>{m.beats}</div>}
+                          {!m.dna && <div className="mt-1.5 text-[11px] text-fg-subtle">旧版 DNA，需先在书架「重新提取」升级为 4 层才能作骨架。</div>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-t border-line-2 pt-3">
+                    <span className="min-w-0 truncate text-xs text-fg-subtle">{engineNovel ? `已选《${engineNovel.name}》` : '选一本作骨架后继续'}</span>
+                    <button className="btn btn-primary shrink-0 gap-1.5" disabled={!engineNovel} onClick={() => goStage(1)}>下一步 · 选题材 <ArrowRight size={14} /></button>
+                  </div>
                 </div>
-              ) : (
-                <p className="mt-3 text-xs text-fg-subtle">{engineNovel ? '此书还是旧版 DNA，请先重新提取升级为 4 层' : '从上方选一本已就绪的书作骨架'}</p>
+              )}
+
+              {stage === 1 && (
+                <div className="space-y-4">
+                  {assistant(<>再选一本书当 <b className="font-semibold">题材皮</b>，或跳过——用一句话口述你想要的题材。</>)}
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => pickSkin('')}
+                      className={`w-full rounded-lg border p-3 text-left transition-colors ${!skinNovel ? 'border-accent bg-surface-2' : 'border-line bg-surface hover:border-fg-subtle'}`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="flex items-center gap-2 text-[13px] font-medium text-fg"><Palette size={13} className="text-fg-subtle" /> 不绑题材书 · 用我的口述定题材</span>
+                        {!skinNovel && <Check size={13} className="shrink-0 text-accent-ink" />}
+                      </div>
+                      <div className="mt-1 text-[11px] leading-relaxed text-fg-subtle">系统基于骨架结构，按你下一屏写的方向生成新题材。</div>
+                    </button>
+                    {readyNovels.filter((n) => n.id !== selectedIds[0]).map((n) => {
+                      const m = novelMeta(n);
+                      const sel = selectedIds[1] === n.id;
+                      return (
+                        <button
+                          key={n.id}
+                          type="button"
+                          onClick={() => pickSkin(n.id)}
+                          className={`w-full rounded-lg border p-3 text-left transition-colors ${sel ? 'border-accent bg-surface-2' : 'border-line bg-surface hover:border-fg-subtle'}`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
+                              <span className="truncate text-[13px] font-medium text-fg">{n.name}</span>
+                            </span>
+                            {sel && <Check size={13} className="shrink-0 text-accent-ink" />}
+                          </div>
+                          {m.dna?.themeSkin && <div className="mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-fg-subtle">{m.dna.themeSkin}</div>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line-2 pt-3">
+                    <div className="flex items-center gap-2">
+                      <button className="btn btn-ghost gap-1.5" onClick={() => goStage(0)}><ChevronLeft size={14} /> 上一步</button>
+                      {engineNovel && skinNovel && (
+                        <button className="btn btn-secondary btn-sm gap-1.5" onClick={swapRoles} title="把骨架和题材对调"><ArrowUpDown size={13} /> 交换骨架/题材</button>
+                      )}
+                    </div>
+                    <button className="btn btn-primary gap-1.5" onClick={() => goStage(2)}>下一步 · 写意图 <ArrowRight size={14} /></button>
+                  </div>
+                </div>
+              )}
+
+              {stage === 2 && (
+                <div className="space-y-4">
+                  {assistant(<>可选：告诉我方向偏好。留空也行——我会完全依赖两本书的 DNA 自动碰撞。</>)}
+                  <div className="space-y-3.5">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                      <span className="field-label">生成模式</span>
+                      <div className="seg" role="group" aria-label="生成模式">
+                        {([{ v: false, label: '换皮变题' }, { v: true, label: '0→1 原创' }] as const).map((opt) => (
+                          <button key={String(opt.v)} type="button" onClick={() => setFreedom(opt.v)} aria-pressed={freedom === opt.v} className="seg-item">{opt.label}</button>
+                        ))}
+                      </div>
+                      <span className="text-xs text-fg-muted">{freedom ? '以你的意图为主轴，自由重组结构' : '保持源书结构骨架，只换题材与文风'}</span>
+                    </div>
+                    <div>
+                      <label className="field-label mb-1.5">想往哪些方向写？</label>
+                      <input
+                        value={customPrompt}
+                        onChange={(e) => setCustomPrompt(e.target.value)}
+                        placeholder={skinNovel ? '例如：群像、双男主、悬疑推进…（可留空）' : '用一句话口述题材或方向（不绑题材书时建议填写）'}
+                        className="input"
+                      />
+                    </div>
+                    <div>
+                      <label className="field-label mb-1.5">想避开什么套路 / 必须保留或禁止的元素？</label>
+                      <textarea
+                        value={adversarialRules}
+                        onChange={(e) => setAdversarialRules(e.target.value)}
+                        rows={2}
+                        placeholder="例如：禁止废柴逆袭、禁止王子救公主、对手必须有合理动机…（可留空，已内置反套路约束）"
+                        className="input"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-t border-line-2 pt-3">
+                    <button className="btn btn-ghost gap-1.5" onClick={() => goStage(1)}><ChevronLeft size={14} /> 上一步</button>
+                    <button className="btn btn-primary gap-1.5" onClick={() => goStage(3)}>
+                      {customPrompt.trim() || adversarialRules.trim() ? '下一步 · 确认配方' : '跳过 · 确认配方'} <ArrowRight size={14} />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {stage === 3 && (
+                <div className="space-y-4">
+                  {assistant(<>确认配方，我就开始碰撞 <b className="font-semibold">3 个方向</b>。</>)}
+                  <div className="divide-y divide-line-2 rounded-lg border border-line bg-panel">
+                    {[
+                      ['骨架来源', engineNovel ? `结构骨架 + 编排节奏 · 《${engineNovel.name}》` : '未选'],
+                      ['题材来源', skinNovel ? `主题皮 + 文风 · 《${skinNovel.name}》` : '口述题材（依赖你的意图）'],
+                      ['生成模式', freedom ? '0→1 原创（自由重组）' : '换皮变题（保结构换皮）'],
+                      ['创作意图', customPrompt.trim() || '未填写，使用默认（完全依赖 DNA）'],
+                      ['反套路约束', adversarialRules.trim() ? `默认启用 · 追加：${adversarialRules.trim()}` : '默认启用（内置反套路）'],
+                    ].map(([label, value]) => (
+                      <div key={label} className="flex gap-3 px-3.5 py-2.5">
+                        <span className="w-16 shrink-0 text-xs text-fg-subtle">{label}</span>
+                        <span className="flex-1 break-words text-[13px] text-fg">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {recipeErr && <p className="text-sm text-danger">{recipeErr}</p>}
+                  <div className="flex items-center justify-between gap-3 border-t border-line-2 pt-3">
+                    <button className="btn btn-ghost gap-1.5" onClick={() => goStage(2)}><ChevronLeft size={14} /> 上一步</button>
+                    <button className="btn btn-primary btn-lg gap-2" onClick={collide} disabled={colliding || !engineNovel || Boolean(recipeErr)}>
+                      <Sparkles size={16} /> {colliding ? '生成中…' : '生成 3 个方向'} <ArrowRight size={15} />
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
 
-            <div className="flex items-center justify-center">
-              <button title="对调骨架 / 题材" onClick={swapRoles} disabled={selectedIds.length !== 2} className="btn btn-secondary btn-icon" aria-label="对调骨架与题材">
-                <ArrowUpDown size={16} />
-              </button>
-            </div>
-
-            <div className="card p-5">
-              <div className="eyebrow flex items-center gap-1.5"><Palette size={12} /> 题材（皮）</div>
-              <select
-                className="input mt-2 font-semibold"
-                value={selectedIds[1] || ''}
-                onChange={(e) => pickSkin(e.target.value)}
-                disabled={!engineNovel}
-              >
-                <option value="">（不选题材书，直接口述新方向）</option>
-                {readyNovels.filter((n) => n.id !== selectedIds[0]).map((n) => (
-                  <option key={n.id} value={n.id}>{n.name}</option>
-                ))}
-              </select>
-              {skinNovel && skinDna ? (
-                <div className="mt-3 space-y-2 text-xs">
-                  <div><span className="text-fg-subtle">题材皮　</span><span className="text-fg-muted">{skinDna.themeSkin || '—'}</span></div>
-                  <div><span className="text-fg-subtle">文笔　　</span><span className="text-fg-muted">{skinDna.proseStyle || '—'}</span></div>
-                </div>
-              ) : (
-                <p className="mt-3 text-xs text-fg-subtle">不选题材书时，在下方直接说明想写成什么题材，系统会基于这本书的骨架继续生成。</p>
-              )}
-            </div>
+            {errorRow}
+            {rateRow}
           </div>
 
-          {/* 想往哪写 */}
-          <input
-            value={customPrompt}
-            onChange={(e) => setCustomPrompt(e.target.value)}
-            placeholder={skinNovel ? '想往哪写？想避开什么套路？（可留空，留空时完全依赖两本书的 DNA）' : '描述你想要的新题材或方向（不选题材书时建议填写）'}
-            className="input"
-          />
-          <textarea
-            value={adversarialRules}
-            onChange={(e) => setAdversarialRules(e.target.value)}
-            rows={2}
-            placeholder="反套路约束（可选）：例如 禁止王子救公主、禁止开局废柴龙傲天、对手必须有合理动机…"
-            className="input"
-          />
-
-          {recipeErr && <p className="text-sm text-danger">{recipeErr}</p>}
-          {errorRow}
-          {rateRow}
-
-          <div>
-            <button className="btn btn-primary btn-lg gap-2" onClick={collide} disabled={colliding || !engineNovel}>
-              <Sparkles size={16} /> {colliding ? '生成中…' : '生成 3 个方向'} <ArrowRight size={15} />
-            </button>
-          </div>
+          {/* 右：当前选择摘要（始终可见，实时更新） */}
+          <aside className="h-fit lg:sticky lg:top-0">
+            <div className="card space-y-3 p-4">
+              <div className="eyebrow">配方摘要</div>
+              {summaryItem('骨架', engineNovel ? `《${engineNovel.name}》` : '待选', engineNovel ? '结构骨架 + 编排节奏' : undefined)}
+              {summaryItem('题材', skinNovel ? `《${skinNovel.name}》` : (engineNovel ? '口述题材' : '待选'), skinNovel ? '主题皮 + 文风' : (engineNovel ? '用你的一句话定题材' : undefined))}
+              {summaryItem('模式', freedom ? '0→1 原创' : '换皮变题')}
+              {summaryItem('意图', customPrompt.trim() || '未填写 · 用默认')}
+              {summaryItem('反套路', adversarialRules.trim() ? '默认启用 · 有追加' : '默认启用')}
+              <div className="border-t border-line-2 pt-2.5 text-[11px] leading-relaxed text-fg-subtle">{sourceSummary}。</div>
+            </div>
+          </aside>
         </div>
       </StudioShell>
     );
@@ -902,61 +1085,90 @@ export default function FusionWorkshop() {
     const idxLabel = ['i.', 'ii.', 'iii.', 'iv.', 'v.', 'vi.', 'vii.', 'viii.', 'ix.', 'x.'];
     const engName = engineNovel?.name || '骨架';
     const skinLabel = skinNovel?.name || '口述题材';
+    const dislikedLabels = avoidList.filter((s) => s.startsWith('不喜欢这一类：')).map((s) => s.slice('不喜欢这一类：'.length));
     const rerollBtn = (
       <button className="btn btn-secondary gap-1.5" onClick={() => void rerollDirections()} disabled={colliding}>
         <Shuffle size={14} /> {colliding ? '生成中…' : '再来三条'}
       </button>
     );
+    // 当前生成依据（goal）：骨架 × 题材 · 模式 · 偏好 · 锁定 · 避开。
+    const basisParts = [
+      `${engName} 结构引擎 × ${skinLabel} 题材表皮`,
+      freedom ? '0→1 原创' : '换皮变题',
+    ];
+    if (customPrompt.trim()) basisParts.push(`偏好：${customPrompt.trim()}`);
+    if (lockedFeatures.length) basisParts.push(`锁定 ${lockedFeatures.length} 个亮点`);
+    if (dislikedLabels.length) basisParts.push(`避开：${dislikedLabels.slice(-3).join('、')}`);
+    else if (avoidList.length) basisParts.push(`已避开 ${avoidList.length} 条`);
+
     return (
       <StudioShell current="directions" nextLabel={nextActionLabel} overlay={directionSwitchDialog}>
         <div className="mx-auto max-w-4xl space-y-5">
           <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
+            <div className="min-w-0">
               <div className="eyebrow">候选池 · {directions.length} 条</div>
-              <h2 className="mt-1 text-base font-semibold text-fg">挑一条，或再来一批。</h2>
-              <p className="mt-1 max-w-2xl text-[13px] text-fg-muted">{engName} 的结构引擎 × {skinLabel} 的题材表皮。喜欢的留着、选中其一往下走；都不对就再抽一批（系统会避开已生成过的）。</p>
+              <h2 className="mt-1 text-base font-semibold text-fg">挑一条、再变体，或换一批。</h2>
+              <p className="mt-1 max-w-2xl text-[12.5px] leading-relaxed text-fg-subtle">{basisParts.join(' · ')}</p>
+              <p className="mt-0.5 max-w-2xl text-[13px] text-fg-muted">选用其一往下走；不满意可丢弃 / 标不喜欢，「再来三条」会自动避开已弃方向。</p>
             </div>
             {directions.length > 0 && rerollBtn}
           </div>
 
+          {/* 锁定亮点（注入后续生成，必须保留） */}
+          {lockedFeatures.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] text-fg-subtle">锁定亮点</span>
+              {lockedFeatures.map((f, i) => (
+                <span key={i} className="chip gap-1 text-accent-ink">
+                  <Lock size={10} /> <span className="max-w-[240px] truncate" title={f}>{f}</span>
+                  <button onClick={() => unlockFeature(i)} className="ml-0.5 text-fg-subtle transition-colors hover:text-danger" aria-label="解除锁定"><X size={11} /></button>
+                </span>
+              ))}
+            </div>
+          )}
+
           {directions.length === 0 ? (
             <div className="card flex flex-col items-center gap-4 p-10 text-center">
-              <p className="text-sm text-fg-muted">候选池空了。再抽一批新方向，或回配方台调整骨架与题材。</p>
+              <p className="text-sm text-fg-muted">候选池空了。再抽一批新方向，或回配方对话调整骨架与题材。</p>
               <div className="flex flex-wrap justify-center gap-3">
                 {rerollBtn}
-                <button className="btn btn-ghost gap-1.5" onClick={() => setStep('material')}><ChevronLeft size={14} /> 回配方台</button>
+                <button className="btn btn-ghost gap-1.5" onClick={() => setStep('material')}><ChevronLeft size={14} /> 回配方对话</button>
               </div>
             </div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-              {directions.map((dir, idx) => (
-                <div
-                  key={idx}
-                  className="card group relative flex cursor-pointer flex-col gap-3 p-5 transition-colors hover:border-fg-subtle"
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => void chooseDirection(dir)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void chooseDirection(dir); } }}
-                >
-                  <button
-                    type="button"
-                    title="扔掉这条"
-                    aria-label="扔掉这条"
-                    onClick={(e) => { e.stopPropagation(); discardDirection(idx); }}
-                    className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-raised hover:text-danger group-hover:opacity-100 group-focus-within:opacity-100"
-                  ><X size={14} /></button>
-                  <span className="font-mono text-xs text-fg-subtle">{idxLabel[idx] || `${idx + 1}.`}</span>
-                  <h4 className="pr-6 text-base font-semibold leading-snug text-fg">{dir.title}</h4>
-                  <p className="flex-1 text-[13px] leading-relaxed text-fg-muted">{dir.concept}</p>
-                  {dir.catalyst && <p className="flex items-start gap-1.5 text-xs leading-relaxed text-fg-subtle"><Sparkles size={12} className="mt-0.5 shrink-0" /> {dir.catalyst}</p>}
-                  {dir.transferNote && <p className="flex items-start gap-1.5 text-xs leading-relaxed text-fg-subtle"><Dna size={12} className="mt-0.5 shrink-0" /> {dir.transferNote}</p>}
-                  <div className="flex flex-wrap gap-1.5">
-                    <span className="chip">{engName}</span>
-                    <span className="chip">{skinLabel}</span>
+              {directions.map((dir, idx) => {
+                const highlight = dir.catalyst?.trim() || dir.concept;
+                const locked = lockedFeatures.includes(highlight);
+                return (
+                  <div key={idx} className="card group relative flex flex-col gap-3 p-5">
+                    <button
+                      type="button"
+                      title="丢弃这条（再来一批会避开）"
+                      aria-label="丢弃这条"
+                      onClick={() => discardDirection(idx)}
+                      className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-raised hover:text-danger group-hover:opacity-100 group-focus-within:opacity-100"
+                    ><X size={14} /></button>
+                    <span className="font-mono text-xs text-fg-subtle">{idxLabel[idx] || `${idx + 1}.`}</span>
+                    <h4 className="pr-6 text-base font-semibold leading-snug text-fg">{dir.title}</h4>
+                    <p className="flex-1 text-[13px] leading-relaxed text-fg-muted">{dir.concept}</p>
+                    {dir.catalyst && <p className="flex items-start gap-1.5 text-xs leading-relaxed text-fg-subtle"><Sparkles size={12} className="mt-0.5 shrink-0" /> {dir.catalyst}</p>}
+                    {dir.transferNote && <p className="flex items-start gap-1.5 text-xs leading-relaxed text-fg-subtle"><Dna size={12} className="mt-0.5 shrink-0" /> {dir.transferNote}</p>}
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className="chip">{engName}</span>
+                      <span className="chip">{skinLabel}</span>
+                    </div>
+                    {/* 动作行：选用 / 变体 / 锁亮点 / 不喜欢 */}
+                    <div className="mt-0.5 flex items-center gap-0.5 border-t border-line-2 pt-2.5">
+                      <button className="btn btn-ghost btn-sm gap-1 text-accent-ink" onClick={() => void chooseDirection(dir)}>选用 <ArrowRight size={12} /></button>
+                      <span className="flex-1" />
+                      <button className="btn btn-ghost btn-sm btn-icon" title="基于这条再生成几条变体" aria-label="基于这条再变体" disabled={colliding} onClick={() => void variantFromDirection(dir)}><GitBranch size={13} /></button>
+                      <button className={`btn btn-ghost btn-sm btn-icon ${locked ? 'text-accent-ink' : ''}`} title={locked ? '亮点已锁定' : '锁定这条亮点，后续生成必须保留'} aria-label="锁定亮点" disabled={locked} onClick={() => lockFeature(highlight)}><Lock size={13} /></button>
+                      <button className="btn btn-ghost btn-sm btn-icon hover:text-danger" title="不喜欢，后续避开这一类" aria-label="不喜欢这一类" onClick={() => dislikeDirection(idx)}><ThumbsDown size={13} /></button>
+                    </div>
                   </div>
-                  <span className="flex items-center gap-1 text-xs font-medium text-accent-ink opacity-0 transition group-hover:opacity-100">选择此方向 <ArrowRight size={12} /></span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -964,7 +1176,7 @@ export default function FusionWorkshop() {
           {rateRow}
 
           <div className="flex flex-wrap gap-3">
-            <button className="btn btn-ghost gap-1.5" onClick={() => setStep('material')}><ChevronLeft size={14} /> 回配方台</button>
+            <button className="btn btn-ghost gap-1.5" onClick={() => setStep('material')}><ChevronLeft size={14} /> 回配方对话</button>
             {directions.length > 0 && rerollBtn}
           </div>
         </div>

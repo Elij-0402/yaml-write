@@ -8,7 +8,6 @@ import { isDnaReady, isExtracting } from '../app/dnaState';
 import { useAppStore } from '../app/store';
 import { ensureLlmConfigReady } from '../app/llmClient';
 import { runDnaExtraction, reconcileExtraction } from '../app/dnaEngine';
-import { getLlmReadinessSummary } from '../app/workflow';
 import { routeBySize, buildArcWindows, selectSampledWindows, ARC_WINDOW_BUDGET_CHARS, SAMPLE_WINDOW_CAP, OVERSIZED_CHAPTER_CHARS } from '../app/dnaRouting';
 import { type StructureBeat } from '../app/dnaSchema';
 import AppDialog from './AppDialog';
@@ -32,14 +31,14 @@ function skeletonToText(beats: StructureBeat[]): string {
 }
 
 function getDnaStepCopy({
-  busy, dnaReady, needsReview, llmReady, hasFailures,
+  busy, dnaReady, needsReview, llmReady, hasFailures, mediumConfidence,
 }: {
-  busy: boolean; dnaReady: boolean; needsReview: boolean; llmReady: boolean; hasFailures: boolean;
+  busy: boolean; dnaReady: boolean; needsReview: boolean; llmReady: boolean; hasFailures: boolean; mediumConfidence: boolean;
 }) {
   if (dnaReady) return {
     title: 'DNA 已完成，可进入创作阶段',
     body: '这本书的结构、节奏、题材与文笔已提炼完成。你看到的不只是结果卡片，也是创作工坊会直接消费的输入资产。',
-    next: '进入工坊，选择骨架与题材',
+    next: '用这本做骨架，进入配方对话',
   };
   if (busy) return {
     title: '正在后台提取 DNA',
@@ -60,6 +59,11 @@ function getDnaStepCopy({
     title: '有部分章节提取失败，建议继续补完',
     body: '大部分链路已打通，仅少量章节失败。继续提取会优先补齐失败点，而非从头重来。',
     next: '继续提取并补齐失败章节',
+  };
+  if (mediumConfidence) return {
+    title: '切分质量中等，可直接开始或先校验',
+    body: '章节结构基本可用，但置信度一般，所以没有自动开跑。可以直接开始提取，质量影响有限；想更稳，先到章节校验微调边界。',
+    next: '直接开始提取，或先去章节校验',
   };
   return {
     title: '当前可以开始 DNA 提取',
@@ -118,7 +122,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
 
   if (!novel) return <div className="text-sm text-fg-muted">加载中…</div>;
 
-  const llmReadiness = getLlmReadinessSummary(llmConfig);
+  const llmReadiness = ensureLlmConfigReady(llmConfig);
   const progress = novel.mapProgress || { total: 0, current: 0 };
   const status = novel.analysisStatus;
   const busy = extracting || isExtracting(novel);
@@ -126,6 +130,8 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
   const dnaCard = novel.dnaCard ?? null;
   const needsReview = novel.splitStatus === 'needs_review';
   const oversizedChapter = chapters.find((c) => c.wordCount > OVERSIZED_CHAPTER_CHARS) || null;
+  // 中置信切分（非低、非超长）：不自动起跑，给「直接开始提取」一键入口（goal·流程自动化）。
+  const mediumConfidence = !needsReview && !oversizedChapter && novel.splitMeta?.confidenceLevel === 'medium';
   const failedChapters = chapters.filter((c) => c.mapStatus === 'error');
   const failureGroups = Array.from(
     failedChapters.reduce((m, c) => {
@@ -135,7 +141,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
   ).map(([msg, count]) => ({ msg, count })).sort((a, b) => b.count - a.count);
   const pct = progress.total ? Math.round((progress.current / progress.total) * 100) : status === 'reducing' ? 100 : 0;
   const dnaStepCopy = getDnaStepCopy({
-    busy, dnaReady, needsReview: needsReview || Boolean(oversizedChapter), llmReady: llmReadiness.ok, hasFailures: failedChapters.length > 0,
+    busy, dnaReady, needsReview: needsReview || Boolean(oversizedChapter), llmReady: llmReadiness.ok, hasFailures: failedChapters.length > 0, mediumConfidence,
   });
   const analyzedCount = chapters.filter((c) => c.mapStatus === 'done').length;
   const shortCount = chapters.filter((c) => c.wordCount < 500).length;
@@ -166,7 +172,33 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
     }
   };
 
-  const enterWorkshop = () => setActiveCreationId(crypto.randomUUID());
+  // 「用这本做骨架」：直接以本书为骨架(引擎)新开一条创作，并落到配方对话的「题材」屏，
+  // 省掉用户在工坊里重新挑骨架。先把会话写库（含 selectedIds + recipeStage=1）再激活，
+  // 工坊水合时即读到预选骨架。书被删/旧版 DNA 的兜底仍由工坊内部 buildRecipe 处理。
+  const enterWorkshop = async () => {
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    await db.fusionSessions.put({
+      id,
+      name: '未命名创作',
+      createdAt: now,
+      selectedIds: [novelId],
+      customPrompt: '',
+      adversarialRules: '',
+      step: 'material',
+      directions: [],
+      blocks: { worldviewBlock: '', protagonistBlock: '', antagonistBlock: '', narrativeTone: '' },
+      directionTitle: '',
+      sceneCount: 1,
+      sceneTexts: {},
+      sceneResumeStatus: {},
+      recipeStage: 1,
+      avoidDirections: [],
+      lockedFeatures: [],
+      updatedAt: now,
+    });
+    setActiveCreationId(id);
+  };
 
   const startLayerEdit = (layer: EditableLayer, currentText: string) => { setEditingLayer(layer); setLayerDraft(currentText); };
   const cancelLayerEdit = () => { setEditingLayer(null); setLayerDraft(''); };
@@ -234,7 +266,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
                 <RotateCcw size={13} /> 重新提取
               </button>
               {readyNovelCount >= 1 && (
-                <button onClick={enterWorkshop} className="btn btn-primary btn-sm gap-1.5">进入工坊 <ArrowRight size={13} /></button>
+                <button onClick={() => void enterWorkshop()} className="btn btn-primary btn-sm gap-1.5">用这本做骨架 <ArrowRight size={13} /></button>
               )}
             </div>
           </div>
@@ -326,7 +358,7 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
               title="模型未配置"
               action={<button onClick={() => window.dispatchEvent(new CustomEvent('open-settings-panel', { detail: { intent: 'DNA 提取' } }))} className="btn btn-secondary btn-sm">配置模型密钥</button>}
             >
-              {llmReadiness.reason}
+              {llmReadiness.message}
             </AppNotice>
           )}
 
@@ -363,9 +395,24 @@ export default function NovelDetail({ novelId }: { novelId: string }) {
               )}
 
               {llmReadiness.ok && (
-                <div className="card px-4 py-3 text-xs leading-6 text-fg-muted">
-                  DNA 会在后台自动按体量提取。若长时间没有推进，优先检查切分质量与模型配置。
-                </div>
+                mediumConfidence ? (
+                  <AppNotice
+                    tone="info"
+                    title={`切分置信度中等${novel.splitMeta ? `（${Math.round(novel.splitMeta.confidence * 100)}%）` : ''}，没有自动开跑`}
+                    action={
+                      <div className="flex flex-wrap gap-2">
+                        <button onClick={() => setManageMode(true)} className="btn btn-ghost btn-sm gap-1.5"><Scissors size={13} /> 去校验</button>
+                        <button onClick={() => void handleExtract()} className="btn btn-primary btn-sm gap-1.5"><ArrowRight size={13} /> 直接开始提取</button>
+                      </div>
+                    }
+                  >
+                    章节结构基本可用，质量影响有限。可以直接开始提取，或先到章节校验微调切分边界，修复后会自动开始。
+                  </AppNotice>
+                ) : (
+                  <div className="card px-4 py-3 text-xs leading-6 text-fg-muted">
+                    DNA 会在后台自动按体量提取。若长时间没有推进，优先检查切分质量与模型配置。
+                  </div>
+                )
               )}
 
               <div className="flex gap-5 border-t border-line pt-3.5 font-mono text-[11px] tabular-nums text-fg-subtle">

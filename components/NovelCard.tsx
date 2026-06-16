@@ -3,11 +3,7 @@
 import { X } from 'lucide-react';
 import { type Novel } from '../app/db';
 import { isDnaReady, isExtracting } from '../app/dnaState';
-
-function formatWordCount(count: number): string {
-  if (count >= 10000) return `${(count / 10000).toFixed(1)} 万字`;
-  return `${count} 字`;
-}
+import { formatWordCount } from '../app/util';
 
 type StatusTone = 'live' | 'ready' | 'muted';
 function novelStatus(novel: Novel): { label: string; tone: StatusTone } {
@@ -48,7 +44,7 @@ export default function NovelCard({
       <StatusDot tone={status.tone} />
       <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg" title={novel.name}>{novel.name}</span>
 
-      <span className="hidden shrink-0 font-mono text-xs tabular-nums text-fg-subtle sm:inline">{formatWordCount(novel.wordCount)}</span>
+      <span className="hidden shrink-0 font-mono text-xs tabular-nums text-fg-subtle sm:inline">{formatWordCount(novel.wordCount)} 字</span>
       <span
         className={`w-16 shrink-0 text-right text-xs ${
           status.tone === 'live' ? 'text-accent-ink' : status.tone === 'ready' ? 'text-success' : 'text-fg-subtle'
