@@ -7,8 +7,15 @@ import {
   type ProviderId,
   type ProviderProfile,
 } from './llmProviders';
+import {
+  DEFAULT_LAYOUT,
+  clampSidebarWidth,
+  clampMainSplitPct,
+  normalizeLayout,
+  type LayoutPrefs,
+} from './layoutPrefs';
 
-const STORE_VERSION = 5;
+const STORE_VERSION = 6;
 const DEFAULT_TEMPERATURE = 0.7;
 
 function xorEncryptDecrypt(input: string): string {
@@ -91,6 +98,13 @@ interface AppState {
   setWorkshopOpen: (open: boolean) => void;
   setActiveCreationId: (id: string | null) => void;
   setManageMode: (on: boolean) => void;
+  // 三栏布局偏好（属 UI 态 → Zustand persist，非 Dexie）。AC1/AC3/AC5/AC7。
+  layout: LayoutPrefs;
+  setSidebarWidth: (px: number) => void;
+  toggleSidebar: () => void;
+  setMainSplitPct: (pct: number, containerPx?: number) => void;
+  resetSidebar: () => void;
+  resetMainSplit: () => void;
 }
 
 function clampTemperature(value: unknown): number {
@@ -230,6 +244,18 @@ export const useAppStore = create<AppState>()(
       setWorkshopOpen: (open) => set({ workshopOpen: open }),
       setActiveCreationId: (id) => set({ activeCreationId: id, workshopOpen: true, manageMode: false }),
       setManageMode: (on) => set({ manageMode: on }),
+      // —— 三栏布局偏好 slice：值均经 layoutPrefs 纯函数夹取后落地（AC5 约束 + AC7 安全）——
+      layout: { ...DEFAULT_LAYOUT },
+      setSidebarWidth: (px) =>
+        set((state) => ({ layout: { ...state.layout, sidebarWidth: clampSidebarWidth(px) } })),
+      toggleSidebar: () =>
+        set((state) => ({ layout: { ...state.layout, sidebarCollapsed: !state.layout.sidebarCollapsed } })),
+      setMainSplitPct: (pct, containerPx) =>
+        set((state) => ({ layout: { ...state.layout, mainSplitPct: clampMainSplitPct(pct, containerPx) } })),
+      resetSidebar: () =>
+        set((state) => ({ layout: { ...state.layout, sidebarWidth: DEFAULT_LAYOUT.sidebarWidth, sidebarCollapsed: false } })),
+      resetMainSplit: () =>
+        set((state) => ({ layout: { ...state.layout, mainSplitPct: DEFAULT_LAYOUT.mainSplitPct } })),
     }),
     {
       name: 'novel-fusion-store', // name of the item in the storage (must be unique)
@@ -250,13 +276,15 @@ export const useAppStore = create<AppState>()(
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState;
         const state = persistedState as Record<string, unknown>;
-        // STORE_VERSION 5：继续清理已删状态字段，并让 providerProfiles 经过最新的默认值/兼容迁移。
+        // STORE_VERSION 6：在 5 的基础上新增 layout（三栏布局偏好）——缺失/脏值经 normalizeLayout 补默认，
+        // 使旧用户注水后拿到合法布局；继续清理已删状态字段，并让 providerProfiles 经最新默认值/兼容迁移。
         delete state.sequencingGear;
         delete state.shouldReduceEarly;
         delete state.fusionBias;
         return {
           ...state,
           llmConfig: normalizeLLMConfig(state.llmConfig),
+          layout: normalizeLayout(state.layout),
           selectedNovelId: typeof state.selectedNovelId === 'string' ? state.selectedNovelId : null,
           workshopOpen: false,
           activeCreationId: null,

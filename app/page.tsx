@@ -6,6 +6,7 @@ import { Menu, X } from 'lucide-react';
 import { db, type Novel, type FusionSession } from './db';
 import { isDnaReady, isExtracting, canAutoStart } from './dnaState';
 import { useAppStore, type LLMConfig } from './store';
+import { clampSidebarWidth, clampMainSplitPct, DEFAULT_LAYOUT } from './layoutPrefs';
 import { runDnaExtraction } from './dnaEngine';
 import { ensureLlmConfigReady } from './llmClient';
 import AppRail from '../components/AppRail';
@@ -16,6 +17,7 @@ import NovelWorkspace from '../components/NovelWorkspace';
 import FusionWorkshop from '../components/FusionWorkshop';
 import SettingsPanel from '../components/SettingsPanel';
 import AppDialog from '../components/AppDialog';
+import Resizer from '../components/Resizer';
 
 // 后台自适应提取（NFR1）：导入/选中一部 idle 且无 DNA 的作品时，自动在后台起提取——
 // 用户可离开（page.tsx 常驻，run 不随面板切换中止），跑完弹「DNA 就绪」通知。单飞 + 完成后再评估（队列推进）。
@@ -91,6 +93,12 @@ export default function Home() {
     setActiveCreationId,
     llmConfig,
     persistError,
+    layout,
+    setSidebarWidth,
+    toggleSidebar,
+    setMainSplitPct,
+    resetSidebar,
+    resetMainSplit,
   } = useAppStore();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -118,6 +126,10 @@ export default function Home() {
           if (next) { setSettingsOpen(false); setMobileNavOpen(false); }
           return next;
         });
+      } else if ((e.ctrlKey || e.metaKey) && e.key === '\\') {
+        // 折叠/展开侧栏（AC6）。并入既有 handler，勿另起监听；用 getState 取最新 action 避免闭包陈旧。
+        e.preventDefault();
+        useAppStore.getState().toggleSidebar();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -221,6 +233,75 @@ export default function Home() {
         ]
       : [{ label: view === 'creations' ? '创作库' : '作品库' }];
 
+  // —— 布局注水门控（T2 / AC3）：persist 挂载后才注水。注水前用默认渲染、注水后再启用宽度过渡，
+  //    避免冷启时宽度从默认「跳变」到持久值造成 layout shift。 ——
+  const [layoutHydrated, setLayoutHydrated] = useState(false);
+  useEffect(() => {
+    if (useAppStore.persist.hasHydrated()) setLayoutHydrated(true);
+    return useAppStore.persist.onFinishHydration(() => setLayoutHydrated(true));
+  }, []);
+
+  // 过渡就绪：注水后「下一帧」再开启宽度过渡，使「默认→持久值」的首次切换瞬时完成（不产生动画），
+  // 之后用户的折叠 / 拖拽 / 复位才平滑过渡（AC3「无缝恢复、无 layout shift」）。
+  const [transReady, setTransReady] = useState(false);
+  useEffect(() => {
+    if (!layoutHydrated) return;
+    const id = requestAnimationFrame(() => setTransReady(true));
+    return () => cancelAnimationFrame(id);
+  }, [layoutHydrated]);
+
+  // —— 拖拽瞬时布局值（null = 未拖拽 → 用持久化 store 值）。AC7：拖拽期只动本地态（rAF 平滑、零 localStorage 写），
+  //    松手时一次性提交 store（→ 经 safeLocalStorage 持久化一次，写失败仍走 persistError 路径），不每帧写盘。 ——
+  const mainAreaRef = useRef<HTMLDivElement>(null);
+  const [dragSidebarWidth, setDragSidebarWidth] = useState<number | null>(null);
+  const [dragSplitPct, setDragSplitPct] = useState<number | null>(null);
+  const sidebarStartRef = useRef(0); // 侧栏拖拽起始宽（px）
+  const splitStartRef = useRef(0); // 主区拖拽起始占比（%）
+  const splitContainerRef = useRef(0); // 主区容器宽（px），用于 px→% 换算与右 pane ≥300px 夹取
+  const sidebarCommitRef = useRef(0); // 待提交的侧栏宽（末值）
+  const splitCommitRef = useRef(0); // 待提交的占比（末值）
+
+  // 水合门控的「生效布局」：注水前（SSR / 首帧）一律用默认值，使服务端与客户端首帧一致，
+  // 避免宽度 / 折叠态水合不一致；注水后切到持久值。拖拽瞬时值（仅注水后发生）照常覆盖。
+  const effLayout = layoutHydrated ? layout : DEFAULT_LAYOUT;
+  const sidebarWidth = dragSidebarWidth ?? effLayout.sidebarWidth;
+  const mainSplitPct = dragSplitPct ?? effLayout.mainSplitPct;
+  const draggingSidebar = dragSidebarWidth !== null;
+  const draggingSplit = dragSplitPct !== null;
+
+  // 侧栏 Resizer：拖拽改 sidebarWidth（px，直接加 delta）。
+  const onSidebarResizeStart = () => { sidebarStartRef.current = layout.sidebarWidth; };
+  const onSidebarResize = (dx: number) => {
+    const next = clampSidebarWidth(sidebarStartRef.current + dx);
+    sidebarCommitRef.current = next;
+    setDragSidebarWidth(next);
+  };
+  const onSidebarResizeEnd = () => { setSidebarWidth(sidebarCommitRef.current); setDragSidebarWidth(null); };
+
+  // 主区 Resizer：拖拽改 mainSplitPct（%）。delta(px) 按容器宽换算成 %，夹取含「右 pane ≥300px / 25–60%」。
+  const onSplitResizeStart = () => {
+    splitStartRef.current = layout.mainSplitPct;
+    splitContainerRef.current = mainAreaRef.current?.clientWidth ?? 0;
+  };
+  const onSplitResize = (dx: number) => {
+    const w = splitContainerRef.current;
+    const next = w > 0 ? clampMainSplitPct(splitStartRef.current + (dx / w) * 100, w) : splitStartRef.current;
+    splitCommitRef.current = next;
+    setDragSplitPct(next);
+  };
+  const onSplitResizeEnd = () => { setMainSplitPct(splitCommitRef.current, splitContainerRef.current); setDragSplitPct(null); };
+
+  // P0（评审决策 D1）：注水完成后按主区容器宽对持久化占比补一次「右 pane ≥300px」地板夹取。
+  // normalizeLayout 只做与容器无关的静态夹取（右 ≥25%，无 px 地板），故在较窄视口加载持久化的高左占比时，
+  // 右 pane 初次渲染可能 <300px。这里 mount 后补一次（按评审决策仅做最小修复，不加 resize 监听）。
+  useEffect(() => {
+    if (!layoutHydrated) return;
+    const w = mainAreaRef.current?.clientWidth ?? 0;
+    if (w <= 0) return;
+    const { layout: l, setMainSplitPct: commit } = useAppStore.getState();
+    if (clampMainSplitPct(l.mainSplitPct, w) !== l.mainSplitPct) commit(l.mainSplitPct, w);
+  }, [layoutHydrated]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-canvas">
       <AppRail
@@ -233,7 +314,42 @@ export default function Home() {
         creationCount={creationCount}
         mobileOpen={mobileNavOpen}
         onCloseMobile={() => setMobileNavOpen(false)}
+        sidebarCollapsed={effLayout.sidebarCollapsed}
+        onToggleSidebar={toggleSidebar}
       />
+
+      {/* 可折叠侧栏（大纲占位 · Epic 2 接入）—— 桌面专属；移动端导航走 AppRail 抽屉。 */}
+      <aside
+        style={{ width: effLayout.sidebarCollapsed ? 0 : sidebarWidth }}
+        aria-hidden={effLayout.sidebarCollapsed}
+        className={`hidden shrink-0 flex-col overflow-hidden bg-panel lg:flex ${
+          transReady && !draggingSidebar ? 'transition-[width] duration-150 motion-reduce:transition-none' : ''
+        }`}
+      >
+        <div className="flex h-12 shrink-0 items-center border-b border-line px-3">
+          <span className="eyebrow">大纲</span>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          <p className="text-[12.5px] leading-relaxed text-fg-subtle">
+            三级大纲树将在后续故事（Epic 2）接入。此处为可折叠 / 可拖拽侧栏的占位容器。
+          </p>
+        </div>
+      </aside>
+
+      {/* 侧栏 ↔ 主区分隔条（折叠时不渲染） */}
+      {!effLayout.sidebarCollapsed && (
+        <Resizer
+          className="hidden lg:block"
+          ariaLabel="调整侧栏宽度"
+          ariaValueNow={sidebarWidth}
+          ariaValueMin={160}
+          ariaValueMax={400}
+          onResizeStart={onSidebarResizeStart}
+          onResize={onSidebarResize}
+          onResizeEnd={onSidebarResizeEnd}
+          onReset={resetSidebar}
+        />
+      )}
 
       <main className="flex min-w-0 flex-1 flex-col">
         {/* 顶栏：面包屑 + 全局后台活动。 */}
@@ -263,23 +379,63 @@ export default function Home() {
           )}
         </header>
 
-        <div
-          className={`min-h-0 flex-1 ${view === 'library' || view === 'creations' ? 'overflow-y-auto' : 'overflow-hidden'}`}
-        >
-          <div className={`p-5 sm:p-6 lg:p-7 ${view === 'novel' || view === 'studio' ? 'h-full' : ''}`}>
-            {view === 'studio' ? (
-              <FusionWorkshop />
-            ) : view === 'novel' && selectedNovel ? (
-              <NovelWorkspace novelId={selectedNovel.id} />
-            ) : view === 'creations' ? (
-              <CreationsView
-                onRequestDelete={(creation) => setDialogState({ kind: 'deleteCreation', creation })}
-                onRequestRename={(creation) => setDialogState({ kind: 'renameCreation', creation })}
-              />
-            ) : (
-              <LibraryView onRequestDelete={(novel) => setDialogState({ kind: 'deleteNovel', novel })} />
-            )}
-          </div>
+        {/* 双栏主工作区：左 pane（编辑器 / 现有视图画布）+ Resizer + 右 pane（AI 助手占位）。 */}
+        <div ref={mainAreaRef} className="flex min-h-0 flex-1">
+          {/* 左 pane：承载现有视图（库 / 创作 / 作品 / 工坊）；真实正文编辑器待 Epic 4。
+              移动端 flex-1 占满（右 pane 隐藏）；桌面 lg:flex-none 用 inline 宽度 %。 */}
+          <section
+            style={{ width: `${mainSplitPct}%` }}
+            className={`flex min-w-0 flex-1 flex-col lg:flex-none ${
+              transReady && !draggingSplit ? 'lg:transition-[width] lg:duration-150 motion-reduce:transition-none' : ''
+            }`}
+          >
+            <div className={`min-h-0 flex-1 ${view === 'library' || view === 'creations' ? 'overflow-y-auto' : 'overflow-hidden'}`}>
+              <div className={`p-5 sm:p-6 lg:p-7 ${view === 'novel' || view === 'studio' ? 'h-full' : ''}`}>
+                {view === 'studio' ? (
+                  <FusionWorkshop />
+                ) : view === 'novel' && selectedNovel ? (
+                  <NovelWorkspace novelId={selectedNovel.id} />
+                ) : view === 'creations' ? (
+                  <CreationsView
+                    onRequestDelete={(creation) => setDialogState({ kind: 'deleteCreation', creation })}
+                    onRequestRename={(creation) => setDialogState({ kind: 'renameCreation', creation })}
+                  />
+                ) : (
+                  <LibraryView onRequestDelete={(novel) => setDialogState({ kind: 'deleteNovel', novel })} />
+                )}
+              </div>
+            </div>
+          </section>
+
+          {/* 左 ↔ 右 分隔条（桌面专属） */}
+          <Resizer
+            className="hidden lg:block"
+            ariaLabel="调整编辑器与 AI 助手的占比"
+            ariaValueNow={mainSplitPct}
+            ariaValueMin={40}
+            ariaValueMax={75}
+            onResizeStart={onSplitResizeStart}
+            onResize={onSplitResize}
+            onResizeEnd={onSplitResizeEnd}
+            onReset={resetMainSplit}
+          />
+
+          {/* 右 pane：AI 助手占位（Epic 3 接入）—— 桌面专属。 */}
+          <aside
+            style={{ width: `${100 - mainSplitPct}%` }}
+            className={`hidden min-w-0 flex-col bg-panel lg:flex lg:flex-none ${
+              transReady && !draggingSplit ? 'lg:transition-[width] lg:duration-150 motion-reduce:transition-none' : ''
+            }`}
+          >
+            <div className="flex h-12 shrink-0 items-center border-b border-line px-4">
+              <span className="eyebrow">AI 助手</span>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <p className="text-[12.5px] leading-relaxed text-fg-subtle">
+                AI 对话与闭环起草将在后续故事（Epic 3）接入。此处为双栏右侧的占位容器。
+              </p>
+            </div>
+          </aside>
         </div>
       </main>
 
