@@ -29,14 +29,17 @@
 
     /* 单一强调：低饱和靛蓝（Linear 同源）。 */
     --accent:        #5E6AD2; /* 实心填充：按钮 / 点 / 进度 / caret */
+    --accent-c:      94 106 210; /* RGB channels — Tailwind alpha (/30) 支持 */
     --accent-hover:  #6B76DD;
     --accent-fg:     #FFFFFF;
     --accent-ink:    #8B93EE; /* 强调色文字 / 图标（暗色对比校准） */
     --accent-subtle: #1B1E33;
 
     --danger:         #F07178;
+    --danger-c:       240 113 120; /* RGB channels */
     --danger-subtle:  #2A171A;
     --success:        #4CC38A;
+    --success-c:      76 195 138; /* RGB channels */
     --success-subtle: #15271E;
 
     --scrim:         rgba(5, 6, 8, 0.62);
@@ -69,14 +72,17 @@
     --border-2: #F2F3F5;
 
     --accent:        #5E6AD2;
+    --accent-c:      94 106 210;
     --accent-hover:  #4E59C7;
     --accent-fg:     #FFFFFF;
     --accent-ink:    #4F58C4;
     --accent-subtle: #EEF0FB;
 
     --danger:         #DC2626;
+    --danger-c:       220 38 38;
     --danger-subtle:  #FEF1F1;
     --success:        #16A34A;
+    --success-c:      22 163 74;
     --success-subtle: #EBF8F0;
 
     --scrim:         rgba(20, 21, 26, 0.45);

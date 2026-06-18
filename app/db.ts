@@ -1,5 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 import type { ChapterMapSummary, FusionDirection, NovelDNACard } from './dnaSchema';
+import type { Volume, OutlineChapter, Scene, EntityCard, DraftHistory } from './memorySchema';
 
 // Book-level DNA 形状（ChapterMapSummary / StructureBeat / NovelDNACard）现由 app/dnaSchema.ts 单一源定义并 import。
 
@@ -133,6 +134,12 @@ class NovelFusionDB extends Dexie {
   novels!: Table<Novel, string>;
   chapters!: Table<Chapter, string>;
   fusionSessions!: Table<FusionSession, string>;
+  // 新增（Story 1.4 / v16）：FR-MEM 三级大纲 + 设定卡 + FR-EDT 草稿快照。主键均为应用生成的 string id。
+  volumes!: Table<Volume, string>;
+  outlineChapters!: Table<OutlineChapter, string>;
+  scenes!: Table<Scene, string>;
+  entityCards!: Table<EntityCard, string>;
+  draftHistory!: Table<DraftHistory, string>;
 
   constructor() {
     super('NovelFusionDB');
@@ -385,6 +392,22 @@ class NovelFusionDB extends Dexie {
       })
       .upgrade(async () => {
         /* recipeStage / avoidDirections / lockedFeatures 为新可选字段，存量无需迁移 */
+      });
+    // v16: FR-MEM 三级大纲(volumes/outlineChapters/scenes) + 设定卡(entityCards) + FR-EDT 草稿快照(draftHistory)。
+    // 既有三表索引串与 v15 逐字一致；五张新表无存量，upgrade 为 no-op（沿用 v7 新表先例，不回填以免阻塞启动主线程）。
+    this.version(16)
+      .stores({
+        novels: 'id, name, createdAt, splitStatus, analysisStatus',
+        chapters: 'id, novelId, chapterIndex, status, mapStatus',
+        fusionSessions: 'id, updatedAt, createdAt',
+        volumes: 'id, novelId, [novelId+order]',
+        outlineChapters: 'id, volumeId, novelId, [volumeId+order]',
+        scenes: 'id, chapterId, novelId, [chapterId+order]',
+        entityCards: 'id, novelId, type, activeState, [novelId+type], [novelId+activeState]',
+        draftHistory: 'id, sceneId, novelId, [sceneId+createdAt]',
+      })
+      .upgrade(async () => {
+        /* 五表均为新表，无存量数据；不回填以免阻塞启动主线程（沿用 v7 先例） */
       });
   }
 }

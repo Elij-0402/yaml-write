@@ -18,6 +18,9 @@ import FusionWorkshop from '../components/FusionWorkshop';
 import SettingsPanel from '../components/SettingsPanel';
 import AppDialog from '../components/AppDialog';
 import Resizer from '../components/Resizer';
+import SkeletonTree from '../components/SkeletonTree';
+import ApiKeyNoticeCard from '../components/ApiKeyNoticeCard';
+import { getColdStartState } from './coldStartState';
 
 // 后台自适应提取（NFR1）：导入/选中一部 idle 且无 DNA 的作品时，自动在后台起提取——
 // 用户可离开（page.tsx 常驻，run 不随面板切换中止），跑完弹「DNA 就绪」通知。单飞 + 完成后再评估（队列推进）。
@@ -162,6 +165,7 @@ export default function Home() {
 
   const extractingCount = novels.filter((n) => isExtracting(n)).length;
   const llmReadiness = useMemo(() => ensureLlmConfigReady(llmConfig), [llmConfig]);
+  const coldStart = useMemo(() => getColdStartState(novelsRaw?.length), [novelsRaw?.length]);
   const { doneToast, dismissToast } = useBackgroundExtraction(selectedNovelId, llmConfig);
 
   // 清理幽灵选中：持久化的 selectedNovelId 指向已删除作品时复位。
@@ -330,9 +334,13 @@ export default function Home() {
           <span className="eyebrow">大纲</span>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
-          <p className="text-[12.5px] leading-relaxed text-fg-subtle">
-            三级大纲树将在后续故事（Epic 2）接入。此处为可折叠 / 可拖拽侧栏的占位容器。
-          </p>
+          {coldStart.showSkeleton ? (
+            <SkeletonTree />
+          ) : coldStart.isLoading ? null : (
+            <p className="text-[12.5px] leading-relaxed text-fg-subtle">
+              三级大纲树将在后续故事（Epic 2）接入。此处为可折叠 / 可拖拽侧栏的占位容器。
+            </p>
+          )}
         </div>
       </aside>
 
@@ -431,9 +439,16 @@ export default function Home() {
               <span className="eyebrow">AI 助手</span>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              <p className="text-[12.5px] leading-relaxed text-fg-subtle">
-                AI 对话与闭环起草将在后续故事（Epic 3）接入。此处为双栏右侧的占位容器。
-              </p>
+              {!llmReadiness.ok && (
+                <ApiKeyNoticeCard
+                  onConfigure={() => window.dispatchEvent(new CustomEvent('open-settings-panel', { detail: { intent: 'api-key' } }))}
+                />
+              )}
+              <div className={llmReadiness.ok ? '' : 'opacity-50 pointer-events-none'}>
+                <p className="text-[12.5px] leading-relaxed text-fg-subtle">
+                  AI 对话与闭环起草将在后续故事（Epic 3）接入。此处为双栏右侧的占位容器。
+                </p>
+              </div>
             </div>
           </aside>
         </div>

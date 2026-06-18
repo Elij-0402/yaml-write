@@ -1,4 +1,14 @@
 /** @type {import('tailwindcss').Config} */
+
+// Tailwind 的 /N 透明度修饰符（如 bg-accent/30）需要将颜色分解为 RGB 通道。
+// 裸 CSS 变量（`var(--accent)`）不可分解，需额外 --*-c 通道变量配合。
+// 未指定透明度时退回 hex 变量（与纯 CSS 用法保持一致）。
+const withAlpha = (cssVar, channelVar) =>
+  ({ opacityValue }) =>
+    opacityValue === undefined
+      ? `var(${cssVar})`
+      : `rgb(var(${channelVar}) / ${opacityValue})`;
+
 module.exports = {
   content: [
     './pages/**/*.{js,ts,jsx,tsx,mdx}',
@@ -25,18 +35,18 @@ module.exports = {
         'line-2': 'var(--border-2)',
         scrim: 'var(--scrim)',
         accent: {
-          DEFAULT: 'var(--accent)',
+          DEFAULT: withAlpha('--accent', '--accent-c'),
           hover: 'var(--accent-hover)',
           fg: 'var(--accent-fg)',
           ink: 'var(--accent-ink)', // 强调色文字/图标（按主题校准对比）；--accent 仅实心填充
           subtle: 'var(--accent-subtle)',
         },
         danger: {
-          DEFAULT: 'var(--danger)',
+          DEFAULT: withAlpha('--danger', '--danger-c'),
           subtle: 'var(--danger-subtle)',
         },
         success: {
-          DEFAULT: 'var(--success)',
+          DEFAULT: withAlpha('--success', '--success-c'),
           subtle: 'var(--success-subtle)',
         },
       },
