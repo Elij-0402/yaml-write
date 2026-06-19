@@ -88,6 +88,8 @@ interface AppState {
   manageMode: boolean; // show NovelUploader (chapters + re-split) for the selected novel
   rateLimited: boolean;
   setRateLimited: (limited: boolean) => void;
+  isOffline: boolean; // 运行时网络态（非持久化语义；每次挂载由 navigator.onLine 求真覆盖，复刻 rateLimited 范式）
+  setOffline: (value: boolean) => void;
   workshopBusy: boolean; // 工坊流式/生成进行中——禁止 busy 时切换/新建创作，避免跨创作 stale-write
   setWorkshopBusy: (busy: boolean) => void;
   persistError: boolean;
@@ -206,9 +208,11 @@ export const useAppStore = create<AppState>()(
       activeCreationId: null,
       manageMode: false,
       rateLimited: false,
+      isOffline: false,
       workshopBusy: false,
       persistError: false,
       setRateLimited: (limited) => set({ rateLimited: limited }),
+      setOffline: (value) => set({ isOffline: value }),
       setWorkshopBusy: (busy) => set({ workshopBusy: busy }),
       setPersistError: (value) => set({ persistError: value }),
       setActiveProvider: (provider) =>
@@ -290,6 +294,7 @@ export const useAppStore = create<AppState>()(
           activeCreationId: null,
           manageMode: false,
           rateLimited: false,
+          isOffline: false,
           workshopBusy: false,
           persistError: false,
         };

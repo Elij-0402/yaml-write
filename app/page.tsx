@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Menu, X } from 'lucide-react';
+import { Menu, X, WifiOff } from 'lucide-react';
 import { db, type Novel, type FusionSession } from './db';
 import { isDnaReady, isExtracting, canAutoStart } from './dnaState';
 import { useAppStore, type LLMConfig } from './store';
@@ -21,6 +21,9 @@ import Resizer from '../components/Resizer';
 import SkeletonTree from '../components/SkeletonTree';
 import ApiKeyNoticeCard from '../components/ApiKeyNoticeCard';
 import { getColdStartState } from './coldStartState';
+import { getInitialOnline, canUseLlm, OFFLINE_TOAST_TEXT, OFFLINE_DISABLED_HINT } from './networkStatus';
+import StatusBar from '../components/StatusBar';
+import AppNotice from '../components/AppNotice';
 
 // 后台自适应提取（NFR1）：导入/选中一部 idle 且无 DNA 的作品时，自动在后台起提取——
 // 用户可离开（page.tsx 常驻，run 不随面板切换中止），跑完弹「DNA 就绪」通知。单飞 + 完成后再评估（队列推进）。
@@ -96,6 +99,8 @@ export default function Home() {
     setActiveCreationId,
     llmConfig,
     persistError,
+    isOffline,
+    setOffline,
     layout,
     setSidebarWidth,
     toggleSidebar,
@@ -109,6 +114,9 @@ export default function Home() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [homeSection, setHomeSection] = useState<Section>('library');
+  // 离线 Toast 开关（AC5）：UI 就绪、触发接线顺延 Epic 3。Epic 1 无可点击 AI 控件，故暂不会被置 true；
+  // state 与 setter 均被引用（关闭按钮即用 setter）→ 非死代码。
+  const [offlineToastOpen, setOfflineToastOpen] = useState(false);
   const [dialogState, setDialogState] = useState<
     | { kind: 'deleteNovel'; novel: Novel }
     | { kind: 'deleteCreation'; creation: FusionSession }
@@ -149,6 +157,20 @@ export default function Home() {
     window.addEventListener('open-settings-panel', handler as EventListener);
     return () => window.removeEventListener('open-settings-panel', handler as EventListener);
   }, []);
+
+  // 网络离线监听（AC1）：挂载即按 navigator.onLine 求一次真（断网中刷新也正确显示离线，不依赖事件补发），
+  // 并监听 online/offline 事件写入全局 isOffline；卸载移除（复刻既有 add/removeEventListener 范式）。
+  useEffect(() => {
+    setOffline(!getInitialOnline());
+    const goOffline = () => setOffline(true);
+    const goOnline = () => setOffline(false);
+    window.addEventListener('offline', goOffline);
+    window.addEventListener('online', goOnline);
+    return () => {
+      window.removeEventListener('offline', goOffline);
+      window.removeEventListener('online', goOnline);
+    };
+  }, [setOffline]);
 
   const novelsRaw = useLiveQuery<Novel[]>(() => db.novels.orderBy('createdAt').reverse().toArray(), []);
   const novels = useMemo(() => novelsRaw || [], [novelsRaw]);
@@ -307,7 +329,10 @@ export default function Home() {
   }, [layoutHydrated]);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-canvas">
+    <div className="flex h-screen flex-col overflow-hidden bg-canvas">
+      {/* 横向工作区行（AppRail + 侧栏 + Resizer + 主区）；下方接 28px 全宽底部状态栏（AC2）。
+          根容器改 flex-col 以容纳底栏；本行 min-h-0 flex-1 保证主区仍可内部滚动、不被底栏挤出。 */}
+      <div className="flex min-h-0 flex-1">
       <AppRail
         activeSection={activeSection}
         onSelectSection={selectSection}
@@ -439,12 +464,17 @@ export default function Home() {
               <span className="eyebrow">AI 助手</span>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              {!llmReadiness.ok && (
+              {/* 拦截闸门（AC3）：canUseLlm = 密钥就绪且在线。离线优先于缺密钥提示（网络是更底层阻断，二者不堆叠）。 */}
+              {isOffline ? (
+                <AppNotice tone="warning" title="离线模式" className="mb-4">
+                  {OFFLINE_DISABLED_HINT}。本地写作与大纲编辑不受影响，已安全保存；恢复网络后自动可用。
+                </AppNotice>
+              ) : !llmReadiness.ok ? (
                 <ApiKeyNoticeCard
                   onConfigure={() => window.dispatchEvent(new CustomEvent('open-settings-panel', { detail: { intent: 'api-key' } }))}
                 />
-              )}
-              <div className={llmReadiness.ok ? '' : 'opacity-50 pointer-events-none'}>
+              ) : null}
+              <div className={canUseLlm(llmReadiness.ok, isOffline) ? '' : 'opacity-50 pointer-events-none'}>
                 <p className="text-[12.5px] leading-relaxed text-fg-subtle">
                   AI 对话与闭环起草将在后续故事（Epic 3）接入。此处为双栏右侧的占位容器。
                 </p>
@@ -453,6 +483,10 @@ export default function Home() {
           </aside>
         </div>
       </main>
+      </div>
+
+      {/* 全宽 28px 底部状态栏（AC2）：承载在线 / 离线模式连通指示，跨工作区底边。 */}
+      <StatusBar isOffline={isOffline} />
 
       <CommandPalette
         open={paletteOpen}
@@ -513,7 +547,7 @@ export default function Home() {
         <div
           role="status"
           aria-live="polite"
-          className="pop-enter fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2.5 rounded-lg border border-line bg-surface px-4 py-2.5 text-[13px] text-fg shadow-pop"
+          className="pop-enter fixed bottom-10 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2.5 rounded-lg border border-line bg-surface px-4 py-2.5 text-[13px] text-fg shadow-pop"
         >
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
           {doneToast}
@@ -522,8 +556,24 @@ export default function Home() {
       )}
 
       {persistError && (
-        <div role="alert" className="fixed bottom-6 left-6 z-50 flex items-center gap-2 rounded-lg border border-danger/40 bg-danger-subtle px-3 py-2 text-xs text-danger shadow-pop">
+        <div role="alert" className="fixed bottom-10 left-6 z-50 flex items-center gap-2 rounded-lg border border-danger/40 bg-danger-subtle px-3 py-2 text-xs text-danger shadow-pop">
           <span className="h-1.5 w-1.5 rounded-full bg-danger" /> 存储不可用，改动可能未保存
+        </div>
+      )}
+
+      {/* 离线 Toast（AC5）：UI 就绪、触发接线顺延 Epic 3——届时发送/起草按钮 disabled={!canUseLlm(llmReadiness.ok, isOffline)}，
+          被拦截时调用 setOfflineToastOpen(true) 弹此提示。复刻 doneToast 的 role=status/aria-live/.pop-enter/fixed bottom-6 范式，
+          红点 + WifiOff + OFFLINE_TOAST_TEXT，零 Emoji。Epic 1 无可点击 AI 控件，此 toast 暂不会被触发（非死代码）。 */}
+      {offlineToastOpen && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="pop-enter fixed bottom-10 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2.5 rounded-lg border border-line bg-surface px-4 py-2.5 text-[13px] text-fg shadow-pop"
+        >
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" />
+          <WifiOff size={14} className="shrink-0 text-danger" />
+          {OFFLINE_TOAST_TEXT}
+          <button onClick={() => setOfflineToastOpen(false)} className="ml-1 text-fg-subtle transition-colors hover:text-fg" aria-label="关闭通知"><X size={14} /></button>
         </div>
       )}
     </div>

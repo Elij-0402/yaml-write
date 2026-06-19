@@ -117,7 +117,7 @@ The old `generate-storyboard` / `stream-storyboard` endpoints and `StoryboardRes
 
 ### Local persistence — Dexie / IndexedDB (versioned)
 
-`app/db.ts` defines `NovelFusionDB` (`novels`, `chapters`, `fusionSessions`) with versioned schemas + sequential `.upgrade()` migrations, currently at **`version(14)`**. Milestones:
+`app/db.ts` defines `NovelFusionDB` (`novels`, `chapters`, `fusionSessions`, plus the v16 FR-MEM tables `volumes`, `outlineChapters`, `scenes`, `entityCards`, `draftHistory`) with versioned schemas + sequential `.upgrade()` migrations, currently at **`version(16)`**. Milestones:
 - **v1–v4**: novels/chapters base schema; `splitStatus` index; `splitMeta` normalization.
 - **v5**: book-level DNA fields — `novels.analysisStatus` (indexed, `'idle'`), `mapProgress`, `dnaCard`; `chapters.mapStatus` (indexed, `'pending'`), `mapSummary`.
 - **v6**: optional non-indexed `Chapter.contentSha256` (no-op upgrade; backfilled lazily).
@@ -129,6 +129,8 @@ The old `generate-storyboard` / `stream-storyboard` endpoints and `StoryboardRes
 - **v12**: `FusionSession` adds optional non-indexed `openingDrafts` (opening-chapter version history — archived before each rewrite, ~5 kept; restore/compare). Lazy no-op upgrade.
 - **v13**: `FusionSession` adds optional non-indexed `freedom` (generation mode: `false`=换皮变题 default / `true`=0→1 原创) + `tone` (prose tone-register preset: cold/hot/humor/lyrical; default = 贴题材). Lazy no-op upgrade.
 - **v14**: removes the deprecated `ChapterAnalysis` type family — drops the `Chapter.analysis?` field and deletes any residual `analysis` from stored chapters. Index strings unchanged.
+- **v15**: `FusionSession` adds optional non-indexed `recipeStage` / `avoidDirections` / `lockedFeatures` (recipe-dialog + candidate-pool draft persistence). Index strings unchanged; lazy no-op upgrade.
+- **v16**: adds the **FR-MEM memory-chassis** tables — `volumes` / `outlineChapters` / `scenes` (the 卷-章-幕 three-level outline; `outlineChapters` is **distinct from** the DNA `chapters` table), `entityCards` (设定卡; `[novelId+type]` / `[novelId+activeState]` compound indexes), and `draftHistory` (per-scene draft snapshots; `[sceneId+createdAt]`). The three existing tables' index strings are **byte-identical to v15**; the five new tables have no existing data so `.upgrade()` is a no-op (v7 precedent). Their shapes/enums/guards live in a Dexie-free pure module **`app/memorySchema.ts`** (imported by `db.ts` for `Table<T, string>` types — mirrors the `dnaSchema.ts` single-source pattern; deliberately import-free of `dexie`/`./db` so it stays node-unit-testable, see `app/memorySchema.test.ts`).
 
 `FusionSession` shape: `selectedIds`, `customPrompt`, `adversarialRules`, `step` (`material|directions|creator|manuscript`), `directions`, `blocks`, `directionTitle`, `sceneCount`, `sceneTexts`, `sceneResumeStatus`, `openingDrafts?`, `freedom?`, `tone?`, plus `name/createdAt/updatedAt`.
 
