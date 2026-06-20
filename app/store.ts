@@ -106,7 +106,6 @@ interface AppState {
   toggleSidebar: () => void;
   setMainSplitPct: (pct: number, containerPx?: number) => void;
   resetSidebar: () => void;
-  resetMainSplit: () => void;
 }
 
 function clampTemperature(value: unknown): number {
@@ -258,8 +257,6 @@ export const useAppStore = create<AppState>()(
         set((state) => ({ layout: { ...state.layout, mainSplitPct: clampMainSplitPct(pct, containerPx) } })),
       resetSidebar: () =>
         set((state) => ({ layout: { ...state.layout, sidebarWidth: DEFAULT_LAYOUT.sidebarWidth, sidebarCollapsed: false } })),
-      resetMainSplit: () =>
-        set((state) => ({ layout: { ...state.layout, mainSplitPct: DEFAULT_LAYOUT.mainSplitPct } })),
     }),
     {
       name: 'novel-fusion-store', // name of the item in the storage (must be unique)

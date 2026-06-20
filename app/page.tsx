@@ -19,6 +19,7 @@ import SettingsPanel from '../components/SettingsPanel';
 import AppDialog from '../components/AppDialog';
 import Resizer from '../components/Resizer';
 import SkeletonTree from '../components/SkeletonTree';
+import OutlineTree from '../components/OutlineTree';
 import ApiKeyNoticeCard from '../components/ApiKeyNoticeCard';
 import { getColdStartState } from './coldStartState';
 import { getInitialOnline, canUseLlm, OFFLINE_TOAST_TEXT, OFFLINE_DISABLED_HINT } from './networkStatus';
@@ -106,7 +107,6 @@ export default function Home() {
     toggleSidebar,
     setMainSplitPct,
     resetSidebar,
-    resetMainSplit,
   } = useAppStore();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -317,6 +317,13 @@ export default function Home() {
   };
   const onSplitResizeEnd = () => { setMainSplitPct(splitCommitRef.current, splitContainerRef.current); setDragSplitPct(null); };
 
+  // 双击复位主区分隔条（AC5）：按当前容器宽走容器感知夹取，使复位值与拖拽 / 注水路径一致地守住
+  // 「右 pane ≥300px」地板（窄视口 + 宽侧栏时默认 55% 会让右 pane <300px，故不能直接写默认值）。
+  const onSplitReset = () => {
+    const w = mainAreaRef.current?.clientWidth ?? 0;
+    setMainSplitPct(DEFAULT_LAYOUT.mainSplitPct, w > 0 ? w : undefined);
+  };
+
   // P0（评审决策 D1）：注水完成后按主区容器宽对持久化占比补一次「右 pane ≥300px」地板夹取。
   // normalizeLayout 只做与容器无关的静态夹取（右 ≥25%，无 px 地板），故在较窄视口加载持久化的高左占比时，
   // 右 pane 初次渲染可能 <300px。这里 mount 后补一次（按评审决策仅做最小修复，不加 resize 监听）。
@@ -347,7 +354,7 @@ export default function Home() {
         onToggleSidebar={toggleSidebar}
       />
 
-      {/* 可折叠侧栏（大纲占位 · Epic 2 接入）—— 桌面专属；移动端导航走 AppRail 抽屉。 */}
+      {/* 可折叠侧栏（三级大纲树 · Story 2.1 接入）—— 桌面专属；移动端导航走 AppRail 抽屉。 */}
       <aside
         style={{ width: effLayout.sidebarCollapsed ? 0 : sidebarWidth }}
         aria-hidden={effLayout.sidebarCollapsed}
@@ -361,9 +368,11 @@ export default function Home() {
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
           {coldStart.showSkeleton ? (
             <SkeletonTree />
-          ) : coldStart.isLoading ? null : (
-            <p className="text-[12.5px] leading-relaxed text-fg-subtle">
-              三级大纲树将在后续故事（Epic 2）接入。此处为可折叠 / 可拖拽侧栏的占位容器。
+          ) : coldStart.isLoading ? null : selectedNovelId ? (
+            <OutlineTree novelId={selectedNovelId} />
+          ) : (
+            <p className="px-2 py-2 text-[12.5px] leading-relaxed text-fg-subtle">
+              从作品库选择一部作品，即可在此编排它的三级大纲。
             </p>
           )}
         </div>
@@ -450,7 +459,7 @@ export default function Home() {
             onResizeStart={onSplitResizeStart}
             onResize={onSplitResize}
             onResizeEnd={onSplitResizeEnd}
-            onReset={resetMainSplit}
+            onReset={onSplitReset}
           />
 
           {/* 右 pane：AI 助手占位（Epic 3 接入）—— 桌面专属。 */}

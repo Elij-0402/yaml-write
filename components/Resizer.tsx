@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 // 可复用的竖向拖拽分隔条（纯指针交互原语）。AC2 / AC6 / AC7。
 // 视觉：1px 发丝线（bg-line）→ hover/拖拽高亮为靛蓝实色（bg-accent，仅实色填充，合视觉铁律）；
@@ -50,6 +50,18 @@ export default function Resizer({
     document.body.style.cursor = locked ? 'col-resize' : '';
     document.body.style.userSelect = locked ? 'none' : '';
   };
+
+  // 卸载兜底：若组件在拖拽中被卸载（如拖侧栏时 ⌘\ 折叠侧栏使本 Resizer 条件卸载），endDrag 不会触发——
+  // 复位全局 body 锁并取消挂起的 rAF，避免 col-resize 光标 / 禁选状态泄漏到全局。
+  useEffect(() => {
+    return () => {
+      if (draggingRef.current) {
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return; // 仅主键
