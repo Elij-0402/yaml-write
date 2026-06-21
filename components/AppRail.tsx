@@ -94,14 +94,15 @@ export default function AppRail({
           })}
         </nav>
 
-        {/* 侧栏折叠开关（AC6：折叠/展开切换 + aria-expanded） */}
+        {/* 侧栏折叠开关（AC6：折叠/展开切换 + aria-expanded）。仅桌面显示 —— 可折叠侧栏是
+            桌面专属（page.tsx 的 aside 为 hidden lg:flex），移动端抽屉里点它只会静默改持久态、无可见反馈。 */}
         <button
           type="button"
           onClick={onToggleSidebar}
           title={sidebarCollapsed ? '展开侧栏（⌘\\）' : '折叠侧栏（⌘\\）'}
           aria-label={sidebarCollapsed ? '展开侧栏' : '折叠侧栏'}
           aria-expanded={!sidebarCollapsed}
-          className="grid h-9 w-9 place-items-center rounded-sm text-fg-subtle transition-colors hover:bg-raised hover:text-fg"
+          className="hidden h-9 w-9 place-items-center rounded-sm text-fg-subtle transition-colors hover:bg-raised hover:text-fg lg:grid"
         >
           {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
         </button>

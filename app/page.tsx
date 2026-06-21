@@ -338,6 +338,21 @@ export default function Home() {
     if (clampMainSplitPct(l.mainSplitPct, w) !== l.mainSplitPct) commit(l.mainSplitPct, w);
   }, [layoutHydrated]);
 
+  // 评审 #2：注水完成后移除首帧防闪类（app/layout.tsx 的 LAYOUT_BOOTSTRAP 加的 .va-sidebar-collapsed），
+  // 交还 React inline 宽度控制（否则展开时 globals.css 的 !important 会把侧栏钉死在 0）。必须在 layoutHydrated
+  // 翻转后的渲染（此时折叠态已由 effLayout 落成 inline width:0）之后执行 → 单列 effect 依赖 [layoutHydrated]，
+  // 避免在 React 接管前移除类导致回弹到默认展开闪一下。
+  useEffect(() => {
+    if (layoutHydrated) document.documentElement.classList.remove('va-sidebar-collapsed');
+  }, [layoutHydrated]);
+
+  // 评审 #1 残留：折叠时清掉瞬时拖拽宽。覆盖「拖侧栏 Resizer 时按 ⌘\\ 折叠 → Resizer 条件卸载 →
+  // onSidebarResizeEnd 未触发 → dragSidebarWidth 滞留非 null」的边角，避免再展开时侧栏停在陈旧拖拽值且过渡被抑制。
+  // 正常折叠时 dragSidebarWidth 已为 null（setState 同值，React 跳过 → 幂等无害）。
+  useEffect(() => {
+    if (effLayout.sidebarCollapsed) setDragSidebarWidth(null);
+  }, [effLayout.sidebarCollapsed]);
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-canvas">
       {/* 横向工作区行（AppRail + 侧栏 + Resizer + 主区）；下方接 28px 全宽底部状态栏（AC2）。
@@ -359,6 +374,7 @@ export default function Home() {
 
       {/* 可折叠侧栏（三级大纲树 · Story 2.1 接入）—— 桌面专属；移动端导航走 AppRail 抽屉。 */}
       <aside
+        data-app-sidebar
         style={{ width: effLayout.sidebarCollapsed ? 0 : sidebarWidth }}
         aria-hidden={effLayout.sidebarCollapsed}
         className={`hidden shrink-0 flex-col overflow-hidden bg-panel lg:flex ${
@@ -409,7 +425,7 @@ export default function Home() {
       {/* 侧栏 ↔ 主区分隔条（折叠时不渲染） */}
       {!effLayout.sidebarCollapsed && (
         <Resizer
-          className="hidden lg:block"
+          className="hidden lg:block va-sidebar-resizer"
           ariaLabel="调整侧栏宽度"
           ariaValueNow={sidebarWidth}
           ariaValueMin={160}

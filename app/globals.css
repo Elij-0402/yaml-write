@@ -230,3 +230,16 @@
     .caret, .view-enter, .pop-enter, .slide-in-right, .skeleton { animation: none; }
   }
 }
+
+/* —— Story 1.1 评审 #2：折叠态冷启防闪（首帧 layout shift）——
+   注水前一律用 DEFAULT_LAYOUT（侧栏展开）渲染以保 SSR/客户端首帧一致，但持久折叠的用户会先看到
+   240px 侧栏再瞬收（明显 layout shift）。app/layout.tsx 的 LAYOUT_BOOTSTRAP 在首帧前按持久值给 <html>
+   加 .va-sidebar-collapsed，下面这条规则即把左侧栏压成 0、其分隔条隐藏；page.tsx 注水后移除该类，
+   交还 React inline 宽度控制（见 layoutHydrated effect）。仅作用于 data-app-sidebar 的左侧栏，不碰右 pane。
+   故意置于所有 @layer 之外（非分层规则优先级高于分层规则）+ !important —— 确保压过 React 的 inline width。 */
+html.va-sidebar-collapsed [data-app-sidebar] {
+  width: 0 !important;
+}
+html.va-sidebar-collapsed .va-sidebar-resizer {
+  display: none !important;
+}
