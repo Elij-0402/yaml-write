@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Literal
 
 # 自适应提取：整本直提（小档）与弧窗（中/大档）的输入上限。
 MAX_DIRECT_INPUT_CHARS = 200000
@@ -202,10 +202,19 @@ class StoryboardScene(BaseModel):
     visualCues: str = Field(..., description="画面感与环境意象指示")
 
 
+class ActiveCardItem(BaseModel):
+    name: str = ""
+    type: Literal["worldview", "character", "prop", "geography", ""] = ""
+    summary: str = ""
+    details: str = ""
+    activeState: Literal["sceneActive", "globalActive", "idle", ""] = ""
+
+
 class SceneTextInput(BaseModel):
     selectedDirection: SelectedDirection
     currentScene: StoryboardScene
     precedingTexts: Dict[int, str] = Field(default_factory=dict)
+    activeCards: List[ActiveCardItem] = Field(default_factory=list)
     currentDraft: Optional[str] = Field(None, max_length=24000)
     resumeFromText: Optional[str] = Field(None, max_length=24000)
     adversarialRules: Optional[str] = Field(None, max_length=2000)

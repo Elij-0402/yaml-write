@@ -136,7 +136,8 @@ function StudioShell({
 }
 
 export default function FusionWorkshop() {
-  const { setSelectedNovelId, setWorkshopOpen, rateLimited, activeCreationId, setWorkshopBusy } = useAppStore((state) => ({
+  const { selectedNovelId, setSelectedNovelId, setWorkshopOpen, rateLimited, activeCreationId, setWorkshopBusy } = useAppStore((state) => ({
+    selectedNovelId: state.selectedNovelId,
     setSelectedNovelId: state.setSelectedNovelId,
     setWorkshopOpen: state.setWorkshopOpen,
     rateLimited: state.rateLimited,
@@ -146,6 +147,18 @@ export default function FusionWorkshop() {
   const novels = useLiveQuery(() => db.novels.reverse().toArray(), []) || [];
   const readyNovels = novels.filter((novel) => isDnaReady(novel));
   const firstIncompleteNovel = novels.find((novel) => !isDnaReady(novel)) || novels[0] || null;
+
+  const activeCards = useLiveQuery(
+    () => {
+      if (!selectedNovelId) return [];
+      return db.entityCards
+        .where('novelId')
+        .equals(selectedNovelId)
+        .filter((card) => card.activeState !== 'idle')
+        .toArray();
+    },
+    [selectedNovelId]
+  ) ?? [];
 
   const [step, setStep] = useState<WorkshopStep>('material');
   // selectedIds[0] = 骨架(引擎)，selectedIds[1] = 题材(皮)；皮可缺省（自我裂变，题材取口述）。
@@ -606,6 +619,13 @@ export default function FusionWorkshop() {
         selectedDirection: selectedDirection(),
         currentScene: openingScene(),
         precedingTexts: {},
+        activeCards: activeCards.map((c) => ({
+          name: c.name,
+          type: c.type,
+          summary: c.summary,
+          details: c.details,
+          activeState: c.activeState,
+        })),
         currentDraft: mode === 'resume' ? existingDraft : undefined,
         adversarialRules: adversarialRules.trim() || undefined,
         tone: tone || undefined,
@@ -758,6 +778,13 @@ export default function FusionWorkshop() {
           visualCues: '与前文世界观与叙事色调保持一致',
         },
         precedingTexts: preceding,
+        activeCards: activeCards.map((c) => ({
+          name: c.name,
+          type: c.type,
+          summary: c.summary,
+          details: c.details,
+          activeState: c.activeState,
+        })),
         adversarialRules: adversarialRules.trim() || undefined,
         tone: tone || undefined,
       }, {
@@ -1380,6 +1407,29 @@ export default function FusionWorkshop() {
 
           {/* 工具栏 */}
           <div className="flex flex-col gap-2 lg:sticky lg:top-0">
+            {/* 智能底盘装甲 (Harness) 状态面板 */}
+            <div className="rounded-md border border-line bg-surface p-3 text-xs space-y-2">
+              <div className="flex items-center gap-1.5 font-medium text-fg">
+                <Dna size={14} className="text-accent" />
+                <span>智能底盘装甲 (Harness)</span>
+              </div>
+              <div className="text-fg-subtle text-[11px]">
+                当前装配：<span className="font-semibold text-success">{activeCards.length}</span> 张活跃卡片
+              </div>
+              {activeCards.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1 max-h-[80px] overflow-y-auto pr-1">
+                  {activeCards.map((card) => (
+                    <span
+                      key={card.id}
+                      className="bg-success/10 text-success border border-success/30 rounded-full px-1.5 py-0.5 text-[10px] leading-none whitespace-nowrap"
+                    >
+                      {card.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="eyebrow">本篇</div>
             <select
               className="input"

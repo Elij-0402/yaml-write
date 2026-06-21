@@ -58,6 +58,54 @@ class SceneResumeSchemaTests(unittest.TestCase):
         self.assertIn('严格从“当前分镜草稿”的最后一句继续接写', prompt)
         self.assertIn('已写内容', prompt)
 
+    def test_build_scene_prompt_includes_active_cards(self) -> None:
+        from api.schemas import ActiveCardItem
+        payload = SceneTextInput(
+            selectedDirection=SelectedDirection(
+                title='D',
+                worldviewBlock='W',
+                protagonistBlock='P',
+                antagonistBlock='A',
+                narrativeTone='N',
+            ),
+            currentScene=StoryboardScene(
+                sceneNumber=2,
+                sceneTitle='S2',
+                plotOutline='plot',
+                tensionLevel='high',
+                visualCues='fog',
+            ),
+            precedingTexts={1: '前文'},
+            currentDraft='已写内容',
+            activeCards=[
+                ActiveCardItem(
+                    name="萧炎",
+                    type="character",
+                    summary="主角",
+                    details="拥有陨落心炎",
+                    activeState="sceneActive"
+                ),
+                ActiveCardItem(
+                    name="魂天帝",
+                    type="character",
+                    summary="反派",
+                    details="",
+                    activeState="globalActive"
+                )
+            ],
+            apiKey='k',
+            baseUrl='http://localhost:11434/v1',
+            model='m',
+        )
+
+        prompt = build_scene_user_prompt(payload)
+        self.assertIn('【活跃设定上下文】', prompt)
+        self.assertIn('当前场景活跃设定：', prompt)
+        self.assertIn('- 【人物】萧炎：主角', prompt)
+        self.assertIn('详细设定：拥有陨落心炎', prompt)
+        self.assertIn('全局活跃设定：', prompt)
+        self.assertIn('- 【人物】魂天帝：反派', prompt)
+
 
 class ClassifyOpenAIErrorTests(unittest.TestCase):
     """flash-500 修复回归：模型吐非法 JSON 必须归可重试的 422，未知异常仍是不可重试的 500。"""

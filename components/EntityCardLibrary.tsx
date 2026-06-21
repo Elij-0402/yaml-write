@@ -12,7 +12,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { Plus, Pencil, Trash2, Globe, User, Package, MapPin, type LucideIcon } from 'lucide-react';
 import { db } from '../app/db';
 import { nextOrder, reindexCards, groupCardsByType, ENTITY_CARD_TYPE_LABELS } from '../app/entityCardOps';
-import type { EntityCard, EntityCardType } from '../app/memorySchema';
+import { isEntityActiveState } from '../app/memorySchema';
+import type { EntityCard, EntityCardType, EntityActiveState } from '../app/memorySchema';
 import AppDialog from './AppDialog';
 import EntityCardEditor, { type EntityCardFormData } from './EntityCardEditor';
 
@@ -46,6 +47,47 @@ export default function EntityCardLibrary({ novelId }: { novelId: string }) {
   // —— 临时 UI 态（组件本地，Zustand 不镜像实体）：编辑器开关 / 当前编辑卡 / 删除确认目标 ——
   const [editorState, setEditorState] = useState<EditorState>(null);
   const [deleteTarget, setDeleteTarget] = useState<EntityCard | null>(null);
+
+  async function toggleActiveState(card: EntityCard, e: React.MouseEvent) {
+    e.stopPropagation();
+    const nextStateMap: Record<EntityActiveState, EntityActiveState> = {
+      idle: 'sceneActive',
+      sceneActive: 'globalActive',
+      globalActive: 'idle',
+    };
+    const currentState = isEntityActiveState(card.activeState) ? card.activeState : 'idle';
+    const nextState = nextStateMap[currentState];
+    await db.entityCards.update(card.id, {
+      activeState: nextState,
+      updatedAt: Date.now(),
+    });
+  }
+
+  function renderActiveBadge(card: EntityCard) {
+    const state = card.activeState || 'idle';
+    if (state === 'idle') {
+      return (
+        <button
+          type="button"
+          onClick={(e) => void toggleActiveState(card, e)}
+          className="hidden group-hover:inline-flex group-focus-within:inline-flex items-center justify-center shrink-0 border border-dashed border-line text-fg-subtle rounded-full px-1.5 py-0.5 text-[10px] leading-none whitespace-nowrap cursor-pointer hover:bg-raised hover:text-fg select-none outline-none transition-colors"
+        >
+          闲置
+        </button>
+      );
+    }
+
+    const label = state === 'sceneActive' ? '场景活跃' : '全局活跃';
+    return (
+      <button
+        type="button"
+        onClick={(e) => void toggleActiveState(card, e)}
+        className="inline-flex items-center justify-center shrink-0 bg-success/10 text-success border border-success/30 rounded-full px-1.5 py-0.5 text-[10px] leading-none whitespace-nowrap cursor-pointer hover:bg-success/20 select-none outline-none transition-colors"
+      >
+        {label}
+      </button>
+    );
+  }
 
   function openCreate() {
     setEditorState({ mode: 'create', initial: { ...CREATE_DEFAULT } });
@@ -122,6 +164,8 @@ export default function EntityCardLibrary({ novelId }: { novelId: string }) {
             <span className="block truncate text-[11.5px] leading-snug text-fg-subtle">{card.summary}</span>
           )}
         </button>
+
+        {renderActiveBadge(card)}
 
         {/* 行内操作（hover / 聚焦露出）：编辑 + 删除 */}
         <div className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none">

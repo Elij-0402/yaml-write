@@ -88,9 +88,44 @@ def build_scene_user_prompt(data: SceneTextInput) -> str:
             "严禁复述草稿中已出现的句段。"
         )
 
+    active_cards_block = ""
+    scene_active_list = []
+    global_active_list = []
+
+    if hasattr(data, "activeCards") and data.activeCards:
+        type_map = {
+            "worldview": "世界规章",
+            "character": "人物",
+            "prop": "道具",
+            "geography": "地理"
+        }
+        for card in data.activeCards:
+            if not card.name or not card.name.strip():
+                continue
+            card_type_zh = type_map.get(card.type, card.type)
+            summary_part = f"：{card.summary.strip()}" if card.summary and card.summary.strip() else ""
+            card_str = f"- 【{card_type_zh}】{card.name}{summary_part}"
+            if card.details and card.details.strip():
+                details_indented = "\n  ".join(line for line in card.details.strip().splitlines())
+                card_str += f"\n  详细设定：{details_indented}"
+            
+            if card.activeState == "sceneActive":
+                scene_active_list.append(card_str)
+            elif card.activeState == "globalActive":
+                global_active_list.append(card_str)
+
+    if scene_active_list or global_active_list:
+        active_cards_block = "【活跃设定上下文】\n"
+        if scene_active_list:
+            active_cards_block += "当前场景活跃设定：\n" + "\n".join(scene_active_list) + "\n"
+        if global_active_list:
+            active_cards_block += "全局活跃设定：\n" + "\n".join(global_active_list) + "\n"
+        active_cards_block += "\n"
+
     return (
         f"【角色设定与世界观积木】\n世界观：{d.worldviewBlock}\n主角：{d.protagonistBlock}\n"
         f"对手：{d.antagonistBlock}\n叙事色调：{d.narrativeTone}\n\n"
+        f"{active_cards_block}"
         f"【当前要写作的分镜】\n标题：{scene.sceneTitle}\n情节走向：{scene.plotOutline}\n"
         f"张力：{scene.tensionLevel}\n画面意象：{scene.visualCues}\n\n"
         f"【前置分镜已写出的实际正文（供承上启下）】\n----- 前情回顾 -----\n{preceding_block}\n-------------------\n"
