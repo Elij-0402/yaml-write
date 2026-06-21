@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Menu, X, WifiOff } from 'lucide-react';
+import { Menu, X, WifiOff, ListTree, Layers } from 'lucide-react';
 import { db, type Novel, type FusionSession } from './db';
 import { isDnaReady, isExtracting, canAutoStart } from './dnaState';
 import { useAppStore, type LLMConfig } from './store';
@@ -20,6 +20,7 @@ import AppDialog from '../components/AppDialog';
 import Resizer from '../components/Resizer';
 import SkeletonTree from '../components/SkeletonTree';
 import OutlineTree from '../components/OutlineTree';
+import EntityCardLibrary from '../components/EntityCardLibrary';
 import ApiKeyNoticeCard from '../components/ApiKeyNoticeCard';
 import { getColdStartState } from './coldStartState';
 import { getInitialOnline, canUseLlm, OFFLINE_TOAST_TEXT, OFFLINE_DISABLED_HINT } from './networkStatus';
@@ -114,6 +115,8 @@ export default function Home() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [homeSection, setHomeSection] = useState<Section>('library');
+  // 侧栏「大纲 ⇄ 设定卡」面板切换（Story 2.2）：临时 UI 态，仿 homeSection —— 不进 store、不持久化。
+  const [sidebarPanel, setSidebarPanel] = useState<'outline' | 'cards'>('outline');
   // 离线 Toast 开关（AC5）：UI 就绪、触发接线顺延 Epic 3。Epic 1 无可点击 AI 控件，故暂不会被置 true；
   // state 与 setter 均被引用（关闭按钮即用 setter）→ 非死代码。
   const [offlineToastOpen, setOfflineToastOpen] = useState(false);
@@ -363,13 +366,38 @@ export default function Home() {
         }`}
       >
         <div className="flex h-12 shrink-0 items-center border-b border-line px-3">
-          <span className="eyebrow">大纲</span>
+          {selectedNovelId ? (
+            <div className="seg" role="tablist" aria-label="侧栏面板">
+              <button
+                role="tab"
+                aria-selected={sidebarPanel === 'outline'}
+                onClick={() => setSidebarPanel('outline')}
+                className="seg-item"
+              >
+                <ListTree size={13} /> 大纲
+              </button>
+              <button
+                role="tab"
+                aria-selected={sidebarPanel === 'cards'}
+                onClick={() => setSidebarPanel('cards')}
+                className="seg-item"
+              >
+                <Layers size={13} /> 设定卡
+              </button>
+            </div>
+          ) : (
+            <span className="eyebrow">大纲</span>
+          )}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
           {coldStart.showSkeleton ? (
             <SkeletonTree />
           ) : coldStart.isLoading ? null : selectedNovelId ? (
-            <OutlineTree novelId={selectedNovelId} />
+            sidebarPanel === 'cards' ? (
+              <EntityCardLibrary novelId={selectedNovelId} />
+            ) : (
+              <OutlineTree novelId={selectedNovelId} />
+            )
           ) : (
             <p className="px-2 py-2 text-[12.5px] leading-relaxed text-fg-subtle">
               从作品库选择一部作品，即可在此编排它的三级大纲。
