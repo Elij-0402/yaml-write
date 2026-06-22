@@ -1,4 +1,5 @@
 import type { Novel, MapStatus } from './db';
+import type { SceneEvaluateResponse } from './dnaSchema';
 
 // 「这本书 DNA 处于什么阶段」的单一事实源：纯只读判定/投影，无 React / Dexie / 网络依赖。
 // 此前散落各处内联手抄的状态字符串比较（侧栏就绪计数、配方台挑选、WorkflowStepper 投影、
@@ -67,3 +68,61 @@ export function planReconcile(
     resetChapterIds: chapters.filter((c) => c.mapStatus === 'mapping').map((c) => c.id),
   };
 }
+
+// ---- DraftLoop 闭环状态机（质检自动重试 / 熔断）----
+// 纯函数、零依赖（无 React / Dexie / 网络）；FusionWorkshop 仅消费这些函数并驱动 UI。
+// SceneEvaluateResponse 作为结构输入：仅读 passed / actionableFeedback / failedGates。
+
+/** 闭环阶段五态 */
+export type DraftLoopPhase = 'idle' | 'streaming' | 'auditing' | 'passed' | 'fused';
+
+/** 闭环状态快照 */
+export interface DraftLoopState {
+  phase: DraftLoopPhase;
+  attempt: number;
+  maxAttempts: number;
+  reports: SceneEvaluateResponse[];
+}
+
+/** 初始化闭环状态（每次全新生成时重置） */
+export function initDraftLoop(maxAttempts = 2): DraftLoopState {
+  return { phase: 'idle', attempt: 0, maxAttempts, reports: [] };
+}
+
+/**
+ * 纯状态推进：根据评估报告决定下一阶段。
+ * - passed → 'passed'
+ * - state.attempt < state.maxAttempts → 'streaming'（触发重试），attempt 递增
+ * - otherwise → 'fused'（熔断）
+ */
+export function advanceLoop(state: DraftLoopState, report: SceneEvaluateResponse): DraftLoopState {
+  if (state.phase === 'passed' || state.phase === 'fused') {
+    return state;
+  }
+  const reports = [...state.reports, report];
+  if (report.passed) {
+    return { ...state, reports, phase: 'passed' };
+  }
+  const nextAttempt = state.attempt + 1;
+  if (state.attempt < state.maxAttempts) {
+    return { ...state, reports, phase: 'streaming', attempt: nextAttempt };
+  }
+  return { ...state, reports, phase: 'fused', attempt: nextAttempt };
+}
+
+/** 语义辅助：当前是否处于重试态（已审计过至少一次、且阶段为 streaming） */
+export function shouldRetry(state: DraftLoopState): boolean {
+  return state.phase === 'streaming' && state.attempt > 0;
+}
+
+/** 取最后一份报告的 actionableFeedback，供喂给 Writer prompt */
+export function lastFeedback(state: DraftLoopState): string {
+  if (state.reports.length === 0) return '';
+  return state.reports[state.reports.length - 1].actionableFeedback;
+}
+
+/** 语义辅助：是否已熔断 */
+export function isFused(state: DraftLoopState): boolean {
+  return state.phase === 'fused';
+}
+

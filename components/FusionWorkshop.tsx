@@ -5,12 +5,12 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import {
   ChevronLeft, Palette, ArrowUpDown, ArrowRight, ArrowUp, Sparkles, Shuffle,
   X, Square, Copy, Download, RotateCcw, PenLine, ArrowDownToLine, Check, Wand2, Dna,
-  Lock, ThumbsDown, GitBranch,
+  Lock, ThumbsDown, GitBranch, ShieldCheck, ShieldAlert, CircleDot, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { db, isFourLayerDnaCard, type FusionSession, type OpeningDraft } from '../app/db';
-import { isDnaReady } from '../app/dnaState';
+import { isDnaReady, initDraftLoop, advanceLoop, lastFeedback, isFused, type DraftLoopState } from '../app/dnaState';
 import { formatWordCount } from '../app/util';
-import { type BlockKey, type FusionDirection, type SettingBlocks, type StructureBeat, parseFusionDirections } from '../app/dnaSchema';
+import { type BlockKey, type FusionDirection, type SettingBlocks, type StructureBeat, parseFusionDirections, type SceneEvaluateResponse, parseSceneEvaluateResponse } from '../app/dnaSchema';
 import { withRateLimitRetry } from '../app/dnaEngine';
 import { StreamSseError, callStructured, ensureLlmConfigReady, streamSse } from '../app/llmClient';
 import { useAppStore } from '../app/store';
@@ -193,6 +193,9 @@ export default function FusionWorkshop() {
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [adversarialRules, setAdversarialRules] = useState('');
   const [copied, setCopied] = useState(false);
+  // 闭环状态机（质检自动重试 / 熔断）——组件生命周期内临时状态，刷新即重置。
+  const [loopState, setLoopState] = useState<DraftLoopState>(initDraftLoop());
+  const [evalExpanded, setEvalExpanded] = useState(false);
 
   const [repairing, setRepairing] = useState(false);
   const [repairGaps, setRepairGaps] = useState<RepairGap[]>([]);
@@ -610,49 +613,138 @@ export default function FusionWorkshop() {
       }
       setComparingDraftIdx(null);
       setSceneTexts((prev) => ({ ...prev, [num]: '' }));
+      setLoopState(initDraftLoop());
+      setEvalExpanded(false);
     }
     setStreamingScene(num);
     const ac = new AbortController();
     streamAbortRef.current = ac;
+
+    // resume 模式不走评估循环——直接接写即可。
+    if (mode === 'resume') {
+      try {
+        await streamSse('/api/py/generate-scene', {
+          selectedDirection: selectedDirection(),
+          currentScene: openingScene(),
+          precedingTexts: {},
+          activeCards: mapActiveCardsForLlm(activeCards),
+          currentDraft: existingDraft,
+          adversarialRules: adversarialRules.trim() || undefined,
+          tone: tone || undefined,
+        }, {
+          signal: ac.signal,
+          onDelta: (text) => {
+            const sanitized = applyAntiSlopFallback(text);
+            received += sanitized;
+            setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
+          },
+        });
+        setSceneResumeStatus((prev) => ({ ...prev, [num]: 'done' }));
+      } catch (err) {
+        const aborted = ac.signal.aborted;
+        const message = err instanceof Error ? err.message : String(err);
+        const hasText = received.trim().length > 0 || existingDraft.trim().length > 0;
+        const resumable = aborted || (err instanceof StreamSseError && err.resumable) || hasText;
+        if (resumable) {
+          setSceneResumeStatus((prev) => ({ ...prev, [num]: 'failed-resumable' }));
+          setError(aborted ? '已停止，可点「继续接写」续写。' : `中断：${message}，可继续接写。`);
+        } else {
+          setSceneResumeStatus((prev) => ({ ...prev, [num]: 'idle' }));
+          setError(message);
+        }
+      } finally {
+        setStreamingScene(null);
+        streamAbortRef.current = null;
+      }
+      return;
+    }
+
+    // ---- fresh 模式：生成 → 评估 → 重试/熔断 闭环 ----
+    let loop = initDraftLoop();
+    let extraRules = ''; // 累积的 actionableFeedback，喂入重试生成
     try {
-      await streamSse('/api/py/generate-scene', {
-        selectedDirection: selectedDirection(),
-        currentScene: openingScene(),
-        precedingTexts: {},
-        activeCards: activeCards.map((c) => ({
-          name: c.name,
-          type: c.type,
-          summary: c.summary,
-          details: c.details,
-          activeState: c.activeState,
-        })),
-        currentDraft: mode === 'resume' ? existingDraft : undefined,
-        adversarialRules: adversarialRules.trim() || undefined,
-        tone: tone || undefined,
-      }, {
-        signal: ac.signal,
-        onDelta: (text) => {
-          const sanitized = applyAntiSlopFallback(text);
-          received += sanitized;
-          setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
-        },
-      });
-      setSceneResumeStatus((prev) => ({ ...prev, [num]: 'done' }));
+      // 外循环：最多 maxAttempts 次生成 + 评估
+      while (loop.phase !== 'passed' && loop.phase !== 'fused') {
+        // ── streaming 阶段 ──
+        loop = { ...loop, phase: 'streaming' };
+        setLoopState(loop);
+        received = '';
+        setSceneTexts((prev) => ({ ...prev, [num]: '' }));
+
+        const mergedRules = [adversarialRules.trim(), extraRules].filter(Boolean).join('\n') || undefined;
+        await streamSse('/api/py/generate-scene', {
+          selectedDirection: selectedDirection(),
+          currentScene: openingScene(),
+          precedingTexts: {},
+          activeCards: mapActiveCardsForLlm(activeCards),
+          adversarialRules: mergedRules,
+          tone: tone || undefined,
+        }, {
+          signal: ac.signal,
+          onDelta: (text) => {
+            const sanitized = applyAntiSlopFallback(text);
+            received += sanitized;
+            setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
+          },
+        });
+
+        if (ac.signal.aborted) break;
+        if (!mountedRef.current) return;
+
+        // ── auditing 阶段 ──
+        loop = { ...loop, phase: 'auditing' };
+        setLoopState(loop);
+
+        const sceneId = `${activeCreationId || 'session'}-opening`;
+        const report = await callStructured<SceneEvaluateResponse>('/api/py/evaluate-scene', {
+          sceneId,
+          attempt: loop.attempt,
+          draft: received,
+          selectedDirection: selectedDirection(),
+          currentScene: openingScene(),
+          activeCards: mapActiveCardsForLlm(activeCards),
+        }, { signal: ac.signal, parse: parseSceneEvaluateResponse });
+
+        if (ac.signal.aborted) break;
+        if (!mountedRef.current) return;
+
+        // ── 推进状态机 ──
+        loop = advanceLoop(loop, report);
+        setLoopState(loop);
+
+        if (loop.phase === 'passed') {
+          setSceneResumeStatus((prev) => ({ ...prev, [num]: 'done' }));
+          break;
+        }
+        if (loop.phase === 'fused') {
+          // 熔断：不清除草稿，保留编辑器中最新文本。
+          setError('质检未通过，已熔断 — 请人工审阅或编辑后重试。');
+          setEvalExpanded(true);
+          break;
+        }
+        // phase === 'streaming' → 重试：将 actionableFeedback 注入下次生成
+        extraRules = lastFeedback(loop);
+      }
     } catch (err) {
-      const aborted = ac.signal.aborted;
-      const message = err instanceof Error ? err.message : String(err);
-      const hasText = received.trim().length > 0 || existingDraft.trim().length > 0;
-      const resumable = aborted || (err instanceof StreamSseError && err.resumable) || hasText;
-      if (resumable) {
-        setSceneResumeStatus((prev) => ({ ...prev, [num]: 'failed-resumable' }));
-        setError(aborted ? '已停止，可点「继续接写」续写。' : `中断：${message}，可继续接写。`);
-      } else {
-        setSceneResumeStatus((prev) => ({ ...prev, [num]: 'idle' }));
-        setError(message);
+      if (mountedRef.current) {
+        const aborted = ac.signal.aborted;
+        const message = err instanceof Error ? err.message : String(err);
+        const hasText = received.trim().length > 0;
+        const resumable = aborted || (err instanceof StreamSseError && err.resumable) || hasText;
+        setLoopState(initDraftLoop());
+        if (resumable) {
+          setSceneResumeStatus((prev) => ({ ...prev, [num]: 'failed-resumable' }));
+          setError(aborted ? '已停止，可点「继续接写」续写。' : `中断：${message}，可继续接写。`);
+        } else {
+          setSceneResumeStatus((prev) => ({ ...prev, [num]: 'idle' }));
+          setError(message);
+        }
       }
     } finally {
-      setStreamingScene(null);
-      streamAbortRef.current = null;
+      if (mountedRef.current) {
+        setStreamingScene(null);
+        streamAbortRef.current = null;
+      }
     }
   };
 
@@ -778,13 +870,7 @@ export default function FusionWorkshop() {
           visualCues: '与前文世界观与叙事色调保持一致',
         },
         precedingTexts: preceding,
-        activeCards: activeCards.map((c) => ({
-          name: c.name,
-          type: c.type,
-          summary: c.summary,
-          details: c.details,
-          activeState: c.activeState,
-        })),
+        activeCards: mapActiveCardsForLlm(activeCards),
         adversarialRules: adversarialRules.trim() || undefined,
         tone: tone || undefined,
       }, {
@@ -1430,6 +1516,120 @@ export default function FusionWorkshop() {
               )}
             </div>
 
+            {/* 质检闭环 (Evaluation) 面板 — 仅成稿步骤展示 */}
+            {step === 'manuscript' && (
+              <div
+                className="rounded-md border border-line bg-surface p-3 text-xs space-y-2"
+                aria-live="polite"
+                aria-busy={loopState.phase === 'auditing' || loopState.phase === 'streaming'}
+              >
+                <div className="flex items-center gap-1.5 font-medium text-fg">
+                  <ShieldCheck size={14} className="text-accent-ink" />
+                  <span>质检闭环 (Evaluation)</span>
+                </div>
+
+                {/* 三锁状态圆点 */}
+                <div className="flex items-center gap-3">
+                  {(['styleLock', 'consistencyLock', 'outlineLock'] as const).map((gate) => {
+                    const GATE_LABELS = {
+                      styleLock: '风格锁',
+                      consistencyLock: '人设锁',
+                      outlineLock: '大纲锁',
+                    } as const;
+                    const label = GATE_LABELS[gate] || '未知锁';
+                    const lastReport = loopState.reports.length > 0 ? loopState.reports[loopState.reports.length - 1] : null;
+                    const isAuditing = loopState.phase === 'auditing';
+                    const isFailed = lastReport && !lastReport.passed && lastReport.failedGates.includes(gate);
+                    const isPassed = lastReport?.passed || (lastReport && !lastReport.failedGates.includes(gate) && loopState.phase !== 'streaming' && loopState.phase !== 'auditing');
+
+                    let dotClass = 'bg-fg-subtle/30'; // idle / 未运行
+                    if (isAuditing || (loopState.phase === 'streaming' && loopState.reports.length === 0)) {
+                      dotClass = 'bg-accent animate-pulse motion-reduce:animate-none';
+                    } else if (isFailed) {
+                      dotClass = 'bg-danger';
+                    } else if (isPassed) {
+                      dotClass = 'bg-success';
+                    }
+
+                    const statusLabel = isFailed ? '审计失败' : isPassed ? '审计通过' : isAuditing ? '正在审计' : '未运行';
+
+                    return (
+                      <span
+                        key={gate}
+                        className="flex items-center gap-1"
+                        title={label}
+                        aria-label={`${label}：${statusLabel}`}
+                      >
+                        <span className={`inline-block h-2 w-2 rounded-full ${dotClass}`} />
+                        <span className="text-fg-muted text-[10px]">{label}</span>
+                      </span>
+                    );
+                  })}
+                </div>
+
+                {/* 当前状态文本 */}
+                <div className="text-fg-muted text-[11px]">
+                  {loopState.phase === 'idle' && '未跑质检'}
+                  {loopState.phase === 'streaming' && loopState.attempt === 0 && '正在生成…'}
+                  {loopState.phase === 'streaming' && loopState.attempt > 0 && `第 ${loopState.attempt + 1}/${loopState.maxAttempts} 次生成（重试中）`}
+                  {loopState.phase === 'auditing' && `第 ${loopState.attempt + 1}/${loopState.maxAttempts} 次审计`}
+                  {loopState.phase === 'passed' && <span className="text-success-ink font-medium">质检通过</span>}
+                  {loopState.phase === 'fused' && <span className="text-danger-ink">已熔断 — 请人工审阅</span>}
+                </div>
+
+                {/* 展开区：历次评估详情 */}
+                {loopState.reports.length > 0 && (
+                  <div>
+                    <button
+                      className="flex items-center gap-1 text-[10px] text-fg-subtle hover:text-fg transition-colors"
+                      onClick={() => setEvalExpanded((p) => !p)}
+                      aria-expanded={evalExpanded}
+                    >
+                      {evalExpanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                      {evalExpanded ? '收起详情' : `查看评估详情 (${loopState.reports.length})`}
+                    </button>
+                    {evalExpanded && (
+                      <div className="mt-1.5 space-y-2 max-h-[200px] overflow-y-auto pr-1">
+                        {loopState.reports.map((r, i) => (
+                          <div key={i} className="rounded border border-line-2 p-2 text-[10px] leading-relaxed">
+                            <div className="font-medium text-fg-muted">
+                              第 {i + 1} 次 · {r.passed ? <span className="text-success-ink">通过</span> : <span className="text-danger-ink">未通过</span>}
+                              {r.failedGates.length > 0 && <span className="text-fg-subtle"> ({r.failedGates.join(', ')})</span>}
+                            </div>
+                            {r.evidence && <div className="mt-1 text-fg-subtle">{r.evidence}</div>}
+                            {r.actionableFeedback && <div className="mt-1 text-fg">{r.actionableFeedback}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 熔断警告 + 接受按钮 */}
+                {isFused(loopState) && loopState.reports.length > 0 && (() => {
+                  const finalReport = loopState.reports[loopState.reports.length - 1];
+                  return (
+                    <div className="rounded border border-danger bg-danger/10 p-2 text-[10px] leading-relaxed text-danger-ink">
+                      <div className="font-medium flex items-center gap-1"><ShieldAlert size={11} /> 最终评估报告</div>
+                      {finalReport.evidence && <div className="mt-1">{finalReport.evidence}</div>}
+                      {finalReport.actionableFeedback && <div className="mt-1">{finalReport.actionableFeedback}</div>}
+                      <button
+                        className="btn btn-ghost btn-sm mt-2 text-[10px] border-danger/30 hover:bg-danger/20"
+                        onClick={() => {
+                          setLoopState(initDraftLoop());
+                          setError(null);
+                          setEvalExpanded(false);
+                          setSceneResumeStatus((prev) => ({ ...prev, [OPENING_SCENE_NUM]: 'done' }));
+                        }}
+                      >
+                        接受当前草稿
+                      </button>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
             <div className="eyebrow">本篇</div>
             <select
               className="input"
@@ -1506,3 +1706,14 @@ export default function FusionWorkshop() {
     </StudioShell>
   );
 }
+
+// Helper function to map active cards for LLM payload
+const mapActiveCardsForLlm = (cards: any[]) =>
+  cards.map((c) => ({
+    name: c.name,
+    type: c.type,
+    summary: c.summary,
+    details: c.details,
+    activeState: c.activeState,
+  }));
+
