@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+from pydantic.alias_generators import to_camel
 from typing import List, Optional, Dict, Literal
 
 # 自适应提取：整本直提（小档）与弧窗（中/大档）的输入上限。
@@ -294,3 +295,115 @@ class SceneEvaluateResponse(BaseModel):
     failedGates: List[str] = Field(..., description="失败的锁名称列表，例如 ['StyleLock', 'ConsistencyLock', 'OutlineLock']")
     evidence: str = Field(..., description="质检未通过的具体违规证据/原文引用与分析")
     actionableFeedback: str = Field(..., description="综合修复反馈/对写手的修改指令，全通过则为空字符串")
+
+
+# ============================================================
+# Story 3.4: 对话智能意图解析与设定自动更新 (Chat Assistant)
+# 使用 alias_generator=to_camel 统一驼峰对齐前端
+# ============================================================
+
+class ChatMessage(BaseModel):
+    class Config:
+        alias_generator = to_camel
+        populate_by_name = True
+
+    role: Literal["user", "assistant", "system"] = Field(..., description="消息角色")
+    content: str = Field(..., description="消息内容")
+
+
+class VolumeItem(BaseModel):
+    class Config:
+        alias_generator = to_camel
+        populate_by_name = True
+
+    id: str = Field("", description="卷 ID（已有卷须填写，新建可留空由前端生成）")
+    title: str = Field(..., description="卷标题")
+    order: int = Field(0, description="排序序号")
+
+
+class ChapterItem(BaseModel):
+    class Config:
+        alias_generator = to_camel
+        populate_by_name = True
+
+    id: str = Field("", description="章 ID")
+    volume_id: str = Field("", alias="volumeId", description="所属卷 ID")
+    title: str = Field(..., description="章标题")
+    order: int = Field(0, description="排序序号")
+
+
+class SceneItem(BaseModel):
+    class Config:
+        alias_generator = to_camel
+        populate_by_name = True
+
+    id: str = Field("", description="幕 ID")
+    chapter_id: str = Field("", alias="chapterId", description="所属章 ID")
+    title: str = Field(..., description="幕标题")
+    synopsis: str = Field("", description="幕概要")
+    order: int = Field(0, description="排序序号")
+
+
+class EntityCardUpdate(BaseModel):
+    class Config:
+        alias_generator = to_camel
+        populate_by_name = True
+
+    action: Literal["upsert", "delete"] = Field(..., description="操作类型：upsert 新增或更新，delete 删除")
+    card_id: str = Field("", alias="cardId", description="已有卡片 ID（修改/删除已有卡必填；新建留空）")
+    type: Literal["worldview", "character", "prop", "geography"] = Field("character", description="卡片类型")
+    name: str = Field("", description="卡片名称")
+    summary: str = Field("", description="卡面简述")
+    details: str = Field("", description="详细设定")
+
+
+class VolumeUpdate(BaseModel):
+    class Config:
+        alias_generator = to_camel
+        populate_by_name = True
+
+    action: Literal["upsert", "delete"] = Field(..., description="操作类型")
+    volume: VolumeItem = Field(..., description="卷数据")
+
+
+class ChapterUpdate(BaseModel):
+    class Config:
+        alias_generator = to_camel
+        populate_by_name = True
+
+    action: Literal["upsert", "delete"] = Field(..., description="操作类型")
+    chapter: ChapterItem = Field(..., description="章数据")
+
+
+class SceneUpdate(BaseModel):
+    class Config:
+        alias_generator = to_camel
+        populate_by_name = True
+
+    action: Literal["upsert", "delete"] = Field(..., description="操作类型")
+    scene: SceneItem = Field(..., description="幕数据")
+
+
+class ChatAssistantResponse(BaseModel):
+    class Config:
+        alias_generator = to_camel
+        populate_by_name = True
+
+    reply: str = Field(..., description="AI 助手给用户的文本回复")
+    entity_card_updates: List[EntityCardUpdate] = Field(default_factory=list, alias="entityCardUpdates", description="设定卡片更新操作列表")
+    volume_updates: List[VolumeUpdate] = Field(default_factory=list, alias="volumeUpdates", description="卷更新操作列表")
+    chapter_updates: List[ChapterUpdate] = Field(default_factory=list, alias="chapterUpdates", description="章更新操作列表")
+    scene_updates: List[SceneUpdate] = Field(default_factory=list, alias="sceneUpdates", description="幕更新操作列表")
+
+
+class ChatAssistantInput(BaseModel):
+    messages: List[ChatMessage] = Field(..., min_length=1, description="对话历史消息列表")
+    novel_id: str = Field("", alias="novelId", description="当前小说 ID")
+    entity_cards: List[EntityCardUpdate] = Field(default_factory=list, alias="entityCards", description="当前已有设定卡片列表（含 cardId，供 AI 精确指代）")
+    volumes: List[VolumeItem] = Field(default_factory=list, description="当前已有卷列表")
+    chapters: List[ChapterItem] = Field(default_factory=list, description="当前已有章列表")
+    scenes: List[SceneItem] = Field(default_factory=list, description="当前已有幕列表")
+    api_key: str = Field(..., min_length=1, max_length=512, alias="apiKey")
+    base_url: str = Field(..., min_length=1, max_length=512, alias="baseUrl")
+    model: str = Field(..., min_length=1, max_length=200)
+    temperature: float = Field(0.7, ge=0.0, le=1.5)

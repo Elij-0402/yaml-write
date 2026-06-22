@@ -10,6 +10,11 @@ from api.schemas import (
     ArcMapInput,
     FusionDirectionsInput,
     SceneEvaluateInput,
+    ChatAssistantInput,
+    EntityCardUpdate,
+    VolumeItem,
+    ChapterItem,
+    SceneItem,
     MAX_DIRECT_INPUT_CHARS,
     MAX_ARC_CONTENT_CHARS,
 )
@@ -387,7 +392,7 @@ def build_evaluator_user_prompt(data: SceneEvaluateInput) -> str:
     """后端 Evaluator Agent 质检三把锁用户提示词，组装待评估的上下文与草稿文本"""
     d = data.selectedDirection
     scene = data.currentScene
-    
+
     # 组装活跃设定卡片信息
     active_cards_block = "（无活跃设定卡片）"
     if data.activeCards:
@@ -431,5 +436,81 @@ def build_evaluator_user_prompt(data: SceneEvaluateInput) -> str:
         f"【待审计的小说草稿正文 (draft)】\n"
         f"{data.draft}\n"
         f"==================================================\n\n"
-        f"请针对上述待审计的小说草稿正文执行“质检三把锁”审计，并输出结构化评估结果。"
+        f"请针对上述待审计的小说草稿正文执行”质检三把锁”审计，并输出结构化评估结果。"
+    )
+
+
+# ============================================================
+# Story 3.4: 对话智能意图解析 — Chat Assistant Prompt
+# ============================================================
+
+def _format_entity_cards_context(entity_cards: list[EntityCardUpdate]) -> str:
+    """将已有设定卡片格式化为上下文段落，供 AI 精确识别已有实体。"""
+    if not entity_cards:
+        return "（暂无设定卡片）"
+    type_map = {"worldview": "世界规章", "character": "人物", "prop": "道具", "geography": "地理"}
+    lines = []
+    for card in entity_cards:
+        card_type_zh = type_map.get(card.type, card.type)
+        summary_part = f"——{card.summary}" if card.summary else ""
+        lines.append(f"- [{card_type_zh}] id={card.card_id} name={card.name}{summary_part}")
+    return "\n".join(lines)
+
+
+def _format_outline_context(
+    volumes: list[VolumeItem],
+    chapters: list[ChapterItem],
+    scenes: list[SceneItem],
+) -> str:
+    """将已有大纲格式化为树形上下文。"""
+    if not volumes and not chapters and not scenes:
+        return "（暂无大纲）"
+    lines = []
+    for vol in sorted(volumes, key=lambda v: v.order):
+        lines.append(f"卷 id={vol.id} title={vol.title}")
+        vol_chapters = sorted(
+            [ch for ch in chapters if ch.volume_id == vol.id],
+            key=lambda c: c.order,
+        )
+        for ch in vol_chapters:
+            lines.append(f"  章 id={ch.id} title={ch.title}")
+            ch_scenes = sorted(
+                [s for s in scenes if s.chapter_id == ch.id],
+                key=lambda s: s.order,
+            )
+            for sc in ch_scenes:
+                lines.append(f"    幕 id={sc.id} title={sc.title}")
+    # 无卷的章
+    orphan_chapters = [ch for ch in chapters if not any(v.id == ch.volume_id for v in volumes)]
+    for ch in sorted(orphan_chapters, key=lambda c: c.order):
+        lines.append(f"  章（无卷）id={ch.id} title={ch.title}")
+    return "\n".join(lines) if lines else "（暂无大纲）"
+
+
+def build_chat_assistant_system_prompt(
+    entity_cards: list[EntityCardUpdate],
+    volumes: list[VolumeItem],
+    chapters: list[ChapterItem],
+    scenes: list[SceneItem],
+) -> str:
+    """对话助手系统提示词：指示 AI 解析用户意图并输出结构化更新。"""
+    cards_ctx = _format_entity_cards_context(entity_cards)
+    outline_ctx = _format_outline_context(volumes, chapters, scenes)
+
+    return (
+        "你是创作工坊的 AI 助手。用户会在对话中指挥你修改设定卡片或大纲（卷/章/幕）。\n"
+        "你的任务：\n"
+        "1. 理解用户自然语言意图（如”把林鸣的性格改为冷酷”、”新建一个叫流光剑的道具卡”、”删除第二卷”）。\n"
+        "2. 在 reply 字段用简洁中文回应用户。\n"
+        "3. 在对应的 updates 字段中输出精确的结构化操作。\n\n"
+        "【关键规则】\n"
+        "- 修改已有卡片时，必须使用其已有的 cardId，严禁分配新 ID 导致冗余。\n"
+        "- 修改已有大纲节点时，必须使用其已有的 id。\n"
+        "- 新建实体时 cardId/id 留空字符串，由前端生成。\n"
+        "- 删除操作需填写 action=\"delete\" 并提供对应 id。\n"
+        "- 如果用户指令与设定/大纲修改无关（如闲聊、问答），仅在 reply 回答即可，updates 留空数组。\n"
+        "- upsert 操作时，name 字段必须填写。\n\n"
+        f"【当前已有设定卡片】\n{cards_ctx}\n\n"
+        f"【当前已有大纲结构】\n{outline_ctx}\n\n"
+        "请严格按照 ChatAssistantResponse 结构输出。"
     )

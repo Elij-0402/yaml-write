@@ -52,6 +52,8 @@ from api.schemas import (
     SceneEvaluateInput,
     SceneAuditResult,
     SceneEvaluateResponse,
+    ChatAssistantInput,
+    ChatAssistantResponse,
 )
 from api.prompts import (
     ANTI_SLOP_CONSTRAINT,
@@ -72,6 +74,7 @@ from api.prompts import (
     resolve_fusion_temperature,
     build_evaluator_system_prompt,
     build_evaluator_user_prompt,
+    build_chat_assistant_system_prompt,
 )
 
 logger = logging.getLogger("novel_fusion_api")
@@ -95,6 +98,7 @@ RATE_LIMIT_RULES = {
     "/api/py/generate-scene": (60, 12),
     "/api/py/split-recommend": (60, 20),
     "/api/py/evaluate-scene": (60, 12),
+    "/api/py/chat-assistant": (60, 20),
 }
 
 DEFAULT_ALLOWED_BASE_URLS = [
@@ -769,4 +773,39 @@ async def evaluate_scene(data: SceneEvaluateInput, request: Request):
         failedGates=failed_gates,
         evidence=evidence,
         actionableFeedback=actionable_feedback
+    )
+
+
+@app.post("/api/py/chat-assistant")
+async def chat_assistant(data: ChatAssistantInput, request: Request):
+    await ensure_rate_limit(request, "/api/py/chat-assistant")
+    capture_fixture("chat-assistant", data.model_dump(by_alias=True))
+    model = sanitize_text(data.model)
+    api_key = sanitize_text(data.api_key)
+    validate_llm_creds(api_key, model, data.temperature)
+
+    logger.info(
+        "chat_assistant ip=%s model=%s messages=%s key=%s",
+        get_client_ip(request), model, len(data.messages), mask_api_key(api_key),
+    )
+
+    system_prompt = build_chat_assistant_system_prompt(
+        entity_cards=data.entity_cards,
+        volumes=data.volumes,
+        chapters=data.chapters,
+        scenes=data.scenes,
+    )
+
+    # 拼接对话历史中最后一条 user 消息作为 user_prompt
+    user_messages = [m for m in data.messages if m.role == "user"]
+    user_prompt = user_messages[-1].content if user_messages else ""
+    if not user_prompt.strip():
+        raise ApiError(status_code=400, code="invalid_request", message="用户消息不能为空。")
+
+    return await run_structured(
+        api_key=api_key, base_url=data.base_url, model=model,
+        response_model=ChatAssistantResponse,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        temperature=data.temperature, request=request, label="chat_assistant",
+        instructor_retries=1,
     )

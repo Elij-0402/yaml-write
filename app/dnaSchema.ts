@@ -174,7 +174,7 @@ export function parseSceneEvaluateResponse(json: unknown): SceneEvaluateResponse
   if (typeof obj.passed !== 'boolean') throw new Error('评估报告：passed 须为布尔值。');
   if (typeof obj.evidence !== 'string') throw new Error('评估报告：evidence 须为字符串。');
   if (typeof obj.actionableFeedback !== 'string') throw new Error('评估报告：actionableFeedback 须为字符串。');
-  
+
   if (!Array.isArray(obj.failedGates)) {
     throw new Error('评估报告：failedGates 须为数组。');
   }
@@ -183,7 +183,7 @@ export function parseSceneEvaluateResponse(json: unknown): SceneEvaluateResponse
       throw new Error('评估报告：failedGates 元素须为字符串。');
     }
   }
-  
+
   return {
     sceneId: obj.sceneId,
     attempt: obj.attempt,
@@ -191,5 +191,128 @@ export function parseSceneEvaluateResponse(json: unknown): SceneEvaluateResponse
     failedGates: obj.failedGates as string[],
     evidence: obj.evidence,
     actionableFeedback: obj.actionableFeedback,
+  };
+}
+
+// === Story 3.4: 对话智能意图解析与设定自动更新 ===
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
+
+export interface VolumeItem {
+  id: string;
+  title: string;
+  order: number;
+}
+
+export interface ChapterItem {
+  id: string;
+  volumeId: string;
+  title: string;
+  order: number;
+}
+
+export interface SceneItem {
+  id: string;
+  chapterId: string;
+  title: string;
+  synopsis: string;
+  order: number;
+}
+
+export interface EntityCardUpdate {
+  action: 'upsert' | 'delete';
+  cardId: string;
+  type: 'worldview' | 'character' | 'prop' | 'geography';
+  name: string;
+  summary: string;
+  details: string;
+}
+
+export interface VolumeUpdate {
+  action: 'upsert' | 'delete';
+  volume: VolumeItem;
+}
+
+export interface ChapterUpdate {
+  action: 'upsert' | 'delete';
+  chapter: ChapterItem;
+}
+
+export interface SceneUpdate {
+  action: 'upsert' | 'delete';
+  scene: SceneItem;
+}
+
+export interface ChatAssistantResponse {
+  reply: string;
+  entityCardUpdates: EntityCardUpdate[];
+  volumeUpdates: VolumeUpdate[];
+  chapterUpdates: ChapterUpdate[];
+  sceneUpdates: SceneUpdate[];
+}
+
+export function parseChatAssistantResponse(json: unknown): ChatAssistantResponse {
+  const obj = requireRecord(json, 'AI 助手响应');
+  if (typeof obj.reply !== 'string') throw new Error('AI 助手响应：reply 须为字符串。');
+
+  const entityCardUpdates = Array.isArray(obj.entityCardUpdates) ? obj.entityCardUpdates : [];
+  for (let i = 0; i < entityCardUpdates.length; i++) {
+    const item = requireRecord(entityCardUpdates[i], `entityCardUpdates[${i}]`);
+    if (item.action !== 'upsert' && item.action !== 'delete') {
+      throw new Error(`entityCardUpdates[${i}]：action 须为 "upsert" 或 "delete"。`);
+    }
+    if (typeof item.cardId !== 'string') throw new Error(`entityCardUpdates[${i}]：cardId 须为字符串。`);
+    if (item.action === 'upsert') {
+      if (typeof item.name !== 'string' || !item.name.trim()) {
+        throw new Error(`entityCardUpdates[${i}]：upsert 操作须提供非空 name。`);
+      }
+    }
+  }
+
+  const volumeUpdates = Array.isArray(obj.volumeUpdates) ? obj.volumeUpdates : [];
+  for (let i = 0; i < volumeUpdates.length; i++) {
+    const item = requireRecord(volumeUpdates[i], `volumeUpdates[${i}]`);
+    if (item.action !== 'upsert' && item.action !== 'delete') {
+      throw new Error(`volumeUpdates[${i}]：action 须为 "upsert" 或 "delete"。`);
+    }
+    const vol = item.volume;
+    if (!vol || typeof vol !== 'object') {
+      throw new Error(`volumeUpdates[${i}]：须包含 volume 对象。`);
+    }
+  }
+
+  const chapterUpdates = Array.isArray(obj.chapterUpdates) ? obj.chapterUpdates : [];
+  for (let i = 0; i < chapterUpdates.length; i++) {
+    const item = requireRecord(chapterUpdates[i], `chapterUpdates[${i}]`);
+    if (item.action !== 'upsert' && item.action !== 'delete') {
+      throw new Error(`chapterUpdates[${i}]：action 须为 "upsert" 或 "delete"。`);
+    }
+    const ch = item.chapter;
+    if (!ch || typeof ch !== 'object') {
+      throw new Error(`chapterUpdates[${i}]：须包含 chapter 对象。`);
+    }
+  }
+
+  const sceneUpdates = Array.isArray(obj.sceneUpdates) ? obj.sceneUpdates : [];
+  for (let i = 0; i < sceneUpdates.length; i++) {
+    const item = requireRecord(sceneUpdates[i], `sceneUpdates[${i}]`);
+    if (item.action !== 'upsert' && item.action !== 'delete') {
+      throw new Error(`sceneUpdates[${i}]：action 须为 "upsert" 或 "delete"。`);
+    }
+    const sc = item.scene;
+    if (!sc || typeof sc !== 'object') {
+      throw new Error(`sceneUpdates[${i}]：须包含 scene 对象。`);
+    }
+  }
+
+  return {
+    reply: obj.reply as string,
+    entityCardUpdates: entityCardUpdates as EntityCardUpdate[],
+    volumeUpdates: volumeUpdates as VolumeUpdate[],
+    chapterUpdates: chapterUpdates as ChapterUpdate[],
+    sceneUpdates: sceneUpdates as SceneUpdate[],
   };
 }

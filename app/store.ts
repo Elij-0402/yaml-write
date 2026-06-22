@@ -14,6 +14,7 @@ import {
   normalizeLayout,
   type LayoutPrefs,
 } from './layoutPrefs';
+import type { ChatMessage } from './dnaSchema';
 
 const STORE_VERSION = 6;
 const DEFAULT_TEMPERATURE = 0.7;
@@ -106,6 +107,10 @@ interface AppState {
   toggleSidebar: () => void;
   setMainSplitPct: (pct: number, containerPx?: number) => void;
   resetSidebar: () => void;
+  // Story 3.4: 对话聊天历史（按 novelId 分组，persist 到 localStorage）
+  chatMessages: Record<string, ChatMessage[]>;
+  addChatMessage: (novelId: string, msg: ChatMessage) => void;
+  clearChatMessages: (novelId: string) => void;
 }
 
 function clampTemperature(value: unknown): number {
@@ -257,6 +262,21 @@ export const useAppStore = create<AppState>()(
         set((state) => ({ layout: { ...state.layout, mainSplitPct: clampMainSplitPct(pct, containerPx) } })),
       resetSidebar: () =>
         set((state) => ({ layout: { ...state.layout, sidebarWidth: DEFAULT_LAYOUT.sidebarWidth, sidebarCollapsed: false } })),
+      // —— Story 3.4: 对话聊天历史 ——
+      chatMessages: {},
+      addChatMessage: (novelId, msg) =>
+        set((state) => {
+          const MAX_MESSAGES = 30;
+          const existing = state.chatMessages[novelId] || [];
+          const updated = [...existing, msg].slice(-MAX_MESSAGES);
+          return { chatMessages: { ...state.chatMessages, [novelId]: updated } };
+        }),
+      clearChatMessages: (novelId) =>
+        set((state) => {
+          const next = { ...state.chatMessages };
+          delete next[novelId];
+          return { chatMessages: next };
+        }),
     }),
     {
       name: 'novel-fusion-store', // name of the item in the storage (must be unique)
@@ -286,6 +306,7 @@ export const useAppStore = create<AppState>()(
           ...state,
           llmConfig: normalizeLLMConfig(state.llmConfig),
           layout: normalizeLayout(state.layout),
+          chatMessages: (state.chatMessages && typeof state.chatMessages === 'object') ? state.chatMessages : {},
           selectedNovelId: typeof state.selectedNovelId === 'string' ? state.selectedNovelId : null,
           workshopOpen: false,
           activeCreationId: null,

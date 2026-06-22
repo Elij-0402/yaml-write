@@ -22,6 +22,7 @@ import SkeletonTree from '../components/SkeletonTree';
 import OutlineTree from '../components/OutlineTree';
 import EntityCardLibrary from '../components/EntityCardLibrary';
 import ApiKeyNoticeCard from '../components/ApiKeyNoticeCard';
+import AiAssistant from '../components/AiAssistant';
 import { getColdStartState } from './coldStartState';
 import { getInitialOnline, canUseLlm, OFFLINE_TOAST_TEXT, OFFLINE_DISABLED_HINT } from './networkStatus';
 import StatusBar from '../components/StatusBar';
@@ -506,7 +507,7 @@ export default function Home() {
             onReset={onSplitReset}
           />
 
-          {/* 右 pane：AI 助手占位（Epic 3 接入）—— 桌面专属。 */}
+          {/* 右 pane：AI 助手 —— 桌面专属。 */}
           <aside
             style={{ width: `${100 - mainSplitPct}%` }}
             className={`hidden min-w-0 flex-col bg-panel lg:flex lg:flex-none ${
@@ -516,21 +517,22 @@ export default function Home() {
             <div className="flex h-12 shrink-0 items-center border-b border-line px-4">
               <span className="eyebrow">AI 助手</span>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              {/* 拦截闸门（AC3）：canUseLlm = 密钥就绪且在线。离线优先于缺密钥提示（网络是更底层阻断，二者不堆叠）。 */}
+            <div className="min-h-0 flex-1 overflow-hidden">
               {isOffline ? (
-                <AppNotice tone="warning" title="离线模式" className="mb-4">
-                  {OFFLINE_DISABLED_HINT}。本地写作与大纲编辑不受影响，已安全保存；恢复网络后自动可用。
-                </AppNotice>
+                <div className="p-4">
+                  <AppNotice tone="warning" title="离线模式" className="mb-4">
+                    {OFFLINE_DISABLED_HINT}。本地写作与大纲编辑不受影响，已安全保存；恢复网络后自动可用。
+                  </AppNotice>
+                </div>
               ) : !llmReadiness.ok ? (
-                <ApiKeyNoticeCard
-                  onConfigure={() => window.dispatchEvent(new CustomEvent('open-settings-panel', { detail: { intent: 'api-key' } }))}
-                />
+                <div className="p-4">
+                  <ApiKeyNoticeCard
+                    onConfigure={() => window.dispatchEvent(new CustomEvent('open-settings-panel', { detail: { intent: 'api-key' } }))}
+                  />
+                </div>
               ) : null}
-              <div className={canUseLlm(llmReadiness.ok, isOffline) ? '' : 'opacity-50 pointer-events-none'}>
-                <p className="text-[12.5px] leading-relaxed text-fg-subtle">
-                  AI 对话与闭环起草将在后续故事（Epic 3）接入。此处为双栏右侧的占位容器。
-                </p>
+              <div className={canUseLlm(llmReadiness.ok, isOffline) ? 'h-full' : 'opacity-50 pointer-events-none h-full'}>
+                <AiAssistant />
               </div>
             </div>
           </aside>

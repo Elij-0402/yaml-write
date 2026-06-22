@@ -5,6 +5,7 @@ import {
   parseFusionDirection,
   parseFusionDirections,
   parseSceneEvaluateResponse,
+  parseChatAssistantResponse,
 } from './dnaSchema';
 
 const validSummary = {
@@ -127,5 +128,78 @@ describe('parseSceneEvaluateResponse', () => {
   it('rejects a malformed failedGates field', () => {
     expect(() => parseSceneEvaluateResponse({ ...validEvaluateResponse, failedGates: 'StyleLock' })).toThrow();
     expect(() => parseSceneEvaluateResponse({ ...validEvaluateResponse, failedGates: [42] })).toThrow();
+  });
+});
+
+describe('parseChatAssistantResponse', () => {
+  const validResponse = {
+    reply: '好的，已帮你修改了角色设定。',
+    entityCardUpdates: [
+      { action: 'upsert', cardId: 'card-1', type: 'character', name: '林鸣', summary: '冷酷性格', details: '' },
+    ],
+    volumeUpdates: [],
+    chapterUpdates: [],
+    sceneUpdates: [],
+  };
+
+  it('parses valid response', () => {
+    const result = parseChatAssistantResponse(validResponse);
+    expect(result.reply).toBe('好的，已帮你修改了角色设定。');
+    expect(result.entityCardUpdates).toHaveLength(1);
+    expect(result.entityCardUpdates[0].action).toBe('upsert');
+    expect(result.entityCardUpdates[0].cardId).toBe('card-1');
+  });
+
+  it('accepts response with only reply and no updates', () => {
+    const result = parseChatAssistantResponse({ reply: '你好！', entityCardUpdates: [], volumeUpdates: [], chapterUpdates: [], sceneUpdates: [] });
+    expect(result.reply).toBe('你好！');
+    expect(result.entityCardUpdates).toHaveLength(0);
+  });
+
+  it('throws on missing reply', () => {
+    expect(() => parseChatAssistantResponse({ entityCardUpdates: [] })).toThrow();
+  });
+
+  it('throws on non-object input', () => {
+    expect(() => parseChatAssistantResponse(null)).toThrow();
+    expect(() => parseChatAssistantResponse('string')).toThrow();
+  });
+
+  it('throws on invalid action in entityCardUpdates', () => {
+    expect(() => parseChatAssistantResponse({
+      reply: 'ok',
+      entityCardUpdates: [{ action: 'invalid', cardId: 'x', type: 'character', name: 'a', summary: '', details: '' }],
+      volumeUpdates: [],
+      chapterUpdates: [],
+      sceneUpdates: [],
+    })).toThrow();
+  });
+
+  it('defaults missing arrays to empty', () => {
+    const result = parseChatAssistantResponse({ reply: 'test' });
+    expect(result.entityCardUpdates).toHaveLength(0);
+    expect(result.volumeUpdates).toHaveLength(0);
+    expect(result.chapterUpdates).toHaveLength(0);
+    expect(result.sceneUpdates).toHaveLength(0);
+  });
+
+  it('throws on upsert with empty name', () => {
+    expect(() => parseChatAssistantResponse({
+      reply: 'ok',
+      entityCardUpdates: [{ action: 'upsert', cardId: '', type: 'character', name: '', summary: '', details: '' }],
+      volumeUpdates: [],
+      chapterUpdates: [],
+      sceneUpdates: [],
+    })).toThrow();
+  });
+
+  it('throws on volumeUpdate missing volume object', () => {
+    expect(() => parseChatAssistantResponse({
+      reply: 'ok',
+      entityCardUpdates: [],
+      volumeUpdates: [{ action: 'upsert' }],
+      chapterUpdates: [],
+      sceneUpdates: [],
+    })).toThrow();
   });
 });
