@@ -86,7 +86,7 @@ RATE_LIMIT_RULES = {
     "/api/py/generate-fusion-directions": (60, 8),
     "/api/py/repair-setting-gaps": (60, 8),
     "/api/py/tweak-fusion-blocks": (60, 20),
-    "/api/py/stream-scene-text": (60, 12),
+    "/api/py/generate-scene": (60, 12),
     "/api/py/split-recommend": (60, 20),
 }
 
@@ -562,23 +562,23 @@ async def tweak_fusion_blocks(data: TweakBlocksInput, request: Request):
     )
 
 
-@app.post("/api/py/stream-scene-text")
-async def stream_scene_text(data: SceneTextInput, request: Request):
-    await ensure_rate_limit(request, "/api/py/stream-scene-text")
-    capture_fixture("stream-scene-text", data.model_dump())
+@app.post("/api/py/generate-scene")
+async def generate_scene(data: SceneTextInput, request: Request):
+    await ensure_rate_limit(request, "/api/py/generate-scene")
+    capture_fixture("generate-scene", data.model_dump())
     model = sanitize_text(data.model)
     api_key = sanitize_text(data.apiKey)
     validate_llm_creds(api_key, model, data.temperature)
     client = build_openai_client(api_key, data.baseUrl, timeout=STREAM_TIMEOUT_SECONDS)
     scene = data.currentScene
-    logger.info("stream_scene_text ip=%s model=%s scene=%s", get_client_ip(request), model, scene.sceneNumber)
+    logger.info("generate_scene ip=%s model=%s scene=%s key=%s", get_client_ip(request), model, scene.sceneNumber, mask_api_key(api_key))
 
     system_prompt = build_scene_system_prompt(data)
     user_prompt = build_scene_user_prompt(data)
 
     async def event_generator():
         try:
-            stream = await client.chat.completions.create(
+            async with await client.chat.completions.create(
                 model=model,
                 temperature=data.temperature,
                 max_tokens=3200,
@@ -587,23 +587,28 @@ async def stream_scene_text(data: SceneTextInput, request: Request):
                     {"role": "user", "content": user_prompt},
                 ],
                 stream=True,
-            )
-            async for chunk in stream:
-                # 客户端断开（停止生成 / 关页）后立即停止从上游拉流，省 BYOK token。
-                if await request.is_disconnected():
-                    break
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                content = delta.content if delta else None
-                if content:
-                    yield sse_event("delta", {"text": content})
+            ) as stream:
+                async for chunk in stream:
+                    # 客户端断开（停止生成 / 关页）后立即停止从上游拉流，省 BYOK token。
+                    if await request.is_disconnected():
+                        break
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    content = delta.content if delta else None
+                    if content:
+                        yield sse_event("delta", {"text": content})
 
             yield sse_event("done", {"ok": True})
         except Exception as exc:
-            logger.warning("stream_scene_text failed ip=%s model=%s err=%s", get_client_ip(request), model, exc.__class__.__name__)
-            _, code, message = classify_openai_error(exc)
-            yield sse_event("error", {"code": code, "message": message})
+            logger.warning(
+                "generate_scene failed ip=%s model=%s key=%s err=%s",
+                get_client_ip(request), model, mask_api_key(api_key), scrub_sensitive(str(exc))
+            )
+            if not await request.is_disconnected():
+                _, code, message = classify_openai_error(exc)
+                yield sse_event("error", {"code": code, "message": message})
+
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

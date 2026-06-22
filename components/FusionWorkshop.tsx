@@ -586,7 +586,7 @@ export default function FusionWorkshop() {
     }
   };
 
-  // ---- 成稿：单一连续开篇正文（复用 stream-scene-text，合成开篇 scene）----
+  // ---- 成稿：单一连续开篇正文（复用 generate-scene，合成开篇 scene）----
   const selectedDirection = () => ({ title: directionTitle, ...blocks });
   const openingScene = () => ({
     sceneNumber: OPENING_SCENE_NUM,
@@ -615,7 +615,7 @@ export default function FusionWorkshop() {
     const ac = new AbortController();
     streamAbortRef.current = ac;
     try {
-      await streamSse('/api/py/stream-scene-text', {
+      await streamSse('/api/py/generate-scene', {
         selectedDirection: selectedDirection(),
         currentScene: openingScene(),
         precedingTexts: {},
@@ -702,7 +702,7 @@ export default function FusionWorkshop() {
       let received = '';
       const ac = new AbortController();
       streamAbortRef.current = ac;
-      await streamSse('/api/py/stream-scene-text', {
+      await streamSse('/api/py/generate-scene', {
         selectedDirection: selectedDirection(),
         currentScene: {
           sceneNumber: OPENING_SCENE_NUM,
@@ -752,7 +752,7 @@ export default function FusionWorkshop() {
     setComparingDraftIdx(null);
   };
 
-  // ---- 开篇之后的有界续写（丁）：逐次手动写下一段。复用 stream-scene-text + precedingTexts
+  // ---- 开篇之后的有界续写（丁）：逐次手动写下一段。复用 generate-scene + precedingTexts
   // （后端按 24k 尾部截断上下文，天然有界）。硬边界＝禁自动章节循环 / 整本编排 / 大纲生成 / 一键写到结局；
   // 每段都是一次刻意的用户点击，保持「起书副驾」而非整本工厂。----
   const streamSceneAt = async (num: number, intent: string) => {
@@ -766,7 +766,7 @@ export default function FusionWorkshop() {
     const ac = new AbortController();
     streamAbortRef.current = ac;
     try {
-      await streamSse('/api/py/stream-scene-text', {
+      await streamSse('/api/py/generate-scene', {
         selectedDirection: selectedDirection(),
         currentScene: {
           sceneNumber: num,
