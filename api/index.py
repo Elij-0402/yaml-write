@@ -49,12 +49,16 @@ from api.schemas import (
     SplitRecommendResponse,
     TweakBlocksInput,
     TweakBlocksResponse,
+    SceneEvaluateInput,
+    SceneAuditResult,
+    SceneEvaluateResponse,
 )
 from api.prompts import (
     ANTI_SLOP_CONSTRAINT,
     TONE_GUIDE,
     NON_COLD_TONE_RELEASE,
     MAX_SCENE_CONTEXT_CHARS,
+    FORBIDDEN_STYLE_WORDS,
     sanitize_text,
     trim_text_tail,
     build_scene_user_prompt,
@@ -66,6 +70,8 @@ from api.prompts import (
     build_arc_map_prompts,
     build_fusion_directions_prompts,
     resolve_fusion_temperature,
+    build_evaluator_system_prompt,
+    build_evaluator_user_prompt,
 )
 
 logger = logging.getLogger("novel_fusion_api")
@@ -88,6 +94,7 @@ RATE_LIMIT_RULES = {
     "/api/py/tweak-fusion-blocks": (60, 20),
     "/api/py/generate-scene": (60, 12),
     "/api/py/split-recommend": (60, 20),
+    "/api/py/evaluate-scene": (60, 12),
 }
 
 DEFAULT_ALLOWED_BASE_URLS = [
@@ -663,4 +670,103 @@ async def split_recommend(data: SplitRecommendInput, request: Request):
         system_prompt=system_prompt, user_prompt=user_prompt,
         temperature=data.temperature, request=request, label="split_recommend",
         instructor_retries=1,
+    )
+
+
+@app.post("/api/py/evaluate-scene")
+async def evaluate_scene(data: SceneEvaluateInput, request: Request):
+    await ensure_rate_limit(request, "/api/py/evaluate-scene")
+    capture_fixture("evaluate-scene", data.model_dump())
+    model = sanitize_text(data.model)
+    api_key = sanitize_text(data.apiKey)
+    validate_llm_creds(api_key, model, data.temperature)
+    
+    # 敏感数据脱敏 & 日志
+    logger.info(
+        "evaluate_scene ip=%s model=%s sceneId=%s attempt=%s key=%s",
+        get_client_ip(request), model, data.sceneId, data.attempt, mask_api_key(api_key)
+    )
+
+    # 1. 风格锁硬编码违禁词词典拦截
+    matched_words = [w for w in FORBIDDEN_STYLE_WORDS if w in (data.draft or "")]
+
+    hard_style_passed = True
+    hard_style_reason = ""
+    if matched_words:
+        hard_style_passed = False
+        hard_style_reason = f"检测到违禁词/陈词滥调：{', '.join(matched_words)}。"
+
+    # 2. 无论硬检测是否通过，都调用 LLM 进行结构化审计，核对人设锁、大纲锁，以及风格锁的软校验
+    system_prompt = build_evaluator_system_prompt(data)
+    user_prompt = build_evaluator_user_prompt(data)
+
+    # run_structured 会调用 LLM 并返回 SceneAuditResult
+    llm_audit: SceneAuditResult = await run_structured(
+        api_key=api_key, base_url=data.baseUrl, model=model,
+        response_model=SceneAuditResult,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        temperature=data.temperature, request=request, label="evaluate_scene",
+        instructor_retries=1,
+    )
+
+    # 3. 双轨合并逻辑
+    # 风格锁结果合并
+    style_passed = hard_style_passed and llm_audit.styleLock.passed
+    style_reasons = []
+    if not hard_style_passed:
+        style_reasons.append(hard_style_reason)
+    if not llm_audit.styleLock.passed and llm_audit.styleLock.reason:
+        style_reasons.append(llm_audit.styleLock.reason)
+    style_reason = " ".join(style_reasons)
+
+    # 其他两把锁结果
+    consistency_passed = llm_audit.consistencyLock.passed
+    consistency_reason = llm_audit.consistencyLock.reason or ""
+
+    outline_passed = llm_audit.outlineLock.passed
+    outline_reason = llm_audit.outlineLock.reason or ""
+
+    # 计算整体通过状态
+    passed = style_passed and consistency_passed and outline_passed
+
+    failed_gates = []
+    if not style_passed:
+        failed_gates.append("StyleLock")
+    if not consistency_passed:
+        failed_gates.append("ConsistencyLock")
+    if not outline_passed:
+        failed_gates.append("OutlineLock")
+
+    # evidence 和 actionableFeedback 组装
+    evidence_parts = []
+    if not style_passed:
+        evidence_parts.append(f"【风格锁未通过】{style_reason}")
+    if not consistency_passed:
+        evidence_parts.append(f"【人设锁未通过】{consistency_reason}")
+    if not outline_passed:
+        evidence_parts.append(f"【大纲锁未通过】{outline_reason}")
+    evidence = "\n".join(evidence_parts) if evidence_parts else "各项校验均已通过。"
+
+    # 改进意见组装
+    feedback_parts = []
+    # 如果有硬检测违规，添加针对违禁词的改进意见
+    if not hard_style_passed:
+        feedback_parts.append(f"请删除或替换以下违禁词与 AI 腔：{', '.join(matched_words)}。")
+    if llm_audit.actionableFeedback:
+        feedback_parts.append(llm_audit.actionableFeedback)
+    
+    actionable_feedback = "\n".join(feedback_parts) if feedback_parts else ""
+
+    # 如果全都通过，按约定反馈和证据均设为空（且 evidence 设为通过提示或空，这里统一按照 AC/Tasks 设为空）
+    if passed:
+        evidence = ""
+        actionable_feedback = ""
+
+    return SceneEvaluateResponse(
+        sceneId=data.sceneId,
+        attempt=data.attempt,
+        passed=passed,
+        failedGates=failed_gates,
+        evidence=evidence,
+        actionableFeedback=actionable_feedback
     )

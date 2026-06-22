@@ -4,6 +4,7 @@ import {
   parseNovelDNACard,
   parseFusionDirection,
   parseFusionDirections,
+  parseSceneEvaluateResponse,
 } from './dnaSchema';
 
 const validSummary = {
@@ -94,5 +95,37 @@ describe('parseFusionDirections', () => {
   });
   it('propagates a malformed element', () => {
     expect(() => parseFusionDirections({ directions: [validDirection, { title: 'x' }] })).toThrow();
+  });
+});
+
+describe('parseSceneEvaluateResponse', () => {
+  const validEvaluateResponse = {
+    sceneId: 'scene_001',
+    attempt: 1,
+    passed: false,
+    failedGates: ['StyleLock'],
+    evidence: 'evidence',
+    actionableFeedback: 'feedback',
+  };
+
+  it('accepts a well-formed evaluate response', () => {
+    expect(parseSceneEvaluateResponse(validEvaluateResponse)).toEqual(validEvaluateResponse);
+  });
+
+  it('rejects a non-object', () => {
+    expect(() => parseSceneEvaluateResponse(null)).toThrow();
+    expect(() => parseSceneEvaluateResponse('x')).toThrow();
+  });
+
+  it('rejects a missing/non-string or non-number field', () => {
+    expect(() => parseSceneEvaluateResponse({ ...validEvaluateResponse, sceneId: 42 })).toThrow();
+    expect(() => parseSceneEvaluateResponse({ ...validEvaluateResponse, attempt: '1' })).toThrow();
+    expect(() => parseSceneEvaluateResponse({ ...validEvaluateResponse, passed: 'false' })).toThrow();
+    expect(() => parseSceneEvaluateResponse({ ...validEvaluateResponse, evidence: undefined })).toThrow();
+  });
+
+  it('rejects a malformed failedGates field', () => {
+    expect(() => parseSceneEvaluateResponse({ ...validEvaluateResponse, failedGates: 'StyleLock' })).toThrow();
+    expect(() => parseSceneEvaluateResponse({ ...validEvaluateResponse, failedGates: [42] })).toThrow();
   });
 });

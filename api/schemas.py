@@ -257,3 +257,40 @@ class SplitRecommendInput(BaseModel):
     baseUrl: str = Field(..., min_length=1, max_length=512)
     model: str = Field(..., min_length=1, max_length=200)
     temperature: float = Field(0.7, ge=0.0, le=1.5)
+
+
+# ============================================================
+# 阶段五点二：后端 Pydantic 质检三把锁与评估报告 (Story 3.2)
+# ============================================================
+class SceneEvaluateInput(BaseModel):
+    sceneId: str = Field(..., description="场景 ID")
+    attempt: int = Field(..., description="评估尝试次数/轮次")
+    draft: str = Field(..., min_length=1, max_length=24000, description="待审计生成的场景草稿")
+    selectedDirection: SelectedDirection = Field(..., description="选定的融合创作方向设定")
+    currentScene: StoryboardScene = Field(..., description="当前所处场景大纲信息")
+    activeCards: List[ActiveCardItem] = Field(default_factory=list, description="激活的角色设定、世界观卡片列表")
+    apiKey: str = Field(..., min_length=1, max_length=512)
+    baseUrl: str = Field(..., min_length=1, max_length=512)
+    model: str = Field(..., min_length=1, max_length=200)
+    temperature: float = Field(0.7, ge=0.0, le=1.5)
+
+
+class GateResult(BaseModel):
+    passed: bool = Field(..., description="该项检验是否通过")
+    reason: str = Field(..., description="未通过的具体原因/审核意见，若通过则为空字符串")
+
+
+class SceneAuditResult(BaseModel):
+    styleLock: GateResult = Field(..., description="风格锁校验结果")
+    consistencyLock: GateResult = Field(..., description="人设锁校验结果")
+    outlineLock: GateResult = Field(..., description="大纲锁校验结果")
+    actionableFeedback: str = Field(..., description="如果不通过，给出供写手 Agent 迭代的修改指令，全部通过则为空字符串")
+
+
+class SceneEvaluateResponse(BaseModel):
+    sceneId: str = Field(..., description="场景 ID")
+    attempt: int = Field(..., description="尝试次数/轮次")
+    passed: bool = Field(..., description="三重拦截是否整体通过")
+    failedGates: List[str] = Field(..., description="失败的锁名称列表，例如 ['StyleLock', 'ConsistencyLock', 'OutlineLock']")
+    evidence: str = Field(..., description="质检未通过的具体违规证据/原文引用与分析")
+    actionableFeedback: str = Field(..., description="综合修复反馈/对写手的修改指令，全通过则为空字符串")

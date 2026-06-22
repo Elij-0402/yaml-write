@@ -106,3 +106,90 @@ export function parseFusionDirections(json: unknown): { directions: FusionDirect
   }
   return { directions: arr.map((d, i) => parseFusionDirection(d, `融合方向[${i}]`)) };
 }
+
+// === 阶段五点二：质检三把锁与评估报告 (Story 3.2) ===
+
+export interface SelectedDirection {
+  title: string;
+  worldviewBlock: string;
+  protagonistBlock: string;
+  antagonistBlock: string;
+  narrativeTone: string;
+}
+
+export interface StoryboardScene {
+  sceneNumber: number;
+  sceneTitle: string;
+  plotOutline: string;
+  tensionLevel: string;
+  visualCues: string;
+}
+
+export interface ActiveCardItem {
+  name: string;
+  type: 'worldview' | 'character' | 'prop' | 'geography' | '';
+  summary: string;
+  details: string;
+  activeState: 'sceneActive' | 'globalActive' | 'idle' | '';
+}
+
+export interface SceneEvaluateInput {
+  sceneId: string;
+  attempt: number;
+  draft: string;
+  selectedDirection: SelectedDirection;
+  currentScene: StoryboardScene;
+  activeCards: ActiveCardItem[];
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  temperature: number;
+}
+
+export interface GateResult {
+  passed: boolean;
+  reason: string;
+}
+
+export interface SceneAuditResult {
+  styleLock: GateResult;
+  consistencyLock: GateResult;
+  outlineLock: GateResult;
+  actionableFeedback: string;
+}
+
+export interface SceneEvaluateResponse {
+  sceneId: string;
+  attempt: number;
+  passed: boolean;
+  failedGates: string[];
+  evidence: string;
+  actionableFeedback: string;
+}
+
+export function parseSceneEvaluateResponse(json: unknown): SceneEvaluateResponse {
+  const obj = requireRecord(json, '评估报告');
+  if (typeof obj.sceneId !== 'string') throw new Error('评估报告：sceneId 须为字符串。');
+  if (typeof obj.attempt !== 'number') throw new Error('评估报告：attempt 须为数字。');
+  if (typeof obj.passed !== 'boolean') throw new Error('评估报告：passed 须为布尔值。');
+  if (typeof obj.evidence !== 'string') throw new Error('评估报告：evidence 须为字符串。');
+  if (typeof obj.actionableFeedback !== 'string') throw new Error('评估报告：actionableFeedback 须为字符串。');
+  
+  if (!Array.isArray(obj.failedGates)) {
+    throw new Error('评估报告：failedGates 须为数组。');
+  }
+  for (const item of obj.failedGates) {
+    if (typeof item !== 'string') {
+      throw new Error('评估报告：failedGates 元素须为字符串。');
+    }
+  }
+  
+  return {
+    sceneId: obj.sceneId,
+    attempt: obj.attempt,
+    passed: obj.passed,
+    failedGates: obj.failedGates as string[],
+    evidence: obj.evidence,
+    actionableFeedback: obj.actionableFeedback,
+  };
+}

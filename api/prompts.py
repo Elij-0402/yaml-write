@@ -9,6 +9,7 @@ from api.schemas import (
     BookReduceInput,
     ArcMapInput,
     FusionDirectionsInput,
+    SceneEvaluateInput,
     MAX_DIRECT_INPUT_CHARS,
     MAX_ARC_CONTENT_CHARS,
 )
@@ -353,3 +354,82 @@ def resolve_fusion_temperature(data: FusionDirectionsInput) -> float:
     if data.freedom:
         return min(1.5, max(data.temperature, 0.9))
     return data.temperature
+
+
+FORBIDDEN_STYLE_WORDS = [
+    "不可否认", "嘴角上扬", "总而言之", "总之", "翻译腔", "命运的齿轮",
+    "那一刻", "逆天改命", "眼神变得坚定", "嘴角勾起一抹弧度",
+    "仿佛整个世界都安静了", "空气仿佛凝固", "心中一紧", "缓缓睁开眼", "不知为何"
+]
+
+
+def build_evaluator_system_prompt(data: SceneEvaluateInput) -> str:
+    """后端 Evaluator Agent 质检三把锁系统提示词"""
+    return (
+        "你是一位极其严苛的小说草稿质检审计员（Evaluator Agent）。你的任务是针对生成的草稿进行深度逻辑审计与质量评估，执行“质检三把锁”校验，并输出结构化 JSON 评估报告。\n\n"
+        "【质检三把锁审计标准】\n"
+        "1. 风格锁（Style Lock）：\n"
+        "   - 审查 AI 腔调（如“不可否认”、“嘴角上扬”、“总之”、“总而言之”、“命运的齿轮”、“那一刻”、“眼神变得坚定”、“嘴角勾起一抹弧度”、“仿佛整个世界都安静了”等违禁词和陈词滥调）、翻译腔与废话。\n"
+        "   - 检验文本是否符合给定的文风色调与叙事基调（narrativeTone）。\n"
+        "2. 人设锁（Consistency Lock）：\n"
+        "   - 核对文本有无违背活跃/全局角色设定及世界常识（比对活跃设定卡片 activeCards 和创作方向设定 selectedDirection 中的主角/对手设定）。\n"
+        "   - 拦截逻辑违和与设定硬伤（例如：瞎子看四周/看表、聋子听琴、死人说话、没有修为的人飞天等）。\n"
+        "3. 大纲锁（Outline Lock）：\n"
+        "   - 检查文本是否包含且体现了当前场景大纲（currentScene.plotOutline）规定的剧情核心冲突、转折点与爽点/爆点。\n\n"
+        "【输出约束说明】\n"
+        "- 如果任意一把锁未通过（passed = False），必须在对应的 reason 中指明具体原因与原文违规证据，并在最终的 actionableFeedback 中给出具体、可执行、无废话的重写改进指令。\n"
+        "- 如果该锁通过（passed = True），则 reason 填空字符串 \"\"；如果三把锁全部通过，则 actionableFeedback 也必须为 \"\"。\n"
+        "- 必须以严格的结构化 JSON 格式输出，符合定义的 SceneAuditResult 模式。"
+    )
+
+
+def build_evaluator_user_prompt(data: SceneEvaluateInput) -> str:
+    """后端 Evaluator Agent 质检三把锁用户提示词，组装待评估的上下文与草稿文本"""
+    d = data.selectedDirection
+    scene = data.currentScene
+    
+    # 组装活跃设定卡片信息
+    active_cards_block = "（无活跃设定卡片）"
+    if data.activeCards:
+        card_lines = []
+        type_map = {
+            "worldview": "世界规章",
+            "character": "人物",
+            "prop": "道具",
+            "geography": "地理"
+        }
+        for card in data.activeCards:
+            if not card.name or not card.name.strip():
+                continue
+            card_type_zh = type_map.get(card.type, card.type)
+            summary_part = f"：{card.summary.strip()}" if card.summary and card.summary.strip() else ""
+            card_str = f"- 【{card_type_zh}】{card.name}{summary_part}"
+            if card.details and card.details.strip():
+                details_indented = "\n  ".join(line for line in card.details.strip().splitlines())
+                card_str += f"\n  详细设定：{details_indented}"
+            card_lines.append(card_str)
+        if card_lines:
+            active_cards_block = "\n".join(card_lines)
+
+    return (
+        f"【评估输入上下文】\n"
+        f"1. 场景 ID (sceneId): {data.sceneId}\n"
+        f"2. 尝试轮次 (attempt): {data.attempt}\n\n"
+        f"【融合方向设定 (selectedDirection)】\n"
+        f"- 世界观: {d.worldviewBlock}\n"
+        f"- 主角设定: {d.protagonistBlock}\n"
+        f"- 对手设定: {d.antagonistBlock}\n"
+        f"- 叙事风格/色调 (narrativeTone): {d.narrativeTone}\n\n"
+        f"【当前场景大纲 (currentScene)】\n"
+        f"- 标题: {scene.sceneTitle}\n"
+        f"- 情节走向与核心冲突 (plotOutline): {scene.plotOutline}\n"
+        f"- 张力曲线: {scene.tensionLevel}\n"
+        f"- 画面意象: {scene.visualCues}\n\n"
+        f"【活跃设定卡片 (activeCards)】\n"
+        f"{active_cards_block}\n\n"
+        f"==================================================\n"
+        f"【待审计的小说草稿正文 (draft)】\n"
+        f"{data.draft}\n"
+        f"==================================================\n\n"
+        f"请针对上述待审计的小说草稿正文执行“质检三把锁”审计，并输出结构化评估结果。"
+    )
