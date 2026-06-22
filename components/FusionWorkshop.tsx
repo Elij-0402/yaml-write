@@ -12,8 +12,9 @@ import { isDnaReady, initDraftLoop, advanceLoop, lastFeedback, isFused, type Dra
 import { formatWordCount } from '../app/util';
 import { type BlockKey, type FusionDirection, type SettingBlocks, type StructureBeat, parseFusionDirections, type SceneEvaluateResponse, parseSceneEvaluateResponse } from '../app/dnaSchema';
 import { withRateLimitRetry } from '../app/dnaEngine';
-import { StreamSseError, callStructured, ensureLlmConfigReady, streamSse } from '../app/llmClient';
+import { StreamSseError, callStructured, ensureLlmConfigReady, streamSse, streamDirectSse } from '../app/llmClient';
 import { useAppStore } from '../app/store';
+import { FORBIDDEN_STYLE_WORDS, evaluateSceneLocal, buildGenerateSceneSystemPrompt, buildGenerateSceneUserPrompt, type GenerateSceneInput } from '../app/evaluatorLocal';
 import AppDialog from './AppDialog';
 
 interface RepairGap { beat: string; issue: string; patch: string; }
@@ -36,14 +37,9 @@ const BLOCKS: { key: BlockKey; label: string }[] = [
 ];
 const isBlockKey = (value: string): value is BlockKey => BLOCKS.some((block) => block.key === value);
 
-const ANTI_SLOP_PHRASES = [
-  '命运的齿轮', '那一刻', '逆天改命', '眼神变得坚定', '嘴角勾起一抹弧度',
-  '仿佛整个世界都安静了', '空气仿佛凝固', '心中一紧', '缓缓睁开眼', '不知为何',
-];
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-// 前端兜底护栏（真相源仍是后端 prompt 约束）。
 const applyAntiSlopFallback = (text: string): string =>
-  ANTI_SLOP_PHRASES.reduce((acc, phrase, idx) => acc.replace(new RegExp(escapeRegExp(phrase), 'g'), `[已过滤陈词滥调#${idx + 1}]`), text);
+  FORBIDDEN_STYLE_WORDS.reduce((acc, phrase, idx) => acc.replace(new RegExp(escapeRegExp(phrase), 'g'), `[已过滤陈词滥调#${idx + 1}]`), text);
 
 const EMPTY_BLOCKS = { worldviewBlock: '', protagonistBlock: '', antagonistBlock: '', narrativeTone: '' };
 const OPENING_SCENE_NUM = 1; // 成稿为单一连续开篇，复用 sceneTexts[1] 持久化（不引入 db 形状变更）
@@ -136,13 +132,14 @@ function StudioShell({
 }
 
 export default function FusionWorkshop() {
-  const { selectedNovelId, setSelectedNovelId, setWorkshopOpen, rateLimited, activeCreationId, setWorkshopBusy } = useAppStore((state) => ({
+  const { selectedNovelId, setSelectedNovelId, setWorkshopOpen, rateLimited, activeCreationId, setWorkshopBusy, clientDirectMode } = useAppStore((state) => ({
     selectedNovelId: state.selectedNovelId,
     setSelectedNovelId: state.setSelectedNovelId,
     setWorkshopOpen: state.setWorkshopOpen,
     rateLimited: state.rateLimited,
     activeCreationId: state.activeCreationId,
     setWorkshopBusy: state.setWorkshopBusy,
+    clientDirectMode: state.clientDirectMode,
   }));
   const novels = useLiveQuery(() => db.novels.reverse().toArray(), []) || [];
   const readyNovels = novels.filter((novel) => isDnaReady(novel));
@@ -213,6 +210,30 @@ export default function FusionWorkshop() {
   const streamAbortRef = useRef<AbortController | null>(null);
   const hydratedRef = useRef(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const backendCheckRef = useRef<{ ts: number; ok: boolean } | null>(null);
+
+  const checkBackendReachable = async (): Promise<boolean> => {
+    if (clientDirectMode) return false;
+    const cached = backendCheckRef.current;
+    if (cached && Date.now() - cached.ts < 30000) return cached.ok;
+    try {
+      const ac = new AbortController();
+      const tid = setTimeout(() => ac.abort(), 3000);
+      const res = await fetch('/api/py/docs', { signal: ac.signal, method: 'HEAD' });
+      clearTimeout(tid);
+      const ok = res.ok;
+      backendCheckRef.current = { ts: Date.now(), ok };
+      return ok;
+    } catch {
+      backendCheckRef.current = { ts: Date.now(), ok: false };
+      return false;
+    }
+  };
+
+  const shouldUseDirect = async (): Promise<boolean> => {
+    if (clientDirectMode) return true;
+    return !(await checkBackendReachable());
+  };
 
   useEffect(() => {
     // 必须在 effect 体内重置为 true：React 18 严格模式（App Router dev 默认开启）会
@@ -607,7 +628,6 @@ export default function FusionWorkshop() {
     let received = mode === 'resume' ? existingDraft : '';
     setSceneResumeStatus((prev) => ({ ...prev, [num]: mode === 'resume' ? 'resuming' : 'idle' }));
     if (mode === 'fresh') {
-      // 重写前把当前开篇归档进历史版本（最多保留最近 5 版），可对比 / 恢复。
       if (existingDraft.trim()) {
         setOpeningDrafts((prev) => [{ text: existingDraft, createdAt: Date.now() }, ...prev].slice(0, 5));
       }
@@ -620,25 +640,52 @@ export default function FusionWorkshop() {
     const ac = new AbortController();
     streamAbortRef.current = ac;
 
+    const direct = await shouldUseDirect();
+
     // resume 模式不走评估循环——直接接写即可。
     if (mode === 'resume') {
       try {
-        await streamSse('/api/py/generate-scene', {
-          selectedDirection: selectedDirection(),
-          currentScene: openingScene(),
-          precedingTexts: {},
-          activeCards: mapActiveCardsForLlm(activeCards),
-          currentDraft: existingDraft,
-          adversarialRules: adversarialRules.trim() || undefined,
-          tone: tone || undefined,
-        }, {
-          signal: ac.signal,
-          onDelta: (text) => {
-            const sanitized = applyAntiSlopFallback(text);
-            received += sanitized;
-            setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
-          },
-        });
+        if (direct) {
+          const genInput: GenerateSceneInput = {
+            selectedDirection: selectedDirection(),
+            currentScene: openingScene(),
+            precedingTexts: {},
+            currentDraft: existingDraft,
+            activeCards: mapActiveCardsForLlm(activeCards),
+            adversarialRules: adversarialRules.trim() || undefined,
+            tone: tone || undefined,
+          };
+          await streamDirectSse({
+            messages: [
+              { role: 'system', content: buildGenerateSceneSystemPrompt(genInput) },
+              { role: 'user', content: buildGenerateSceneUserPrompt(genInput) },
+            ],
+          }, {
+            signal: ac.signal,
+            onDelta: (text) => {
+              const sanitized = applyAntiSlopFallback(text);
+              received += sanitized;
+              setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
+            },
+          });
+        } else {
+          await streamSse('/api/py/generate-scene', {
+            selectedDirection: selectedDirection(),
+            currentScene: openingScene(),
+            precedingTexts: {},
+            activeCards: mapActiveCardsForLlm(activeCards),
+            currentDraft: existingDraft,
+            adversarialRules: adversarialRules.trim() || undefined,
+            tone: tone || undefined,
+          }, {
+            signal: ac.signal,
+            onDelta: (text) => {
+              const sanitized = applyAntiSlopFallback(text);
+              received += sanitized;
+              setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
+            },
+          });
+        }
         setSceneResumeStatus((prev) => ({ ...prev, [num]: 'done' }));
       } catch (err) {
         const aborted = ac.signal.aborted;
@@ -661,9 +708,8 @@ export default function FusionWorkshop() {
 
     // ---- fresh 模式：生成 → 评估 → 重试/熔断 闭环 ----
     let loop = initDraftLoop();
-    let extraRules = ''; // 累积的 actionableFeedback，喂入重试生成
+    let extraRules = '';
     try {
-      // 外循环：最多 maxAttempts 次生成 + 评估
       while (loop.phase !== 'passed' && loop.phase !== 'fused') {
         // ── streaming 阶段 ──
         loop = { ...loop, phase: 'streaming' };
@@ -672,21 +718,45 @@ export default function FusionWorkshop() {
         setSceneTexts((prev) => ({ ...prev, [num]: '' }));
 
         const mergedRules = [adversarialRules.trim(), extraRules].filter(Boolean).join('\n') || undefined;
-        await streamSse('/api/py/generate-scene', {
-          selectedDirection: selectedDirection(),
-          currentScene: openingScene(),
-          precedingTexts: {},
-          activeCards: mapActiveCardsForLlm(activeCards),
-          adversarialRules: mergedRules,
-          tone: tone || undefined,
-        }, {
-          signal: ac.signal,
-          onDelta: (text) => {
-            const sanitized = applyAntiSlopFallback(text);
-            received += sanitized;
-            setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
-          },
-        });
+        if (direct) {
+          const genInput: GenerateSceneInput = {
+            selectedDirection: selectedDirection(),
+            currentScene: openingScene(),
+            precedingTexts: {},
+            activeCards: mapActiveCardsForLlm(activeCards),
+            adversarialRules: mergedRules,
+            tone: tone || undefined,
+          };
+          await streamDirectSse({
+            messages: [
+              { role: 'system', content: buildGenerateSceneSystemPrompt(genInput) },
+              { role: 'user', content: buildGenerateSceneUserPrompt(genInput) },
+            ],
+          }, {
+            signal: ac.signal,
+            onDelta: (text) => {
+              const sanitized = applyAntiSlopFallback(text);
+              received += sanitized;
+              setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
+            },
+          });
+        } else {
+          await streamSse('/api/py/generate-scene', {
+            selectedDirection: selectedDirection(),
+            currentScene: openingScene(),
+            precedingTexts: {},
+            activeCards: mapActiveCardsForLlm(activeCards),
+            adversarialRules: mergedRules,
+            tone: tone || undefined,
+          }, {
+            signal: ac.signal,
+            onDelta: (text) => {
+              const sanitized = applyAntiSlopFallback(text);
+              received += sanitized;
+              setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
+            },
+          });
+        }
 
         if (ac.signal.aborted) break;
         if (!mountedRef.current) return;
@@ -696,14 +766,26 @@ export default function FusionWorkshop() {
         setLoopState(loop);
 
         const sceneId = `${activeCreationId || 'session'}-opening`;
-        const report = await callStructured<SceneEvaluateResponse>('/api/py/evaluate-scene', {
-          sceneId,
-          attempt: loop.attempt,
-          draft: received,
-          selectedDirection: selectedDirection(),
-          currentScene: openingScene(),
-          activeCards: mapActiveCardsForLlm(activeCards),
-        }, { signal: ac.signal, parse: parseSceneEvaluateResponse });
+        let report: SceneEvaluateResponse;
+        if (direct) {
+          report = await evaluateSceneLocal({
+            sceneId,
+            attempt: loop.attempt,
+            draft: received,
+            selectedDirection: selectedDirection(),
+            currentScene: openingScene(),
+            activeCards: mapActiveCardsForLlm(activeCards),
+          }, { signal: ac.signal });
+        } else {
+          report = await callStructured<SceneEvaluateResponse>('/api/py/evaluate-scene', {
+            sceneId,
+            attempt: loop.attempt,
+            draft: received,
+            selectedDirection: selectedDirection(),
+            currentScene: openingScene(),
+            activeCards: mapActiveCardsForLlm(activeCards),
+          }, { signal: ac.signal, parse: parseSceneEvaluateResponse });
+        }
 
         if (ac.signal.aborted) break;
         if (!mountedRef.current) return;
@@ -717,12 +799,10 @@ export default function FusionWorkshop() {
           break;
         }
         if (loop.phase === 'fused') {
-          // 熔断：不清除草稿，保留编辑器中最新文本。
           setError('质检未通过，已熔断 — 请人工审阅或编辑后重试。');
           setEvalExpanded(true);
           break;
         }
-        // phase === 'streaming' → 重试：将 actionableFeedback 注入下次生成
         extraRules = lastFeedback(loop);
       }
     } catch (err) {
@@ -794,22 +874,47 @@ export default function FusionWorkshop() {
       let received = '';
       const ac = new AbortController();
       streamAbortRef.current = ac;
-      await streamSse('/api/py/generate-scene', {
-        selectedDirection: selectedDirection(),
-        currentScene: {
-          sceneNumber: OPENING_SCENE_NUM,
-          sceneTitle: '选中句改写',
-          plotOutline: `只改写下面引号内的这一小段，使其${style}。只输出改写后的这一段文字本身，不要加引号、不要前后文、不要解释。`,
-          tensionLevel: '保持与上下文一致',
-          visualCues: '保持与上下文一致',
-        },
-        precedingTexts: {},
-        currentDraft: original,
-        adversarialRules: adversarialRules.trim() || undefined,
-      }, {
-        signal: ac.signal,
-        onDelta: (text) => { received += applyAntiSlopFallback(text); },
-      });
+      const direct = await shouldUseDirect();
+      if (direct) {
+        const genInput: GenerateSceneInput = {
+          selectedDirection: selectedDirection(),
+          currentScene: {
+            sceneTitle: '选中句改写',
+            plotOutline: `只改写下面引号内的这一小段，使其${style}。只输出改写后的这一段文字本身，不要加引号、不要前后文、不要解释。`,
+            tensionLevel: '保持与上下文一致',
+            visualCues: '保持与上下文一致',
+          },
+          precedingTexts: {},
+          currentDraft: original,
+          adversarialRules: adversarialRules.trim() || undefined,
+        };
+        await streamDirectSse({
+          messages: [
+            { role: 'system', content: buildGenerateSceneSystemPrompt(genInput) },
+            { role: 'user', content: buildGenerateSceneUserPrompt(genInput) },
+          ],
+        }, {
+          signal: ac.signal,
+          onDelta: (text) => { received += applyAntiSlopFallback(text); },
+        });
+      } else {
+        await streamSse('/api/py/generate-scene', {
+          selectedDirection: selectedDirection(),
+          currentScene: {
+            sceneNumber: OPENING_SCENE_NUM,
+            sceneTitle: '选中句改写',
+            plotOutline: `只改写下面引号内的这一小段，使其${style}。只输出改写后的这一段文字本身，不要加引号、不要前后文、不要解释。`,
+            tensionLevel: '保持与上下文一致',
+            visualCues: '保持与上下文一致',
+          },
+          precedingTexts: {},
+          currentDraft: original,
+          adversarialRules: adversarialRules.trim() || undefined,
+        }, {
+          signal: ac.signal,
+          onDelta: (text) => { received += applyAntiSlopFallback(text); },
+        });
+      }
       if (!mountedRef.current) return;
       const rewritten = received.trim();
       if (rewritten) setFragmentDraft({ original, rewritten });
@@ -858,28 +963,53 @@ export default function FusionWorkshop() {
     const ac = new AbortController();
     streamAbortRef.current = ac;
     try {
-      await streamSse('/api/py/generate-scene', {
-        selectedDirection: selectedDirection(),
-        currentScene: {
-          sceneNumber: num,
-          sceneTitle: `第 ${num} 段`,
-          plotOutline: intent.trim()
-            ? `承接前文，自然往下写：${intent.trim()}。不要重述前文、不写大纲、不解释设定。`
-            : '承接前文，自然往下写一个连续的场景：推进当前情节、维持设定与语气，结尾留一个让人想继续读的小钩子。不要重述前文、不写大纲、不解释设定。',
-          tensionLevel: '承接前文张力，自然推进',
-          visualCues: '与前文世界观与叙事色调保持一致',
-        },
-        precedingTexts: preceding,
-        activeCards: mapActiveCardsForLlm(activeCards),
-        adversarialRules: adversarialRules.trim() || undefined,
-        tone: tone || undefined,
-      }, {
-        signal: ac.signal,
-        onDelta: (text) => {
-          const sanitized = applyAntiSlopFallback(text);
-          setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
-        },
-      });
+      const direct = await shouldUseDirect();
+      const currentScene = {
+        sceneNumber: num,
+        sceneTitle: `第 ${num} 段`,
+        plotOutline: intent.trim()
+          ? `承接前文，自然往下写：${intent.trim()}。不要重述前文、不写大纲、不解释设定。`
+          : '承接前文，自然往下写一个连续的场景：推进当前情节、维持设定与语气，结尾留一个让人想继续读的小钩子。不要重述前文、不写大纲、不解释设定。',
+        tensionLevel: '承接前文张力，自然推进',
+        visualCues: '与前文世界观与叙事色调保持一致',
+      };
+      if (direct) {
+        const genInput: GenerateSceneInput = {
+          selectedDirection: selectedDirection(),
+          currentScene,
+          precedingTexts: preceding,
+          activeCards: mapActiveCardsForLlm(activeCards),
+          adversarialRules: adversarialRules.trim() || undefined,
+          tone: tone || undefined,
+        };
+        await streamDirectSse({
+          messages: [
+            { role: 'system', content: buildGenerateSceneSystemPrompt(genInput) },
+            { role: 'user', content: buildGenerateSceneUserPrompt(genInput) },
+          ],
+        }, {
+          signal: ac.signal,
+          onDelta: (text) => {
+            const sanitized = applyAntiSlopFallback(text);
+            setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
+          },
+        });
+      } else {
+        await streamSse('/api/py/generate-scene', {
+          selectedDirection: selectedDirection(),
+          currentScene,
+          precedingTexts: preceding,
+          activeCards: mapActiveCardsForLlm(activeCards),
+          adversarialRules: adversarialRules.trim() || undefined,
+          tone: tone || undefined,
+        }, {
+          signal: ac.signal,
+          onDelta: (text) => {
+            const sanitized = applyAntiSlopFallback(text);
+            setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
+          },
+        });
+      }
       setSceneResumeStatus((prev) => ({ ...prev, [num]: 'done' }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

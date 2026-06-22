@@ -292,3 +292,183 @@ export async function streamSse<T extends Record<string, unknown>>(
     throw new StreamSseError('生成提前结束，请重试。', 'stream_ended_early', false);
   }
 }
+
+// === 前端直连大模型 API（绕过 FastAPI 后端）===
+
+export interface DirectSsePayload {
+  messages: { role: string; content: string }[];
+  temperature?: number;
+  max_tokens?: number;
+  stream?: boolean;
+}
+
+export interface DirectSseHandlers {
+  onDelta: (text: string) => void;
+  onDone?: () => void;
+  signal?: AbortSignal;
+}
+
+function classifyDirectError(status: number, body: string): Error {
+  if (status === 401) return new Error('API Key 无效或已过期，请在设置中重新配置。');
+  if (status === 403) return new Error('API 访问被拒绝，请检查 Key 权限或配额。');
+  if (status === 429) return new RateLimitSignal();
+  if (TRANSIENT_STATUSES.has(status)) {
+    return new TransientError(
+      body ? `服务暂时不可用：${body.slice(0, 100)}` : '服务暂时不可用，请稍后重试。',
+      status
+    );
+  }
+  try {
+    const parsed = JSON.parse(body) as { error?: { message?: string } };
+    if (parsed.error?.message) return new Error(parsed.error.message);
+  } catch { /* not JSON */ }
+  return new Error(`请求失败 (HTTP ${status})${body ? '：' + body.slice(0, 100) : ''}`);
+}
+
+export async function streamDirectSse(
+  payload: DirectSsePayload,
+  handlers: DirectSseHandlers
+): Promise<void> {
+  const { profile, temperature } = getActiveLlmRuntimeConfig();
+  const apiKey = profile.apiKey;
+  const baseUrl = profile.baseUrl.replace(/\/+$/, '');
+
+  const body = {
+    model: profile.model,
+    messages: payload.messages,
+    temperature: payload.temperature ?? temperature,
+    max_tokens: payload.max_tokens ?? 3200,
+    stream: true,
+  };
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      credentials: 'omit',
+      signal: handlers.signal,
+      body: JSON.stringify(body),
+    });
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err;
+    throw new Error('网络连接失败，请检查网络或稍后重试。');
+  }
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw classifyDirectError(response.status, text);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('未获取到流读取器');
+
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+  let done = false;
+
+  while (!done) {
+    const { value, done: readerDone } = await reader.read();
+    done = readerDone;
+    if (!value) continue;
+
+    buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith(':')) continue;
+      if (!trimmed.startsWith('data:')) continue;
+
+      const data = trimmed.slice(5).trim();
+      if (data === '[DONE]') {
+        handlers.onDone?.();
+        return;
+      }
+
+      try {
+        const chunk = JSON.parse(data) as { choices?: { delta?: { content?: string } }[] };
+        const content = chunk.choices?.[0]?.delta?.content;
+        if (content) handlers.onDelta(content);
+      } catch {
+        // 容错：跳过无法解析的行
+      }
+    }
+  }
+
+  if (buffer.trim()) {
+    const trimmed = buffer.trim();
+    if (trimmed.startsWith('data:')) {
+      const data = trimmed.slice(5).trim();
+      if (data !== '[DONE]') {
+        try {
+          const chunk = JSON.parse(data) as { choices?: { delta?: { content?: string } }[] };
+          const content = chunk.choices?.[0]?.delta?.content;
+          if (content) handlers.onDelta(content);
+        } catch { /* 容错 */ }
+      }
+    }
+  }
+
+  handlers.onDone?.();
+}
+
+export interface DirectStructuredInit<T> {
+  signal?: AbortSignal;
+  parse?: (json: unknown) => T;
+}
+
+export async function callDirectStructured<T>(
+  messages: { role: string; content: string }[],
+  init?: DirectStructuredInit<T>
+): Promise<T> {
+  const { profile, temperature } = getActiveLlmRuntimeConfig();
+  const apiKey = profile.apiKey;
+  const baseUrl = profile.baseUrl.replace(/\/+$/, '');
+
+  const body = {
+    model: profile.model,
+    messages,
+    temperature,
+    response_format: { type: 'json_object' },
+    stream: false,
+  };
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      credentials: 'omit',
+      signal: init?.signal,
+      body: JSON.stringify(body),
+    });
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err;
+    throw new Error('网络连接失败，请检查网络或稍后重试。');
+  }
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw classifyDirectError(response.status, text);
+  }
+
+  const result = await response.json() as { choices?: { message?: { content?: string } }[] };
+  const content = result.choices?.[0]?.message?.content;
+  if (!content) throw new Error('模型未返回有效内容。');
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error('模型返回格式异常，请重试或更换模型。');
+  }
+  return init?.parse ? init.parse(parsed) : (parsed as T);
+}

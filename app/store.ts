@@ -16,7 +16,7 @@ import {
 } from './layoutPrefs';
 import type { ChatMessage } from './dnaSchema';
 
-const STORE_VERSION = 6;
+const STORE_VERSION = 7;
 const DEFAULT_TEMPERATURE = 0.7;
 
 function xorEncryptDecrypt(input: string): string {
@@ -89,6 +89,8 @@ interface AppState {
   manageMode: boolean; // show NovelUploader (chapters + re-split) for the selected novel
   rateLimited: boolean;
   setRateLimited: (limited: boolean) => void;
+  clientDirectMode: boolean; // 前端直连大模型 API，无需 Python 后端
+  setClientDirectMode: (on: boolean) => void;
   isOffline: boolean; // 运行时网络态（非持久化语义；每次挂载由 navigator.onLine 求真覆盖，复刻 rateLimited 范式）
   setOffline: (value: boolean) => void;
   workshopBusy: boolean; // 工坊流式/生成进行中——禁止 busy 时切换/新建创作，避免跨创作 stale-write
@@ -212,10 +214,12 @@ export const useAppStore = create<AppState>()(
       activeCreationId: null,
       manageMode: false,
       rateLimited: false,
+      clientDirectMode: false,
       isOffline: false,
       workshopBusy: false,
       persistError: false,
       setRateLimited: (limited) => set({ rateLimited: limited }),
+      setClientDirectMode: (on) => set({ clientDirectMode: on }),
       setOffline: (value) => set({ isOffline: value }),
       setWorkshopBusy: (busy) => set({ workshopBusy: busy }),
       setPersistError: (value) => set({ persistError: value }),
@@ -297,8 +301,6 @@ export const useAppStore = create<AppState>()(
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState;
         const state = persistedState as Record<string, unknown>;
-        // STORE_VERSION 6：在 5 的基础上新增 layout（三栏布局偏好）——缺失/脏值经 normalizeLayout 补默认，
-        // 使旧用户注水后拿到合法布局；继续清理已删状态字段，并让 providerProfiles 经最新默认值/兼容迁移。
         delete state.sequencingGear;
         delete state.shouldReduceEarly;
         delete state.fusionBias;
@@ -307,6 +309,7 @@ export const useAppStore = create<AppState>()(
           llmConfig: normalizeLLMConfig(state.llmConfig),
           layout: normalizeLayout(state.layout),
           chatMessages: (state.chatMessages && typeof state.chatMessages === 'object') ? state.chatMessages : {},
+          clientDirectMode: typeof state.clientDirectMode === 'boolean' ? state.clientDirectMode : false,
           selectedNovelId: typeof state.selectedNovelId === 'string' ? state.selectedNovelId : null,
           workshopOpen: false,
           activeCreationId: null,

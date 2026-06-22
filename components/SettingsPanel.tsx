@@ -6,6 +6,7 @@ import ProviderCredentialsEditor from './ProviderCredentialsEditor';
 import AppNotice from './AppNotice';
 import { useFocusTrap } from '../app/useFocusTrap';
 import { useTheme, type ThemePreference } from '../app/theme';
+import { useAppStore } from '../app/store';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -23,6 +24,10 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
   const panelRef = useRef<HTMLElement>(null);
   useFocusTrap(panelRef, isOpen);
   const { preference, setPreference } = useTheme();
+  const { clientDirectMode, setClientDirectMode } = useAppStore((s) => ({
+    clientDirectMode: s.clientDirectMode,
+    setClientDirectMode: s.setClientDirectMode,
+  }));
 
   useEffect(() => {
     if (!isOpen) return;
@@ -91,6 +96,34 @@ export default function SettingsPanel({ isOpen, onClose, returnHint }: SettingsP
               <ProviderCredentialsEditor variant="minimal" providerSelector="select" collapsibleAdvanced />
             </div>
             <p className="text-xs text-fg-subtle">密钥仅以混淆形式存储在浏览器本地，不会上传服务器。</p>
+          </section>
+
+          {/* 直连模式 */}
+          <section className="space-y-2.5">
+            <div className="eyebrow">网络</div>
+            <div className="seg" role="radiogroup" aria-label="大模型直连模式">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!clientDirectMode}
+                onClick={() => setClientDirectMode(false)}
+                className="seg-item"
+              >
+                跟随系统
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={clientDirectMode}
+                onClick={() => setClientDirectMode(true)}
+                className="seg-item"
+              >
+                强制直连
+              </button>
+            </div>
+            <p className="text-xs leading-5 text-fg-subtle">
+              开启后前端直接请求大模型 API，无需 Python 后端。适用于 GitHub Pages 等纯静态托管。
+            </p>
           </section>
         </div>
 
