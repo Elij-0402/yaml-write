@@ -203,6 +203,39 @@
   /* —— 成稿正文阅读体（全系统唯一 serif）—— */
   .prose-reader { font-family: var(--serif); font-size: 17px; line-height: 1.9; color: var(--fg); white-space: pre-wrap; }
 
+  /* —— 成稿正文「可编辑」体（Story 4.1 SceneEditor）—— 白纸黑字无边框画布、限宽居中、宋体 16/1.8。
+     注意：勿与上方只读 .prose-reader（17/1.9，多处只读视图复用）混用——本类专供可编辑 <textarea>。
+     高度由 SceneEditor 的 autoGrow 贴合内容（overflow:hidden 去内嵌滚动条，外层 StudioShell 滚动）。 */
+  .scene-editor {
+    display: block;
+    width: 100%;
+    max-width: 60ch;             /* 限宽阅读列 */
+    margin: 0 auto;              /* 自适应居中 */
+    padding: 4px 2px 64px;       /* 顶部贴标题；底部留白便于长文末行书写 */
+    font-family: var(--serif);
+    font-size: 16px;
+    line-height: 1.8;
+    color: var(--fg);
+    background: transparent;     /* 画布即 var(--bg)，不另设底色 */
+    border: 0;
+    outline: none;               /* 无边框画布；聚焦态靠 caret 指示，不画环 */
+    caret-color: var(--accent);  /* 唯一允许的 --accent 用法：聚焦/正在发生（光标），非正文上色 */
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    resize: none;
+    overflow: hidden;
+    min-height: 9rem;
+  }
+  .scene-editor:focus,
+  .scene-editor:focus-visible { outline: none; }
+  /* 流式生成中禁编：保持满色（WebKit 默认会用 text-fill-color 把禁用 textarea 文字灰化）。 */
+  .scene-editor:disabled {
+    color: var(--fg);
+    -webkit-text-fill-color: var(--fg);
+    opacity: 1;
+    cursor: default;
+  }
+
   /* —— 流式光标 —— 唯一持续「正在发生」的活信号 —— */
   .caret { display: inline-block; width: 2px; height: 1.05em; background: var(--accent-ink); vertical-align: -2px; margin-left: 1px; animation: caret-blink 1.05s step-end infinite; }
   @keyframes caret-blink { 50% { opacity: 0; } }

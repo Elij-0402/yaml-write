@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   ChevronLeft, Palette, ArrowUpDown, ArrowRight, ArrowUp, Sparkles, Shuffle,
@@ -16,6 +16,7 @@ import { StreamSseError, callStructured, ensureLlmConfigReady, streamSse, stream
 import { useAppStore } from '../app/store';
 import { FORBIDDEN_STYLE_WORDS, evaluateSceneLocal, buildGenerateSceneSystemPrompt, buildGenerateSceneUserPrompt, type GenerateSceneInput } from '../app/evaluatorLocal';
 import AppDialog from './AppDialog';
+import SceneEditor from './SceneEditor';
 
 interface RepairGap { beat: string; issue: string; patch: string; }
 
@@ -858,15 +859,18 @@ export default function FusionWorkshop() {
     URL.revokeObjectURL(url);
   };
 
-  // 选中句轻量改写：捕获选区 → AI 改写片段 → 接受/拒绝（只换选中片段，无整篇 diff）。
-  const onProseSelect = () => {
-    if (streamingScene !== null) return;
-    const sel = typeof window !== 'undefined' ? window.getSelection() : null;
-    const text = sel ? sel.toString().trim() : '';
-    setSelectedFragment(text && (sceneTexts[OPENING_SCENE_NUM] || '').includes(text) ? text : '');
-  };
+  // 选中句轻量改写：编辑器把 textarea 选区文本传出 → AI 改写片段 → 接受/拒绝（只换选中片段，无整篇 diff）。
+  // 注：<textarea> 选区取不到 window.getSelection()，故由 SceneEditor 读自身 selectionStart/End 传入（流式禁编时不触发）。
+  const handleProseSelect = useCallback((selected: string) => {
+    if (streamingScene !== null) return; // 任一场景流式期间不捕获选区（沿用旧 onProseSelect 语义，避免与生成态并发改写）
+    setSelectedFragment(selected.trim());
+  }, [streamingScene]);
+  // 开篇正文防抖写回：经 setSceneTexts → 现有 idle-drain effect 落盘 db.fusionSessions（沿用 :45 决策，不新增 db.scenes.update 写路径）。
+  const commitOpening = useCallback((text: string) => {
+    setSceneTexts((prev) => (prev[OPENING_SCENE_NUM] === text ? prev : { ...prev, [OPENING_SCENE_NUM]: text }));
+  }, []);
   const rewriteFragment = async (style: string) => {
-    if (!guardLlm() || rewriting || !selectedFragment) return;
+    if (!guardLlm() || rewriting || streamingScene !== null || !selectedFragment) return;
     setError(null);
     setRewriting(true);
     const original = selectedFragment;
@@ -1569,12 +1573,16 @@ export default function FusionWorkshop() {
               </div>
             ) : (
               <>
-                {/* 开篇 = 第 1 段：保留选句改写 */}
-                <div className="prose-reader max-w-[60ch] text-justify" onMouseUp={onProseSelect}>
-                  {prose ? <>{prose}{streaming && !prefersReducedMotion && <span className="caret" />}</> : (
-                    <span className="text-fg-subtle">{streaming ? '正在生成…' : '点右侧「生成开篇」开始。'}</span>
-                  )}
-                </div>
+                {/* 开篇 = 第 1 段：可编辑正文（焦点隔离：非受控 textarea + memo + 1s 防抖写回）。选句改写见 onSelect。 */}
+                <SceneEditor
+                  sceneId={OPENING_SCENE_NUM}
+                  initialText={prose}
+                  disabled={streaming}
+                  onCommit={commitOpening}
+                  onSelect={handleProseSelect}
+                  placeholder={streaming ? '正在生成…' : '点右侧「生成开篇」开始，或直接在此处动笔。'}
+                  ariaLabel="开篇正文编辑器"
+                />
 
                 {/* 续写场景（第 2 段起）：连续往下读；仅最后一段可重写/删除 */}
                 {continuationNums.map((n) => (
