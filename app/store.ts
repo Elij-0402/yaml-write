@@ -18,6 +18,8 @@ import type { ChatMessage } from './dnaSchema';
 
 const STORE_VERSION = 7;
 const DEFAULT_TEMPERATURE = 0.7;
+// 每部作品保留的最近对话条数上限：store 落盘裁剪与 AiAssistant 发送窗口共用此单一常量（review #10）。
+export const MAX_CHAT_MESSAGES = 30;
 
 function xorEncryptDecrypt(input: string): string {
   const key = 'dna_crystal_key_mask_99';
@@ -270,9 +272,8 @@ export const useAppStore = create<AppState>()(
       chatMessages: {},
       addChatMessage: (novelId, msg) =>
         set((state) => {
-          const MAX_MESSAGES = 30;
           const existing = state.chatMessages[novelId] || [];
-          const updated = [...existing, msg].slice(-MAX_MESSAGES);
+          const updated = [...existing, msg].slice(-MAX_CHAT_MESSAGES);
           return { chatMessages: { ...state.chatMessages, [novelId]: updated } };
         }),
       clearChatMessages: (novelId) =>

@@ -14,9 +14,11 @@ import { type BlockKey, type FusionDirection, type SettingBlocks, type Structure
 import { withRateLimitRetry } from '../app/dnaEngine';
 import { StreamSseError, callStructured, ensureLlmConfigReady, streamSse, streamDirectSse } from '../app/llmClient';
 import { useAppStore } from '../app/store';
-import { FORBIDDEN_STYLE_WORDS, evaluateSceneLocal, buildGenerateSceneSystemPrompt, buildGenerateSceneUserPrompt, type GenerateSceneInput } from '../app/evaluatorLocal';
+import { evaluateSceneLocal, buildGenerateSceneSystemPrompt, buildGenerateSceneUserPrompt, type GenerateSceneInput } from '../app/evaluatorLocal';
+import { shouldUseDirect } from '../app/directMode';
 import AppDialog from './AppDialog';
 import SceneEditor from './SceneEditor';
+import { spliceRange, isRangeIntact, type ProseSelection } from '../app/selectionRect';
 
 interface RepairGap { beat: string; issue: string; patch: string; }
 
@@ -38,14 +40,12 @@ const BLOCKS: { key: BlockKey; label: string }[] = [
 ];
 const isBlockKey = (value: string): value is BlockKey => BLOCKS.some((block) => block.key === value);
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const applyAntiSlopFallback = (text: string): string =>
-  FORBIDDEN_STYLE_WORDS.reduce((acc, phrase, idx) => acc.replace(new RegExp(escapeRegExp(phrase), 'g'), `[已过滤陈词滥调#${idx + 1}]`), text);
-
 const EMPTY_BLOCKS = { worldviewBlock: '', protagonistBlock: '', antagonistBlock: '', narrativeTone: '' };
 const OPENING_SCENE_NUM = 1; // 成稿为单一连续开篇，复用 sceneTexts[1] 持久化（不引入 db 形状变更）
 
 interface FragmentDraft { original: string; rewritten: string; }
+// 划词改写本次锁定的区间（接受时按捕获的 start/end 做索引替换；AC3 杜绝同句首次匹配误伤）。
+interface RewriteTarget { start: number; end: number; original: string; }
 
 const WORKSHOP_STEPS: Array<{ id: WorkshopStep; label: string }> = [
   { id: 'material', label: '配方' },
@@ -133,14 +133,13 @@ function StudioShell({
 }
 
 export default function FusionWorkshop() {
-  const { selectedNovelId, setSelectedNovelId, setWorkshopOpen, rateLimited, activeCreationId, setWorkshopBusy, clientDirectMode } = useAppStore((state) => ({
+  const { selectedNovelId, setSelectedNovelId, setWorkshopOpen, rateLimited, activeCreationId, setWorkshopBusy } = useAppStore((state) => ({
     selectedNovelId: state.selectedNovelId,
     setSelectedNovelId: state.setSelectedNovelId,
     setWorkshopOpen: state.setWorkshopOpen,
     rateLimited: state.rateLimited,
     activeCreationId: state.activeCreationId,
     setWorkshopBusy: state.setWorkshopBusy,
-    clientDirectMode: state.clientDirectMode,
   }));
   const novels = useLiveQuery(() => db.novels.reverse().toArray(), []) || [];
   const readyNovels = novels.filter((novel) => isDnaReady(novel));
@@ -201,8 +200,10 @@ export default function FusionWorkshop() {
   // 创世台共创态
   const [editingBlock, setEditingBlock] = useState<BlockKey | null>(null);
   const [editDraft, setEditDraft] = useState('');
-  // 成稿选中句轻量改写
-  const [selectedFragment, setSelectedFragment] = useState<string>('');
+  // 成稿划词改写（Story 4.2）：proseSel=当前结构化选区（右栏镜像 + 接受时索引替换的 start/end 来源）；
+  // rewriteTarget=本次改写锁定的区间；fragmentDraft=改写预览（onDelta 流式增量写 rewritten，逐字可见）。
+  const [proseSel, setProseSel] = useState<ProseSelection | null>(null);
+  const [rewriteTarget, setRewriteTarget] = useState<RewriteTarget | null>(null);
   const [fragmentDraft, setFragmentDraft] = useState<FragmentDraft | null>(null);
   const [rewriting, setRewriting] = useState(false);
   const [pendingDirectionChoice, setPendingDirectionChoice] = useState<FusionDirection | null>(null);
@@ -211,30 +212,6 @@ export default function FusionWorkshop() {
   const streamAbortRef = useRef<AbortController | null>(null);
   const hydratedRef = useRef(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const backendCheckRef = useRef<{ ts: number; ok: boolean } | null>(null);
-
-  const checkBackendReachable = async (): Promise<boolean> => {
-    if (clientDirectMode) return false;
-    const cached = backendCheckRef.current;
-    if (cached && Date.now() - cached.ts < 30000) return cached.ok;
-    try {
-      const ac = new AbortController();
-      const tid = setTimeout(() => ac.abort(), 3000);
-      const res = await fetch('/api/py/docs', { signal: ac.signal, method: 'HEAD' });
-      clearTimeout(tid);
-      const ok = res.ok;
-      backendCheckRef.current = { ts: Date.now(), ok };
-      return ok;
-    } catch {
-      backendCheckRef.current = { ts: Date.now(), ok: false };
-      return false;
-    }
-  };
-
-  const shouldUseDirect = async (): Promise<boolean> => {
-    if (clientDirectMode) return true;
-    return !(await checkBackendReachable());
-  };
 
   useEffect(() => {
     // 必须在 effect 体内重置为 true：React 18 严格模式（App Router dev 默认开启）会
@@ -294,7 +271,7 @@ export default function FusionWorkshop() {
         setRecipeStage(0); setLockedFeatures([]); setAvoidList([]);
       }
       setEditingBlock(null); setRepairGaps([]); setComparingDraftIdx(null);
-      setSelectedFragment(''); setFragmentDraft(null); setTweakTarget('worldviewBlock');
+      setProseSel(null); setRewriteTarget(null); setFragmentDraft(null); setTweakTarget('worldviewBlock');
       if (!cancelled) hydratedRef.current = true;
     })();
     return () => { cancelled = true; };
@@ -368,6 +345,8 @@ export default function FusionWorkshop() {
   const prose = sceneTexts[OPENING_SCENE_NUM] || '';
   const resume = sceneResumeStatus[OPENING_SCENE_NUM];
   const streaming = streamingScene === OPENING_SCENE_NUM;
+  // 划词改写预览态：改写中或预览就绪 → 开篇正文切「只读行内预览」（选区原位流式预览，选区外零重排）。
+  const inlinePreviewActive = rewriteTarget !== null && (rewriting || fragmentDraft !== null);
   // 多场景（开篇之后的有界续写）：已落正文（或正在流式）的场景号升序。开篇=1，续写=2.. 。
   const sceneNums = Object.keys(sceneTexts)
     .map(Number)
@@ -622,7 +601,7 @@ export default function FusionWorkshop() {
   });
 
   const streamOpening = async (mode: 'fresh' | 'resume' = 'fresh') => {
-    if (!guardLlm() || streamingScene !== null) return;
+    if (!guardLlm() || streamingScene !== null || rewriting) return;
     setError(null);
     const num = OPENING_SCENE_NUM;
     const existingDraft = sceneTexts[num] || '';
@@ -664,9 +643,8 @@ export default function FusionWorkshop() {
           }, {
             signal: ac.signal,
             onDelta: (text) => {
-              const sanitized = applyAntiSlopFallback(text);
-              received += sanitized;
-              setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
+              received += text;
+              setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + text }));
             },
           });
         } else {
@@ -681,9 +659,8 @@ export default function FusionWorkshop() {
           }, {
             signal: ac.signal,
             onDelta: (text) => {
-              const sanitized = applyAntiSlopFallback(text);
-              received += sanitized;
-              setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
+              received += text;
+              setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + text }));
             },
           });
         }
@@ -736,9 +713,8 @@ export default function FusionWorkshop() {
           }, {
             signal: ac.signal,
             onDelta: (text) => {
-              const sanitized = applyAntiSlopFallback(text);
-              received += sanitized;
-              setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
+              received += text;
+              setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + text }));
             },
           });
         } else {
@@ -752,9 +728,8 @@ export default function FusionWorkshop() {
           }, {
             signal: ac.signal,
             onDelta: (text) => {
-              const sanitized = applyAntiSlopFallback(text);
-              received += sanitized;
-              setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
+              received += text;
+              setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + text }));
             },
           });
         }
@@ -861,30 +836,42 @@ export default function FusionWorkshop() {
 
   // 选中句轻量改写：编辑器把 textarea 选区文本传出 → AI 改写片段 → 接受/拒绝（只换选中片段，无整篇 diff）。
   // 注：<textarea> 选区取不到 window.getSelection()，故由 SceneEditor 读自身 selectionStart/End 传入（流式禁编时不触发）。
-  const handleProseSelect = useCallback((selected: string) => {
-    if (streamingScene !== null) return; // 任一场景流式期间不捕获选区（沿用旧 onProseSelect 语义，避免与生成态并发改写）
-    setSelectedFragment(selected.trim());
+  const handleProseSelect = useCallback((selection: ProseSelection | null) => {
+    if (selection !== null && streamingScene !== null) return; // 流式期不捕获新选区，但允许清空（AC4b）
+    setProseSel(selection);
   }, [streamingScene]);
   // 开篇正文防抖写回：经 setSceneTexts → 现有 idle-drain effect 落盘 db.fusionSessions（沿用 :45 决策，不新增 db.scenes.update 写路径）。
   const commitOpening = useCallback((text: string) => {
     setSceneTexts((prev) => (prev[OPENING_SCENE_NUM] === text ? prev : { ...prev, [OPENING_SCENE_NUM]: text }));
   }, []);
-  const rewriteFragment = async (style: string) => {
-    if (!guardLlm() || rewriting || streamingScene !== null || !selectedFragment) return;
+  // 划词改写：浮动触角提交的**自由指令** → 仅改写选中片段，流式增量写入预览（逐字可见，AC2a/b）。
+  // 沿用既有 generate-scene 双路径（backend SSE / 直连），不过三把锁评估（一次性流）。改写期不动正文，
+  // 选区外零重排；接受时再按索引替换（AC3）。currentDraft=original 保证模型只改这一段。
+  const rewriteFragment = async (sel: ProseSelection, instruction: string) => {
+    const original = sel.text.trim();
+    const cmd = instruction.trim();
+    if (!guardLlm() || rewriting || streamingScene !== null || !original || !cmd) return;
     setError(null);
+    setProseSel(sel);
+    setRewriteTarget({ start: sel.start, end: sel.end, original });
+    setFragmentDraft({ original, rewritten: '' }); // 进入行内预览态；onDelta 增量写 rewritten
     setRewriting(true);
-    const original = selectedFragment;
     try {
       let received = '';
       const ac = new AbortController();
       streamAbortRef.current = ac;
       const direct = await shouldUseDirect();
+      const plotOutline = `只改写下面引号内的这一小段，使其满足：${cmd}。只输出改写后的这一段文字本身，不要加引号、不要前后文、不要解释。`;
+      const onDelta = (text: string) => {
+        received += text;
+        setFragmentDraft((prev) => (prev ? { ...prev, rewritten: prev.rewritten + text } : prev));
+      };
       if (direct) {
         const genInput: GenerateSceneInput = {
           selectedDirection: selectedDirection(),
           currentScene: {
             sceneTitle: '选中句改写',
-            plotOutline: `只改写下面引号内的这一小段，使其${style}。只输出改写后的这一段文字本身，不要加引号、不要前后文、不要解释。`,
+            plotOutline,
             tensionLevel: '保持与上下文一致',
             visualCues: '保持与上下文一致',
           },
@@ -897,47 +884,80 @@ export default function FusionWorkshop() {
             { role: 'system', content: buildGenerateSceneSystemPrompt(genInput) },
             { role: 'user', content: buildGenerateSceneUserPrompt(genInput) },
           ],
-        }, {
-          signal: ac.signal,
-          onDelta: (text) => { received += applyAntiSlopFallback(text); },
-        });
+        }, { signal: ac.signal, onDelta });
       } else {
         await streamSse('/api/py/generate-scene', {
           selectedDirection: selectedDirection(),
           currentScene: {
             sceneNumber: OPENING_SCENE_NUM,
             sceneTitle: '选中句改写',
-            plotOutline: `只改写下面引号内的这一小段，使其${style}。只输出改写后的这一段文字本身，不要加引号、不要前后文、不要解释。`,
+            plotOutline,
             tensionLevel: '保持与上下文一致',
             visualCues: '保持与上下文一致',
           },
           precedingTexts: {},
           currentDraft: original,
           adversarialRules: adversarialRules.trim() || undefined,
-        }, {
-          signal: ac.signal,
-          onDelta: (text) => { received += applyAntiSlopFallback(text); },
-        });
+        }, { signal: ac.signal, onDelta });
       }
       if (!mountedRef.current) return;
       const rewritten = received.trim();
-      if (rewritten) setFragmentDraft({ original, rewritten });
+      if (rewritten) {
+        setFragmentDraft({ original, rewritten }); // 收敛为最终 trim 版（供接受替换）
+      } else {
+        // 空结果：不污染正文，退出预览态（AC2d）
+        setFragmentDraft(null);
+        setRewriteTarget(null);
+        setError('改写结果为空，请重试或换个指令。');
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '改写失败');
+      if (mountedRef.current) {
+        const aborted = streamAbortRef.current?.signal.aborted;
+        setFragmentDraft(null);
+        setRewriteTarget(null);
+        setError(aborted ? '已停止改写。' : (err instanceof Error ? err.message : '改写失败'));
+      }
     } finally {
       if (mountedRef.current) { setRewriting(false); streamAbortRef.current = null; }
     }
   };
+  // 用 latest-ref 桥接，给 SceneEditor 一个**稳定**的 onRewriteSubmit（保 memo 焦点隔离）而又总调到最新闭包。
+  const rewriteFragmentRef = useRef(rewriteFragment);
+  rewriteFragmentRef.current = rewriteFragment;
+  const handleRewriteSubmit = useCallback((sel: ProseSelection, instruction: string) => {
+    void rewriteFragmentRef.current(sel, instruction);
+  }, []);
   const acceptFragment = () => {
-    if (!fragmentDraft) return;
-    setSceneTexts((prev) => ({
-      ...prev,
-      [OPENING_SCENE_NUM]: (prev[OPENING_SCENE_NUM] || '').replace(fragmentDraft.original, () => fragmentDraft.rewritten),
-    }));
-    setFragmentDraft(null);
-    setSelectedFragment('');
+    const target = rewriteTarget;
+    const draft = fragmentDraft;
+    if (!target || !draft || rewriting || !draft.rewritten.trim()) return;
+    const cur = sceneTexts[OPENING_SCENE_NUM] || '';
+    // AC3：按捕获的 start/end 做**索引区间替换**（替代旧 String.replace 首次匹配，杜绝同句误伤）。
+    let next: string;
+    if (isRangeIntact(cur, target.start, target.end, target.original)) {
+      next = spliceRange(cur, target.start, target.end, draft.rewritten);
+    } else {
+      // 安全回退：索引漂移（改写期文本意外变化）时，仅当原文在全篇**唯一**出现才按文本替换，否则提示重选、绝不盲替。
+      const first = cur.indexOf(target.original);
+      if (first !== -1 && first === cur.lastIndexOf(target.original)) {
+        next = spliceRange(cur, first, first + target.original.length, draft.rewritten);
+      } else {
+        setError('正文已变化，无法安全定位这段，请重新划选后再改写。');
+        setRewriteTarget(null); setFragmentDraft(null); setProseSel(null);
+        return;
+      }
+    }
+    // Task 6：接受前把当前开篇文本压入既有 openingDrafts 5 深栈做一次轻量归档（正式版本控制属 Story 4.3）。
+    if (cur.trim()) {
+      setOpeningDrafts((prev) => [{ text: cur, createdAt: Date.now() }, ...prev].slice(0, 5));
+    }
+    setSceneTexts((prev) => ({ ...prev, [OPENING_SCENE_NUM]: next }));
+    setRewriteTarget(null); setFragmentDraft(null); setProseSel(null);
   };
-  const rejectFragment = () => { setFragmentDraft(null); setSelectedFragment(''); };
+  const rejectFragment = () => {
+    streamAbortRef.current?.abort(); // 改写途中拒绝 = 中止流（正文未动，无损还原）
+    setRewriteTarget(null); setFragmentDraft(null); setProseSel(null);
+  };
 
   // 恢复某历史版为当前开篇：当前正文（若非空）先存回历史，再把选中版设为当前；该版从历史移除（即「当前」总不在列表里）。
   const restoreOpeningDraft = (idx: number) => {
@@ -957,7 +977,7 @@ export default function FusionWorkshop() {
   // （后端按 24k 尾部截断上下文，天然有界）。硬边界＝禁自动章节循环 / 整本编排 / 大纲生成 / 一键写到结局；
   // 每段都是一次刻意的用户点击，保持「起书副驾」而非整本工厂。----
   const streamSceneAt = async (num: number, intent: string) => {
-    if (!guardLlm() || streamingScene !== null) return;
+    if (!guardLlm() || streamingScene !== null || rewriting) return;
     const preceding: Record<number, string> = {};
     sceneNums.filter((n) => n < num).forEach((n) => { preceding[n] = sceneTexts[n]; });
     setError(null);
@@ -994,8 +1014,7 @@ export default function FusionWorkshop() {
         }, {
           signal: ac.signal,
           onDelta: (text) => {
-            const sanitized = applyAntiSlopFallback(text);
-            setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
+            setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + text }));
           },
         });
       } else {
@@ -1009,8 +1028,7 @@ export default function FusionWorkshop() {
         }, {
           signal: ac.signal,
           onDelta: (text) => {
-            const sanitized = applyAntiSlopFallback(text);
-            setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + sanitized }));
+            setSceneTexts((prev) => ({ ...prev, [num]: (prev[num] || '') + text }));
           },
         });
       }
@@ -1573,16 +1591,41 @@ export default function FusionWorkshop() {
               </div>
             ) : (
               <>
-                {/* 开篇 = 第 1 段：可编辑正文（焦点隔离：非受控 textarea + memo + 1s 防抖写回）。选句改写见 onSelect。 */}
-                <SceneEditor
-                  sceneId={OPENING_SCENE_NUM}
-                  initialText={prose}
-                  disabled={streaming}
-                  onCommit={commitOpening}
-                  onSelect={handleProseSelect}
-                  placeholder={streaming ? '正在生成…' : '点右侧「生成开篇」开始，或直接在此处动笔。'}
-                  ariaLabel="开篇正文编辑器"
-                />
+                {/* 开篇 = 第 1 段。划词改写预览期 → 切「只读行内预览」（选区原位流式展示改写，选区外正文零重排）；
+                    否则为可编辑正文（焦点隔离：非受控 textarea + memo + 1s 防抖写回）。划词触角/高亮见 SceneEditor。 */}
+                {inlinePreviewActive && rewriteTarget ? (
+                  <>
+                    <div className="scene-editor" aria-live="polite" aria-busy={rewriting}>
+                      {prose.slice(0, rewriteTarget.start)}
+                      <span className="rewrite-preview">{fragmentDraft?.rewritten}</span>
+                      {rewriting && !prefersReducedMotion && <span className="caret" />}
+                      {prose.slice(rewriteTarget.end)}
+                    </div>
+                    <div className="mx-auto mt-3 flex max-w-[60ch] items-center gap-2">
+                      <span className="text-[11px] text-fg-subtle">{rewriting ? '正在改写选中片段…' : '改写完成，接受替换或拒绝还原'}</span>
+                      <span className="flex-1" />
+                      <button className="btn btn-ghost btn-sm gap-1" onClick={rejectFragment}>
+                        {rewriting ? <><Square size={13} /> 停止</> : <><X size={13} /> 拒绝</>}
+                      </button>
+                      <button className="btn btn-primary btn-sm gap-1" onClick={acceptFragment} disabled={rewriting || !fragmentDraft?.rewritten.trim()}>
+                        <Check size={13} /> 接受
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <SceneEditor
+                    sceneId={OPENING_SCENE_NUM}
+                    initialText={prose}
+                    disabled={streaming}
+                    onCommit={commitOpening}
+                    onSelect={handleProseSelect}
+                    onRewriteSubmit={handleRewriteSubmit}
+                    rewriteEnabled={!rewriting && !fragmentDraft}
+                    reducedMotion={prefersReducedMotion}
+                    placeholder={streaming ? '正在生成…' : '点右侧「生成开篇」开始，或直接在此处动笔。'}
+                    ariaLabel="开篇正文编辑器"
+                  />
+                )}
 
                 {/* 续写场景（第 2 段起）：连续往下读；仅最后一段可重写/删除 */}
                 {continuationNums.map((n) => (
@@ -1709,8 +1752,8 @@ export default function FusionWorkshop() {
                 <div className="text-fg-muted text-[11px]">
                   {loopState.phase === 'idle' && '未跑质检'}
                   {loopState.phase === 'streaming' && loopState.attempt === 0 && '正在生成…'}
-                  {loopState.phase === 'streaming' && loopState.attempt > 0 && `第 ${loopState.attempt + 1}/${loopState.maxAttempts} 次生成（重试中）`}
-                  {loopState.phase === 'auditing' && `第 ${loopState.attempt + 1}/${loopState.maxAttempts} 次审计`}
+                  {loopState.phase === 'streaming' && loopState.attempt > 0 && `第 ${loopState.attempt + 1}/${loopState.maxAttempts + 1} 次生成（重试中）`}
+                  {loopState.phase === 'auditing' && `第 ${loopState.attempt + 1}/${loopState.maxAttempts + 1} 次审计`}
                   {loopState.phase === 'passed' && <span className="text-success-ink font-medium">质检通过</span>}
                   {loopState.phase === 'fused' && <span className="text-danger-ink">已熔断 — 请人工审阅</span>}
                 </div>
@@ -1782,7 +1825,7 @@ export default function FusionWorkshop() {
             {streaming ? (
               <button className="btn btn-primary justify-start gap-2" onClick={() => streamAbortRef.current?.abort()}><Square size={14} /> 停止生成</button>
             ) : (
-              <button className="btn btn-primary justify-start gap-2" onClick={() => void streamOpening('fresh')}>
+              <button className="btn btn-primary justify-start gap-2" onClick={() => void streamOpening('fresh')} disabled={rewriting}>
                 {prose ? <><RotateCcw size={14} /> 重写开篇</> : <><PenLine size={14} /> 生成开篇</>}
               </button>
             )}
@@ -1795,28 +1838,16 @@ export default function FusionWorkshop() {
             <button className="btn btn-secondary justify-start gap-2" onClick={exportMd} disabled={!allProse.trim()}><Download size={14} /> 导出 .md</button>
             <button className="btn btn-ghost justify-start gap-2" onClick={() => setStep('creator')}><ChevronLeft size={14} /> 回创世台</button>
 
-            {fragmentDraft ? (
-              <div className="mt-2 space-y-2 border-t border-line pt-3 text-xs">
-                <div className="text-fg-subtle">改写预览：</div>
-                <div className="text-danger line-through">{fragmentDraft.original}</div>
-                <div className="text-success">{fragmentDraft.rewritten}</div>
-                <div className="flex gap-2">
-                  <button className="btn btn-ghost btn-sm" onClick={rejectFragment}>拒绝</button>
-                  <button className="btn btn-primary btn-sm gap-1" onClick={acceptFragment}><Check size={13} /> 接受</button>
-                </div>
-              </div>
-            ) : selectedFragment ? (
-              <div className="mt-2 space-y-2 border-t border-line pt-3 text-xs text-fg-muted">
-                <div>选中「{selectedFragment.length > 18 ? `${selectedFragment.slice(0, 18)}…` : selectedFragment}」让 AI：</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {['更有画面感', '更短促', '改写'].map((s) => (
-                    <button key={s} className="btn btn-secondary btn-sm" disabled={rewriting} onClick={() => void rewriteFragment(s)}>{rewriting ? '…' : s}</button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="mt-2 border-t border-line pt-3 text-xs leading-relaxed text-fg-subtle">在左侧正文里选中一句，可让 AI 就地改写（先预览、你接受才替换）。</div>
-            )}
+            {/* 划词改写状态镜像（主交互在左侧正文：浮动触角 + 行内预览；此处仅作次要镜像/提示）。 */}
+            <div className="mt-2 border-t border-line pt-3 text-xs leading-relaxed text-fg-subtle">
+              {rewriting
+                ? '正在改写选中片段…（在左侧正文里预览，接受才替换）'
+                : fragmentDraft
+                ? '改写已生成 — 在左侧正文行内预览里「接受」替换或「拒绝」还原。'
+                : proseSel
+                ? `已选中「${proseSel.text.trim().length > 18 ? `${proseSel.text.trim().slice(0, 18)}…` : proseSel.text.trim()}」— 点正文上方浮现的「划词重写」触角并输入指令。`
+                : '在左侧正文里划选一句，会浮现「划词重写」触角：输入指令即可就地改写（先预览，接受才替换）。'}
+            </div>
 
             {openingDrafts.length > 0 && (
               <div className="mt-2 space-y-1.5 border-t border-line pt-3">
@@ -1845,8 +1876,10 @@ export default function FusionWorkshop() {
   );
 }
 
-// Helper function to map active cards for LLM payload
-const mapActiveCardsForLlm = (cards: any[]) =>
+// 把活跃设定卡映射成 LLM 载荷所需的精简形状（去掉 any，review 收尾）。
+const mapActiveCardsForLlm = (
+  cards: ReadonlyArray<{ name: string; type: string; summary?: string; details?: string; activeState?: string }>,
+) =>
   cards.map((c) => ({
     name: c.name,
     type: c.type,

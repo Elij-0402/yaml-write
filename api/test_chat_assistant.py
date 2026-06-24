@@ -12,7 +12,7 @@ from api.schemas import (
     ChapterUpdate,
     SceneUpdate,
 )
-from api.prompts import build_chat_assistant_system_prompt
+from api.prompts import build_chat_assistant_system_prompt, build_chat_assistant_user_prompt
 
 
 class ChatAssistantSchemaTests(unittest.TestCase):
@@ -70,6 +70,25 @@ class ChatAssistantSchemaTests(unittest.TestCase):
         prompt = build_chat_assistant_system_prompt([], [], [], [])
         self.assertIn("暂无设定卡片", prompt)
         self.assertIn("暂无大纲", prompt)
+
+    def test_build_chat_assistant_user_prompt_includes_history(self) -> None:
+        # review #2：端点须把完整多轮历史拼进 prompt（而非只取最后一条 user）。
+        messages = [
+            ChatMessage(role="user", content="把林鸣改成冷酷"),
+            ChatMessage(role="assistant", content="已修改"),
+            ChatMessage(role="user", content="再加一个道具卡"),
+        ]
+        prompt = build_chat_assistant_user_prompt(messages)
+        self.assertIn("把林鸣改成冷酷", prompt)   # 历史 user
+        self.assertIn("已修改", prompt)            # 历史 assistant
+        self.assertIn("再加一个道具卡", prompt)    # 当前指令
+        self.assertIn("当前用户指令", prompt)
+        self.assertIn("对话历史", prompt)
+
+    def test_build_chat_assistant_user_prompt_single_turn_no_history(self) -> None:
+        prompt = build_chat_assistant_user_prompt([ChatMessage(role="user", content="你好")])
+        self.assertIn("你好", prompt)
+        self.assertNotIn("对话历史", prompt)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 import { callDirectStructured } from './llmClient';
 import type { SceneEvaluateResponse } from './dnaSchema';
 
+// 直连质检的违禁词词典。**必须与 api/prompts.py 的 FORBIDDEN_STYLE_WORDS 逐字一致**
+// （前端直连镜像后端硬扫描）；改动两侧同步，evaluatorLocal.test.ts 钉住此列表防漂移（review #10）。
 export const FORBIDDEN_STYLE_WORDS: string[] = [
   '不可否认', '嘴角上扬', '总而言之', '总之', '翻译腔', '命运的齿轮',
   '那一刻', '逆天改命', '眼神变得坚定', '嘴角勾起一抹弧度',
@@ -143,10 +145,17 @@ export function parseSceneAuditResult(json: unknown): SceneAuditResult {
 
   function parseGate(name: string): GateResultLocal {
     const gate = obj[name];
-    if (!gate || typeof gate !== 'object') return { passed: true, reason: '' };
+    // 严格镜像后端 Pydantic（GateResult 必填 passed/reason）：缺锁或 passed 类型不对就上抛，
+    // 不再默认 passed=true 静默放行格式不合规的审计（review #3）。
+    if (!gate || typeof gate !== 'object') {
+      throw new Error(`评估结果格式异常：缺少 ${name} 校验结果。`);
+    }
     const g = gate as Record<string, unknown>;
+    if (typeof g.passed !== 'boolean') {
+      throw new Error(`评估结果格式异常：${name}.passed 须为布尔值。`);
+    }
     return {
-      passed: typeof g.passed === 'boolean' ? g.passed : true,
+      passed: g.passed,
       reason: typeof g.reason === 'string' ? g.reason : '',
     };
   }

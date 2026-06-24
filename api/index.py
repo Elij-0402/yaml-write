@@ -75,6 +75,7 @@ from api.prompts import (
     build_evaluator_system_prompt,
     build_evaluator_user_prompt,
     build_chat_assistant_system_prompt,
+    build_chat_assistant_user_prompt,
 )
 
 logger = logging.getLogger("novel_fusion_api")
@@ -796,11 +797,11 @@ async def chat_assistant(data: ChatAssistantInput, request: Request):
         scenes=data.scenes,
     )
 
-    # 拼接对话历史中最后一条 user 消息作为 user_prompt
+    # 校验当前指令非空（末条 user 消息），再拼入完整多轮历史供模型理解指代（review #2）。
     user_messages = [m for m in data.messages if m.role == "user"]
-    user_prompt = user_messages[-1].content if user_messages else ""
-    if not user_prompt.strip():
+    if not user_messages or not user_messages[-1].content.strip():
         raise ApiError(status_code=400, code="invalid_request", message="用户消息不能为空。")
+    user_prompt = build_chat_assistant_user_prompt(data.messages)
 
     return await run_structured(
         api_key=api_key, base_url=data.base_url, model=model,

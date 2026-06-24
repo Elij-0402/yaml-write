@@ -9,12 +9,13 @@ import {
 
 describe('evaluatorLocal', () => {
   describe('FORBIDDEN_STYLE_WORDS', () => {
-    it('contains the expected words matching backend', () => {
-      expect(FORBIDDEN_STYLE_WORDS).toContain('不可否认');
-      expect(FORBIDDEN_STYLE_WORDS).toContain('嘴角上扬');
-      expect(FORBIDDEN_STYLE_WORDS).toContain('命运的齿轮');
-      expect(FORBIDDEN_STYLE_WORDS).toContain('那一刻');
-      expect(FORBIDDEN_STYLE_WORDS.length).toBe(15);
+    it('matches api/prompts.py FORBIDDEN_STYLE_WORDS byte-for-byte (sync guard — keep both in lockstep)', () => {
+      // 此列表必须与 api/prompts.py 的 FORBIDDEN_STYLE_WORDS 完全一致；任一侧改动都应同步另一侧与本断言。
+      expect(FORBIDDEN_STYLE_WORDS).toEqual([
+        '不可否认', '嘴角上扬', '总而言之', '总之', '翻译腔', '命运的齿轮',
+        '那一刻', '逆天改命', '眼神变得坚定', '嘴角勾起一抹弧度',
+        '仿佛整个世界都安静了', '空气仿佛凝固', '心中一紧', '缓缓睁开眼', '不知为何',
+      ]);
     });
   });
 
@@ -133,12 +134,22 @@ describe('evaluatorLocal', () => {
       expect(result.actionableFeedback).toBe('修复人设冲突');
     });
 
-    it('defaults missing gates to passed', () => {
-      const raw = { actionableFeedback: '' };
-      const result = parseSceneAuditResult(raw);
-      expect(result.styleLock.passed).toBe(true);
-      expect(result.consistencyLock.passed).toBe(true);
-      expect(result.outlineLock.passed).toBe(true);
+    it('throws on a missing gate (strict — mirrors backend Pydantic, no silent pass)', () => {
+      expect(() => parseSceneAuditResult({ actionableFeedback: '' })).toThrow();
+      expect(() => parseSceneAuditResult({
+        styleLock: { passed: true, reason: '' },
+        consistencyLock: { passed: true, reason: '' },
+        actionableFeedback: '',
+      })).toThrow();
+    });
+
+    it('throws when a gate passed is not a boolean', () => {
+      expect(() => parseSceneAuditResult({
+        styleLock: { passed: 'yes', reason: '' },
+        consistencyLock: { passed: true, reason: '' },
+        outlineLock: { passed: true, reason: '' },
+        actionableFeedback: '',
+      })).toThrow();
     });
 
     it('throws on non-object input', () => {

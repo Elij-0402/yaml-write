@@ -4,106 +4,109 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Send, Sparkles, User, Database } from 'lucide-react';
 import { db } from '../app/db';
-import { useAppStore } from '../app/store';
+import { useAppStore, MAX_CHAT_MESSAGES } from '../app/store';
 import { ensureLlmConfigReady, callStructured } from '../app/llmClient';
 import { canUseLlm } from '../app/networkStatus';
 import { parseChatAssistantResponse, type ChatMessage, type ChatAssistantResponse } from '../app/dnaSchema';
 import type { EntityCard } from '../app/memorySchema';
-
-const MAX_CHAT_MESSAGES = 30;
+import { shouldUseDirect } from '../app/directMode';
+import { chatAssistantLocal } from '../app/chatAssistantLocal';
 
 async function executeIntentUpdates(updates: ChatAssistantResponse, novelId: string): Promise<string[]> {
   const log: string[] = [];
   const now = Date.now();
 
-  for (const upd of updates.entityCardUpdates) {
-    if (upd.action === 'delete' && upd.cardId) {
-      await db.entityCards.delete(upd.cardId);
-      log.push(`删除设定卡片「${upd.name || upd.cardId}」`);
-    } else if (upd.action === 'upsert') {
-      const id = upd.cardId || crypto.randomUUID();
-      const existing = upd.cardId ? await db.entityCards.get(upd.cardId) : undefined;
-      const card: EntityCard = {
-        id,
-        novelId,
-        type: upd.type || 'character',
-        name: upd.name,
-        summary: upd.summary || '',
-        details: upd.details || '',
-        activeState: existing?.activeState ?? 'idle',
-        order: existing?.order ?? 0,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-      };
-      await db.entityCards.put(card);
-      log.push(`${upd.cardId ? '更新' : '新建'}设定卡片「${upd.name}」`);
+  // 四类更新放进同一个事务：任一写入失败则整体回滚，避免半应用的大纲/卡片（review #7）。
+  await db.transaction('rw', db.entityCards, db.volumes, db.outlineChapters, db.scenes, async () => {
+    for (const upd of updates.entityCardUpdates) {
+      if (upd.action === 'delete' && upd.cardId) {
+        await db.entityCards.delete(upd.cardId);
+        log.push(`删除设定卡片「${upd.name || upd.cardId}」`);
+      } else if (upd.action === 'upsert') {
+        const id = upd.cardId || crypto.randomUUID();
+        const existing = upd.cardId ? await db.entityCards.get(upd.cardId) : undefined;
+        const card: EntityCard = {
+          id,
+          novelId,
+          type: upd.type || 'character',
+          name: upd.name,
+          summary: upd.summary || '',
+          details: upd.details || '',
+          activeState: existing?.activeState ?? 'idle',
+          order: existing?.order ?? 0,
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+        };
+        await db.entityCards.put(card);
+        log.push(`${upd.cardId ? '更新' : '新建'}设定卡片「${upd.name}」`);
+      }
     }
-  }
 
-  for (const upd of updates.volumeUpdates) {
-    const vol = upd.volume;
-    if (upd.action === 'delete' && vol.id) {
-      await db.volumes.delete(vol.id);
-      log.push(`删除卷「${vol.title || vol.id}」`);
-    } else if (upd.action === 'upsert') {
-      const id = vol.id || crypto.randomUUID();
-      const existing = vol.id ? await db.volumes.get(vol.id) : undefined;
-      await db.volumes.put({
-        id,
-        novelId,
-        title: vol.title,
-        order: vol.order || 0,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-      });
-      log.push(`${vol.id ? '更新' : '新建'}卷「${vol.title}」`);
+    for (const upd of updates.volumeUpdates) {
+      const vol = upd.volume;
+      if (upd.action === 'delete' && vol.id) {
+        await db.volumes.delete(vol.id);
+        log.push(`删除卷「${vol.title || vol.id}」`);
+      } else if (upd.action === 'upsert') {
+        const id = vol.id || crypto.randomUUID();
+        const existing = vol.id ? await db.volumes.get(vol.id) : undefined;
+        await db.volumes.put({
+          id,
+          novelId,
+          title: vol.title,
+          order: vol.order || 0,
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+        });
+        log.push(`${vol.id ? '更新' : '新建'}卷「${vol.title}」`);
+      }
     }
-  }
 
-  for (const upd of updates.chapterUpdates) {
-    const ch = upd.chapter;
-    if (upd.action === 'delete' && ch.id) {
-      await db.outlineChapters.delete(ch.id);
-      log.push(`删除章「${ch.title || ch.id}」`);
-    } else if (upd.action === 'upsert') {
-      const id = ch.id || crypto.randomUUID();
-      const existing = ch.id ? await db.outlineChapters.get(ch.id) : undefined;
-      await db.outlineChapters.put({
-        id,
-        novelId,
-        volumeId: ch.volumeId || '',
-        title: ch.title,
-        order: ch.order || 0,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-      });
-      log.push(`${ch.id ? '更新' : '新建'}章「${ch.title}」`);
+    for (const upd of updates.chapterUpdates) {
+      const ch = upd.chapter;
+      if (upd.action === 'delete' && ch.id) {
+        await db.outlineChapters.delete(ch.id);
+        log.push(`删除章「${ch.title || ch.id}」`);
+      } else if (upd.action === 'upsert') {
+        const id = ch.id || crypto.randomUUID();
+        const existing = ch.id ? await db.outlineChapters.get(ch.id) : undefined;
+        await db.outlineChapters.put({
+          id,
+          novelId,
+          volumeId: ch.volumeId || '',
+          title: ch.title,
+          order: ch.order || 0,
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+        });
+        log.push(`${ch.id ? '更新' : '新建'}章「${ch.title}」`);
+      }
     }
-  }
 
-  for (const upd of updates.sceneUpdates) {
-    const sc = upd.scene;
-    if (upd.action === 'delete' && sc.id) {
-      await db.scenes.delete(sc.id);
-      log.push(`删除幕「${sc.title || sc.id}」`);
-    } else if (upd.action === 'upsert') {
-      const id = sc.id || crypto.randomUUID();
-      const existing = sc.id ? await db.scenes.get(sc.id) : undefined;
-      await db.scenes.put({
-        id,
-        novelId,
-        chapterId: sc.chapterId || '',
-        title: sc.title,
-        synopsis: sc.synopsis || '',
-        content: existing?.content ?? '',
-        wordCount: existing?.wordCount ?? 0,
-        order: sc.order || 0,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-      });
-      log.push(`${sc.id ? '更新' : '新建'}幕「${sc.title}」`);
+    for (const upd of updates.sceneUpdates) {
+      const sc = upd.scene;
+      if (upd.action === 'delete' && sc.id) {
+        await db.scenes.delete(sc.id);
+        log.push(`删除幕「${sc.title || sc.id}」`);
+      } else if (upd.action === 'upsert') {
+        const id = sc.id || crypto.randomUUID();
+        const existing = sc.id ? await db.scenes.get(sc.id) : undefined;
+        await db.scenes.put({
+          id,
+          novelId,
+          chapterId: sc.chapterId || '',
+          title: sc.title,
+          synopsis: sc.synopsis || '',
+          content: existing?.content ?? '',
+          wordCount: existing?.wordCount ?? 0,
+          order: sc.order || 0,
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+        });
+        log.push(`${sc.id ? '更新' : '新建'}幕「${sc.title}」`);
+      }
     }
-  }
+  });
 
   return log;
 }
@@ -196,18 +199,28 @@ export default function AiAssistant() {
         .filter((m) => m.role !== 'system')
         .map((m) => ({ role: m.role, content: m.content }));
 
-      const result = await callStructured<ChatAssistantResponse>(
-        '/api/py/chat-assistant',
-        {
-          messages: recentMessages,
-          novelId,
-          entityCards: cardContext,
-          volumes: volumeContext,
-          chapters: chapterContext,
-          scenes: sceneContext,
-        },
-        { parse: parseChatAssistantResponse },
-      );
+      // 直连（clientDirectMode 或后端不可达）走 chatAssistantLocal，否则走 /api/py/chat-assistant（review #6）。
+      const direct = await shouldUseDirect();
+      const result = direct
+        ? await chatAssistantLocal({
+            messages: recentMessages,
+            entityCards: cardContext,
+            volumes: volumeContext,
+            chapters: chapterContext,
+            scenes: sceneContext,
+          })
+        : await callStructured<ChatAssistantResponse>(
+            '/api/py/chat-assistant',
+            {
+              messages: recentMessages,
+              novelId,
+              entityCards: cardContext,
+              volumes: volumeContext,
+              chapters: chapterContext,
+              scenes: sceneContext,
+            },
+            { parse: parseChatAssistantResponse },
+          );
 
       const assistantMsg: ChatMessage = { role: 'assistant', content: result.reply };
       addChatMessage(novelId, assistantMsg);

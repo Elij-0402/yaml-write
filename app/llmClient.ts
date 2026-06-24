@@ -369,6 +369,7 @@ export async function streamDirectSse(
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
   let done = false;
+  let receivedDelta = false;
 
   while (!done) {
     const { value, done: readerDone } = await reader.read();
@@ -386,6 +387,8 @@ export async function streamDirectSse(
 
       const data = trimmed.slice(5).trim();
       if (data === '[DONE]') {
+        // 收到 [DONE] 但全程零增量 = 上游空响应：按「提前结束」上抛，而非静默成功收尾。
+        if (!receivedDelta) throw new StreamSseError('生成提前结束，请重试。', 'stream_ended_early', false);
         handlers.onDone?.();
         return;
       }
@@ -393,7 +396,7 @@ export async function streamDirectSse(
       try {
         const chunk = JSON.parse(data) as { choices?: { delta?: { content?: string } }[] };
         const content = chunk.choices?.[0]?.delta?.content;
-        if (content) handlers.onDelta(content);
+        if (content) { receivedDelta = true; handlers.onDelta(content); }
       } catch {
         // 容错：跳过无法解析的行
       }
@@ -408,12 +411,15 @@ export async function streamDirectSse(
         try {
           const chunk = JSON.parse(data) as { choices?: { delta?: { content?: string } }[] };
           const content = chunk.choices?.[0]?.delta?.content;
-          if (content) handlers.onDelta(content);
+          if (content) { receivedDelta = true; handlers.onDelta(content); }
         } catch { /* 容错 */ }
       }
     }
   }
 
+  // 直连不强制要求 [DONE]（部分兼容端不发）；但全程零增量必属失败，按「提前结束」上抛，
+  // 与后端 streamSse 的空流语义对齐，避免把截断 / 空响应当成功收尾（review #5）。
+  if (!receivedDelta) throw new StreamSseError('生成提前结束，请重试。', 'stream_ended_early', false);
   handlers.onDone?.();
 }
 

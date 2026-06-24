@@ -240,6 +240,42 @@
   .caret { display: inline-block; width: 2px; height: 1.05em; background: var(--accent-ink); vertical-align: -2px; margin-left: 1px; animation: caret-blink 1.05s step-end infinite; }
   @keyframes caret-blink { 50% { opacity: 0; } }
 
+  /* —— Story 4.2 划词改写 —— 选区高亮叠层（DESIGN.md text-highlight）——
+     <textarea> 无法对子串上色，用 pointer-events:none 的叠层盒按选区矩形绘制，失焦后仍可见（不靠 ::selection）。
+     颜色全走 --accent 通道变量（rgb(var(--accent-c)/.25)），禁硬编码十六进制；下边框 2px dashed var(--accent)。 */
+  .highlighted-text {
+    position: absolute;
+    background: rgb(var(--accent-c) / 0.25);
+    border-bottom: 2px dashed var(--accent);
+    border-radius: 2px;
+    pointer-events: none;
+  }
+
+  /* —— 划词重写浮动触角（DESIGN.md floating-rewrite-btn）—— 实色靛蓝底、6px 圆角、浮层阴影；
+     实色底上文字/图标用 --accent-fg（白），符合「--accent 仅实色填充」铁律。 */
+  .floating-rewrite-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 30px; padding: 0 11px;
+    font-size: 12.5px; font-weight: 500; line-height: 1; white-space: nowrap;
+    color: var(--accent-fg);
+    background: var(--accent);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-pop);
+    cursor: pointer;
+    transition: background-color .14s ease;
+  }
+  .floating-rewrite-btn:hover { background: var(--accent-hover); }
+
+  /* —— 行内流式预览块 —— 选区原位以虚线/色块展示「修改中的文字」（同高亮令牌）。
+     box-decoration-break:clone 让多行折行时背景/边框逐行连续。 */
+  .rewrite-preview {
+    background: rgb(var(--accent-c) / 0.25);
+    border-bottom: 2px dashed var(--accent);
+    border-radius: 2px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+
   /* —— 视图进入（克制）—— */
   .view-enter { animation: view-rise .2s cubic-bezier(.16,1,.3,1); }
   @keyframes view-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }

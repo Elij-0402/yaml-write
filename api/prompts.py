@@ -11,6 +11,7 @@ from api.schemas import (
     FusionDirectionsInput,
     SceneEvaluateInput,
     ChatAssistantInput,
+    ChatMessage,
     EntityCardUpdate,
     VolumeItem,
     ChapterItem,
@@ -514,3 +515,32 @@ def build_chat_assistant_system_prompt(
         f"【当前已有大纲结构】\n{outline_ctx}\n\n"
         "请严格按照 ChatAssistantResponse 结构输出。"
     )
+
+
+def build_chat_assistant_user_prompt(messages: list[ChatMessage]) -> str:
+    """多轮对话 → 转写：历史轮供上下文/指代，末条 user 为当前指令。
+
+    此前端点只取最后一条 user 消息、丢弃全部历史，导致多轮指代失效（review #2）。
+    """
+    convo = [m for m in messages if m.role in ("user", "assistant")]
+    # 末条 user 作为当前指令；其之前的所有轮作为历史。
+    last_user_idx = -1
+    for i in range(len(convo) - 1, -1, -1):
+        if convo[i].role == "user":
+            last_user_idx = i
+            break
+    if last_user_idx == -1:
+        return ""
+    current = convo[last_user_idx].content
+    history = convo[:last_user_idx]
+    role_label = {"user": "用户", "assistant": "助手"}
+    parts: list[str] = []
+    if history:
+        hist_block = "\n".join(f"{role_label.get(m.role, m.role)}：{m.content}" for m in history)
+        parts.append(
+            "【对话历史（供理解上下文与指代，请勿重复执行历史里已完成的指令）】\n"
+            + hist_block
+            + "\n"
+        )
+    parts.append("【当前用户指令】\n" + current)
+    return "\n".join(parts)
