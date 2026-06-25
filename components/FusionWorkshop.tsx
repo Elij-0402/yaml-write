@@ -8,6 +8,7 @@ import {
   Lock, ThumbsDown, GitBranch, ShieldCheck, ShieldAlert, CircleDot, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { db, isFourLayerDnaCard, type FusionSession, type OpeningDraft } from '../app/db';
+import { pushSnapshot, restoreSnapshot, displayLabel, OPENING_DRAFTS_MAX } from '../app/draftSnapshots';
 import { isDnaReady, initDraftLoop, advanceLoop, lastFeedback, isFused, type DraftLoopState } from '../app/dnaState';
 import { formatWordCount } from '../app/util';
 import { type BlockKey, type FusionDirection, type SettingBlocks, type StructureBeat, parseFusionDirections, type SceneEvaluateResponse, parseSceneEvaluateResponse } from '../app/dnaSchema';
@@ -183,9 +184,10 @@ export default function FusionWorkshop() {
   const [sceneTexts, setSceneTexts] = useState<Record<number, string>>({});
   const [streamingScene, setStreamingScene] = useState<number | null>(null);
   const [sceneResumeStatus, setSceneResumeStatus] = useState<Record<number, SceneResumeStatus>>({});
-  // 开篇历史版本（重写前归档）+ 当前正在对比的历史版索引（null=不对比）。
+  // 开篇历史版本（重写前归档）+ 当前正在对比的历史版索引（null=不对比）+ 待回滚确认的历史版索引（null=无）。
   const [openingDrafts, setOpeningDrafts] = useState<OpeningDraft[]>([]);
   const [comparingDraftIdx, setComparingDraftIdx] = useState<number | null>(null);
+  const [pendingRollbackIdx, setPendingRollbackIdx] = useState<number | null>(null);
   const [nextIntent, setNextIntent] = useState(''); // 「写下一段」的可选一行意图（有界续写，不持久化）
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [adversarialRules, setAdversarialRules] = useState('');
@@ -270,7 +272,7 @@ export default function FusionWorkshop() {
         setFreedom(false); setTone('');
         setRecipeStage(0); setLockedFeatures([]); setAvoidList([]);
       }
-      setEditingBlock(null); setRepairGaps([]); setComparingDraftIdx(null);
+      setEditingBlock(null); setRepairGaps([]); setComparingDraftIdx(null); setPendingRollbackIdx(null);
       setProseSel(null); setRewriteTarget(null); setFragmentDraft(null); setTweakTarget('worldviewBlock');
       if (!cancelled) hydratedRef.current = true;
     })();
@@ -608,9 +610,8 @@ export default function FusionWorkshop() {
     let received = mode === 'resume' ? existingDraft : '';
     setSceneResumeStatus((prev) => ({ ...prev, [num]: mode === 'resume' ? 'resuming' : 'idle' }));
     if (mode === 'fresh') {
-      if (existingDraft.trim()) {
-        setOpeningDrafts((prev) => [{ text: existingDraft, createdAt: Date.now() }, ...prev].slice(0, 5));
-      }
+      // 重写开篇前归档当前正文（空白不入栈由 pushSnapshot 内部短路；上限/Version 号统一在纯逻辑里）。
+      setOpeningDrafts((prev) => pushSnapshot(prev, existingDraft, Date.now()));
       setComparingDraftIdx(null);
       setSceneTexts((prev) => ({ ...prev, [num]: '' }));
       setLoopState(initDraftLoop());
@@ -959,10 +960,8 @@ export default function FusionWorkshop() {
         return;
       }
     }
-    // Task 6：接受前把当前开篇文本压入既有 openingDrafts 5 深栈做一次轻量归档（正式版本控制属 Story 4.3）。
-    if (cur.trim()) {
-      setOpeningDrafts((prev) => [{ text: cur, createdAt: Date.now() }, ...prev].slice(0, 5));
-    }
+    // 划词接受前把当前开篇文本归档进 openingDrafts（Story 4.3：统一 10 上限 + Version 号；空白不入栈由 pushSnapshot 短路）。
+    setOpeningDrafts((prev) => pushSnapshot(prev, cur, Date.now()));
     setSceneTexts((prev) => ({ ...prev, [OPENING_SCENE_NUM]: next }));
     setRewriteTarget(null); setFragmentDraft(null); setProseSel(null);
   };
@@ -972,17 +971,24 @@ export default function FusionWorkshop() {
     setRewriteTarget(null); setFragmentDraft(null); setProseSel(null);
   };
 
-  // 恢复某历史版为当前开篇：当前正文（若非空）先存回历史，再把选中版设为当前；该版从历史移除（即「当前」总不在列表里）。
+  // 回滚入口（底部 Version 标签条 / 右栏历史列表「恢复」/ 对比视图「用这版替换当前」共用）：置「待回滚索引」
+  // → 弹 AppDialog 确认门（AC2b，破坏性确认）。流式生成 / 划词改写进行中不开门（与 restoreOpeningDraft 守卫一致，AC2e/AC4d）。
+  const requestRollback = (idx: number) => {
+    if (streamingScene !== null || rewriting) return;
+    if (!openingDrafts[idx]) return;
+    setPendingRollbackIdx(idx);
+  };
+
+  // 恢复某历史版为当前开篇（回滚）：当前正文（若非空）先归档回栈、被选版设为当前并从列表移除
+  // （即「当前」总不在历史列表里）。栈重排 + 10 上限 + Version 号统一走 restoreSnapshot 纯逻辑（含「回滚最新版也不复用其号」）。
+  // 守卫：流式生成或划词改写进行中不可回滚（AC2e / AC4d）。所有回滚入口（标签条 / 历史列表 / 对比）均经 AppDialog 确认门后才调到这里。
   const restoreOpeningDraft = (idx: number) => {
-    const draft = openingDrafts[idx];
-    if (!draft || streamingScene !== null) return;
+    if (streamingScene !== null || rewriting) return;
     const current = sceneTexts[OPENING_SCENE_NUM] || '';
-    setOpeningDrafts((prev) => {
-      const next = prev.filter((_, i) => i !== idx);
-      if (current.trim()) next.unshift({ text: current, createdAt: Date.now() });
-      return next.slice(0, 5);
-    });
-    setSceneTexts((prev) => ({ ...prev, [OPENING_SCENE_NUM]: draft.text }));
+    const result = restoreSnapshot(openingDrafts, idx, current, Date.now());
+    if (!result) return;
+    setOpeningDrafts(result.next);
+    setSceneTexts((prev) => ({ ...prev, [OPENING_SCENE_NUM]: result.restored }));
     setComparingDraftIdx(null);
   };
 
@@ -1082,6 +1088,26 @@ export default function FusionWorkshop() {
         const direction = pendingDirectionChoice;
         setPendingDirectionChoice(null);
         if (direction) void applyDirection(direction);
+      }}
+    />
+  );
+
+  // 回滚确认弹窗（AC2b/2c）：复用 AppDialog（含 useFocusTrap，Tab 不外溢；Esc/点遮罩关闭）。回滚覆盖当前正文属破坏性 → confirmTone danger。
+  // 确认 → restoreOpeningDraft（当前正文先归档回栈、被选版设为当前并出列表、刷新落盘）；取消/Esc → 仅清待回滚索引，正文与栈零变化（AC2d）。
+  // 作为 overlay 挂到成稿页 StudioShell。文案动态带上目标 Version 号（displayLabel 与标签条/列表一致）。
+  const rollbackVersionLabel = pendingRollbackIdx !== null ? displayLabel(openingDrafts, pendingRollbackIdx) : '';
+  const rollbackDialog = (
+    <AppDialog
+      open={pendingRollbackIdx !== null}
+      title={`回滚到 ${rollbackVersionLabel}？`}
+      description="当前正文会先存入历史，可再回滚找回。确认后，编辑器正文将替换为该历史版本。"
+      confirmLabel="确认回滚"
+      confirmTone="danger"
+      onClose={() => setPendingRollbackIdx(null)}
+      onConfirm={() => {
+        const idx = pendingRollbackIdx;
+        setPendingRollbackIdx(null);
+        if (idx !== null) restoreOpeningDraft(idx);
       }}
     />
   );
@@ -1578,7 +1604,7 @@ export default function FusionWorkshop() {
 
   // ===== 成稿 =====
   return (
-    <StudioShell current="manuscript" nextLabel={nextActionLabel}>
+    <StudioShell current="manuscript" nextLabel={nextActionLabel} overlay={rollbackDialog}>
       <div className="mx-auto max-w-5xl">
         <div className="grid gap-6 lg:grid-cols-[1fr_220px]">
           {/* 正文纸 */}
@@ -1595,7 +1621,7 @@ export default function FusionWorkshop() {
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                     <span className="eyebrow">历史 · {fmtDraftTime(openingDrafts[comparingDraftIdx].createdAt)}</span>
                     <div className="flex gap-1.5">
-                      <button className="btn btn-primary btn-sm" onClick={() => restoreOpeningDraft(comparingDraftIdx)}>用这版替换当前</button>
+                      <button className="btn btn-primary btn-sm" onClick={() => requestRollback(comparingDraftIdx)}>用这版替换当前</button>
                       <button className="btn btn-ghost btn-sm" onClick={() => setComparingDraftIdx(null)}>关闭对比</button>
                     </div>
                   </div>
@@ -1682,6 +1708,35 @@ export default function FusionWorkshop() {
                   </div>
                 )}
               </>
+            )}
+
+            {/* ===== Version 标签条（成稿编辑器底部状态栏，AC2a/AC3）=====
+                决策②：放成稿步骤内编辑器底部（非全局 StatusBar）。与右栏「历史版本」list 共用同一份 openingDrafts
+                真相源（AC4b 不引入第二份快照），点标签 → requestRollback → AppDialog 回滚确认（AC2b）。当前正文不在
+                历史列表里，故首位置一枚不可点的「当前」徽标以示区分。流式生成 / 划词改写中标签禁用（AC2e）。
+                样式走 .version-tag（globals.css，颜色全 CSS 变量，禁硬编码）；键盘可达（<button> 可 Tab/Enter）。 */}
+            {openingDrafts.length > 0 && (
+              <div className="mt-6 border-t border-line pt-3">
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="eyebrow">版本历史</span>
+                  <span className="font-mono text-[11px] text-fg-subtle">{openingDrafts.length}/{OPENING_DRAFTS_MAX}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="version-tag version-tag-current" aria-current="true" title="当前正文（不在历史快照中）">当前</span>
+                  {openingDrafts.map((d, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      className="version-tag"
+                      disabled={streamingScene !== null || rewriting}
+                      onClick={() => requestRollback(i)}
+                      title={`归档于 ${fmtDraftTime(d.createdAt)} · 点击回滚到此版本`}
+                    >
+                      {displayLabel(openingDrafts, i)}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
 
@@ -1864,17 +1919,17 @@ export default function FusionWorkshop() {
 
             {openingDrafts.length > 0 && (
               <div className="mt-2 space-y-1.5 border-t border-line pt-3">
-                <div className="eyebrow">历史版本 · {openingDrafts.length}</div>
+                <div className="eyebrow">历史版本 · {openingDrafts.length}/{OPENING_DRAFTS_MAX}</div>
                 {openingDrafts.map((d, i) => (
                   <div key={i} className="flex items-center gap-2 text-xs">
                     <button
                       className={`min-w-0 flex-1 truncate text-left transition-colors ${comparingDraftIdx === i ? 'text-accent-ink' : 'text-fg-muted hover:text-fg'}`}
                       onClick={() => setComparingDraftIdx(comparingDraftIdx === i ? null : i)}
-                      title="对比这版与当前"
+                      title={`${displayLabel(openingDrafts, i)} · 归档于 ${fmtDraftTime(d.createdAt)} · 点击对比这版与当前`}
                     >
-                      <span className="font-mono text-fg-subtle">{fmtDraftTime(d.createdAt)}</span> · {d.text.slice(0, 10)}…
+                      <span className="font-mono text-fg-subtle">{displayLabel(openingDrafts, i)}</span> · {d.text.slice(0, 10)}…
                     </button>
-                    <button className="shrink-0 text-fg-subtle hover:text-fg" onClick={() => restoreOpeningDraft(i)} title="恢复这版（当前正文会先存入历史）">恢复</button>
+                    <button className="shrink-0 text-fg-subtle hover:text-fg" onClick={() => requestRollback(i)} title="回滚到这版（会先弹确认；当前正文会先存入历史）">恢复</button>
                   </div>
                 ))}
               </div>
