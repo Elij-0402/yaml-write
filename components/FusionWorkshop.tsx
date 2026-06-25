@@ -847,13 +847,21 @@ export default function FusionWorkshop() {
   // 划词改写：浮动触角提交的**自由指令** → 仅改写选中片段，流式增量写入预览（逐字可见，AC2a/b）。
   // 沿用既有 generate-scene 双路径（backend SSE / 直连），不过三把锁评估（一次性流）。改写期不动正文，
   // 选区外零重排；接受时再按索引替换（AC3）。currentDraft=original 保证模型只改这一段。
+  // F2：拒绝改写时置位，让 rewriteFragment 的 catch 区分「用户主动拒绝（静默还原）」与真异常（报错）。
+  const rewriteRejectedRef = useRef(false);
   const rewriteFragment = async (sel: ProseSelection, instruction: string) => {
     const original = sel.text.trim();
     const cmd = instruction.trim();
     if (!guardLlm() || rewriting || streamingScene !== null || !original || !cmd) return;
+    // F1：把选区索引收窄到 trim 后边界，使 rewriteTarget.start/end 与（已 trim 的）original 同源——
+    // 否则选区含首/尾空白时 isRangeIntact 会把 cur.slice(start,end)（含空白）≠ original 误判为漂移，
+    // 破坏 AC3 同句索引替换并误报「正文已变化」。行内预览与 spliceRange 也随收窄后的区间一致。
+    const start = sel.start + (sel.text.length - sel.text.trimStart().length);
+    const end = start + original.length;
+    rewriteRejectedRef.current = false; // F2：新一轮改写开始，清掉上一轮可能残留的「拒绝」标记
     setError(null);
     setProseSel(sel);
-    setRewriteTarget({ start: sel.start, end: sel.end, original });
+    setRewriteTarget({ start, end, original });
     setFragmentDraft({ original, rewritten: '' }); // 进入行内预览态；onDelta 增量写 rewritten
     setRewriting(true);
     try {
@@ -915,10 +923,14 @@ export default function FusionWorkshop() {
         const aborted = streamAbortRef.current?.signal.aborted;
         setFragmentDraft(null);
         setRewriteTarget(null);
-        setError(aborted ? '已停止改写。' : (err instanceof Error ? err.message : '改写失败'));
+        // F2：用户主动拒绝（已在 rejectFragment 中止流并清态）时静默还原，不在错误区留提示（AC2c）。
+        if (!rewriteRejectedRef.current) {
+          setError(aborted ? '已停止改写。' : (err instanceof Error ? err.message : '改写失败'));
+        }
       }
     } finally {
       if (mountedRef.current) { setRewriting(false); streamAbortRef.current = null; }
+      rewriteRejectedRef.current = false;
     }
   };
   // 用 latest-ref 桥接，给 SceneEditor 一个**稳定**的 onRewriteSubmit（保 memo 焦点隔离）而又总调到最新闭包。
@@ -955,6 +967,7 @@ export default function FusionWorkshop() {
     setRewriteTarget(null); setFragmentDraft(null); setProseSel(null);
   };
   const rejectFragment = () => {
+    rewriteRejectedRef.current = true; // F2：标记主动拒绝 → 中止流引发的 catch 不报错（AC2c 静默还原）
     streamAbortRef.current?.abort(); // 改写途中拒绝 = 中止流（正文未动，无损还原）
     setRewriteTarget(null); setFragmentDraft(null); setProseSel(null);
   };

@@ -111,24 +111,27 @@ function measureSelectionRects(
   mirror.appendChild(span);
   mirror.appendChild(document.createTextNode(value.slice(end)));
   document.body.appendChild(mirror);
-
-  const mirrorRect = mirror.getBoundingClientRect();
-  const taRect = textarea.getBoundingClientRect();
-  const cRect = container.getBoundingClientRect();
-  const rects: SelectionRect[] = Array.from(span.getClientRects())
-    .filter((r) => r.width > 0 || r.height > 0)
-    .map((r) =>
-      selectionRectToContainer({
-        rectTop: r.top, rectLeft: r.left, rectWidth: r.width, rectHeight: r.height,
-        mirrorTop: mirrorRect.top, mirrorLeft: mirrorRect.left,
-        textareaScreenTop: taRect.top, textareaScreenLeft: taRect.left,
-        scrollTop: textarea.scrollTop, scrollLeft: textarea.scrollLeft,
-        containerScreenTop: cRect.top, containerScreenLeft: cRect.left,
-      })
-    );
-  document.body.removeChild(mirror);
-  if (!rects.length) return null;
-  return { rects, anchor: rects[0] };
+  try {
+    const mirrorRect = mirror.getBoundingClientRect();
+    const taRect = textarea.getBoundingClientRect();
+    const cRect = container.getBoundingClientRect();
+    const rects: SelectionRect[] = Array.from(span.getClientRects())
+      .filter((r) => r.width > 0 || r.height > 0)
+      .map((r) =>
+        selectionRectToContainer({
+          rectTop: r.top, rectLeft: r.left, rectWidth: r.width, rectHeight: r.height,
+          mirrorTop: mirrorRect.top, mirrorLeft: mirrorRect.left,
+          textareaScreenTop: taRect.top, textareaScreenLeft: taRect.left,
+          scrollTop: textarea.scrollTop, scrollLeft: textarea.scrollLeft,
+          containerScreenTop: cRect.top, containerScreenLeft: cRect.left,
+        })
+      );
+    if (!rects.length) return null;
+    return { rects, anchor: rects[0] };
+  } finally {
+    // F4：无论量算/换算是否抛错都移除镜像，杜绝异常路径下隐藏 div 残留 body 累积。
+    document.body.removeChild(mirror);
+  }
 }
 
 function SceneEditorImpl({
@@ -262,6 +265,18 @@ function SceneEditorImpl({
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, [captureSelection]);
+
+  // F3：选区激活时挂 document pointerdown——点击编辑器 wrapper 之外（如右栏/其它面板）即收起高亮与浮动触角
+  // （AC1c「点击编辑器空白处一并消失」）。textarea/触角均在 wrap 内，点它们不会命中此分支。
+  useEffect(() => {
+    if (selection === null) return;
+    const onDocPointerDown = (e: PointerEvent) => {
+      const wrap = wrapRef.current;
+      if (wrap && e.target instanceof Node && !wrap.contains(e.target)) clearSelection();
+    };
+    document.addEventListener('pointerdown', onDocPointerDown);
+    return () => document.removeEventListener('pointerdown', onDocPointerDown);
+  }, [selection, clearSelection]);
 
   const showTrigger = selection !== null && rewriteEnabled && !disabled;
 
